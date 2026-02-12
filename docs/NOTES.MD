@@ -4515,3 +4515,509 @@ Expect: at least one emission differs.
 
 
 ### END NOTE - FEBRUARY 11 2026 - 22:02 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 12 2026 - 11:02 CST
+
+
+These notes are written so a fresh ChatGPT instance can resume immediately with **zero ambiguity**, using the **current repo state** and the most recent “known-good” commands + outputs. This is intended to be exhaustive and to preserve the *vision*, the *facts on disk*, and the *next best work*.
+
+---
+
+# 0) Executive Snapshot (What’s true right now)
+
+## ✅ Build + tests
+
+* ✅ `cargo build` succeeds.
+* ✅ `cargo test -p k8dnz-cli -- --nocapture` succeeds.
+
+  * Tests currently cover:
+
+    * **Genesis1 encode/decode roundtrip** (byte-identical reconstruction)
+    * **Genesis1 deterministic encode** (same args → same artifact behavior)
+    * **RGB backend repeatability**
+    * **RGB backend diverges + “resonates”** (backends differ but match at predictable indices)
+
+## ✅ Core deliverable proven: deterministic regen + artifact container
+
+* `.ark` container works end-to-end:
+
+  * `encode` produces `.ark` with embedded recipe and CRC.
+  * `decode` reproduces the original bytes.
+  * `ark-inspect` verifies magic+CRC and confirms embedded recipe_id matches recomputed.
+
+## ✅ Simulator proven: pair + rgbpair
+
+* `sim --mode pair` emits deterministic `PairToken` stream.
+* `sim --mode rgbpair` supports two generation paths:
+
+  1. Palette mapping (`PairToken::to_rgb_pair()`): MVP/back-compat.
+  2. Field-driven RGB law (`--rgb-from-field`): uses emission-time field samples (clamped) and deterministic integer mapping.
+
+## ✅ DNA vs Cone are now meaningfully different
+
+* At first, `dna` and `cone` were identical due to identical formulas.
+* We updated logic so **dna and cone diverge**, while still sharing “resonance” matches at certain emission indices.
+* Measured example (50 emissions): equal_rate ≈ **0.34** (17/50 matches). This is expected “resonance.”
+
+## ✅ Repo created on GitHub (minor mention)
+
+* A Git repository was initialized, remote set, SSH configured, and **pushed successfully** to GitHub.
+
+---
+
+# 1) What we accomplished (high-confidence deliverables)
+
+## 1.1 Field-driven RGB backend divergence + determinism confirmed
+
+We verified:
+
+* Two backends (`--rgb-backend dna` vs `cone`) produce different JSONL output on the same run.
+* Running the same backend twice is **byte-identical** (repeatability).
+
+### Proof commands (known-good)
+
+```bash
+cargo run -p k8dnz-cli -- sim --emissions 50 --mode rgbpair --fmt jsonl --rgb-from-field --rgb-backend dna > /tmp/dna.jsonl
+cargo run -p k8dnz-cli -- sim --emissions 50 --mode rgbpair --fmt jsonl --rgb-from-field --rgb-backend dna > /tmp/dna2.jsonl
+diff -u /tmp/dna.jsonl /tmp/dna2.jsonl | head
+
+cargo run -p k8dnz-cli -- sim --emissions 50 --mode rgbpair --fmt jsonl --rgb-from-field --rgb-backend cone > /tmp/cone.jsonl
+diff -u /tmp/dna.jsonl /tmp/cone.jsonl | head -n 40
+```
+
+### Bash “match rate” analysis (confirmed)
+
+```bash
+paste /tmp/dna.jsonl /tmp/cone.jsonl | awk -F'\t' '
+  BEGIN {eq=0; n=0}
+  {n++; if ($1==$2) eq++}
+  END {printf "lines=%d equal=%d equal_rate=%.6f\n", n, eq, (n?eq/n:0)}
+'
+
+paste /tmp/dna.jsonl /tmp/cone.jsonl | awk -F'\t' '
+  { if ($1==$2) printf "match emission_idx=%d  %s\n", NR-1, $1 }
+'
+```
+
+This is now baked into tests.
+
+## 1.2 Genesis1 end-to-end ARK roundtrip is proven
+
+* `encode` → `.ark` → `decode` reproduces original bytes.
+* `.ark` includes:
+
+  * embedded recipe
+  * ciphertext
+  * CRC32 over header+payload
+
+### Proof test run (known-good)
+
+```bash
+cargo test -p k8dnz-cli -- --nocapture
+```
+
+## 1.3 `.ark` inspection and entropy tooling validated
+
+We used:
+
+* `ark-inspect` to verify CRC + embedded recipe_id
+* `analyze` to measure entropy/byte distribution for plaintext vs ciphertext vs keystream
+
+### Example run (known-good)
+
+```bash
+cargo run -p k8dnz-cli -- encode --in text/Genesis1.txt --out /tmp/genesis1.ark --profile tuned --max-ticks 50000000
+cargo run -p k8dnz-cli -- ark-inspect --in /tmp/genesis1.ark --dump-ciphertext /tmp/genesis1.cipher.bin
+cargo run -p k8dnz-cli -- analyze --in /tmp/genesis1.cipher.bin --top 16
+cargo run -p k8dnz-cli -- analyze --in text/Genesis1.txt --top 16
+```
+
+Observed (Genesis1 example):
+
+* Genesis plaintext: **distinct 49/256**, entropy **~4.28 bits**
+* Ciphertext: **distinct 256/256**, entropy **~7.55 bits**
+  This indicates XOR with our keystream dramatically “flattens” plaintext bias in ciphertext.
+
+## 1.4 Keystream dump feature + scaling behavior confirmed
+
+We added/used `--dump-keystream` so we can analyze the generator directly (keystream quality matters for both practical packing and later modeling work).
+
+### Genesis1 keystream (tuned) example:
+
+* distinct ~ **99/256**
+* entropy ~ **6.02 bits/byte**
+
+### Baseline comparison (profile baseline, qshift=0):
+
+* distinct ~ **93/256**
+* entropy ~ **5.85 bits/byte**
+* peak byte count higher (more bias)
+
+**Conclusion:** `qshift=7_141_012` (tuned) improves keystream distribution.
+
+## 1.5 Important “time budget” invariant demonstrated via max_ticks failure
+
+When we tried Genesis ×10 with insufficient `--max-ticks`, encode failed with:
+
+* `keystream short: need 42010 bytes, got 12857 (ticks=50000000, emissions=12857)`
+
+This is *not a bug*—it is a core invariant:
+
+* **ticks are the clock** and define how many emissions exist by a time budget.
+* if you cannot produce enough emissions within max_ticks, you cannot generate the keystream needed to encode that many bytes.
+
+We then correctly sized `max_ticks`:
+
+* Genesis1: ~16.3M ticks for 4201 bytes
+* Genesis ×10: ~163M ticks for 42010 bytes
+  We used `--max-ticks 200_000_000` and succeeded.
+
+### Genesis ×10 tuned keystream results (key datapoint)
+
+```bash
+cargo run -p k8dnz-cli -- encode \
+  --in /tmp/genesis10x.txt \
+  --out /tmp/genesis10x_tuned.ark \
+  --profile tuned \
+  --max-ticks 200000000 \
+  --dump-keystream /tmp/genesis10x_tuned.keystream.bin
+
+cargo run -p k8dnz-cli -- analyze --in /tmp/genesis10x_tuned.keystream.bin --top 16
+```
+
+Observed:
+
+* bytes: 42010
+* distinct: **155/256**
+* entropy: **6.3257 bits/byte**
+* still biased, but distinctness and entropy both increased with length (not stuck).
+
+This tells us: the keystream is structured (not uniform random), but expands vocabulary over longer runs.
+
+---
+
+# 2) Current known-good configuration + defaults
+
+## 2.1 Tuned profile (current winner)
+
+* `qshift = 7_141_012`
+* quant range: `min=-147_728_900 max=80_783_500`
+* clamp range: same as quant range above
+* recipe_id (tuned default): `98b37faacc63a6aa42c90bdd0839f688`
+* recipe version: 4
+* seed: `15118225916046461694`
+
+We print recipe_id on runs for traceability.
+
+## 2.2 Encode precedence rules (important)
+
+Encode applies shift in this precedence:
+
+1. explicit `--qshift` (custom)
+2. if `--recipe` provided, use recipe’s embedded shift
+3. otherwise use `--profile` convenience shift (tuned/baseline)
+
+This ensures deterministic behavior and operator clarity.
+
+---
+
+# 3) Architecture reality (what exists conceptually + in code)
+
+## 3.1 Deterministic cadence engine (core)
+
+* Two free-orbit phases A and C evolve deterministically (fixed-point turns).
+* Alignment detection triggers lockstep.
+* Lockstep spiral on a conceptual frustum, emit at top rim.
+* At emission, we sample the field at known coordinates:
+
+  * phi1=phi_l
+  * phi2=phi_l+Δ
+  * t_top = Unit32::MAX
+  * time = engine.time / ticks
+* Field samples are clamped → quantized → mapped into N=16 symbols to produce PairToken `{a,b}`.
+
+## 3.2 Output layers
+
+### PairToken layer (canonical)
+
+* stable N=16 output for deterministic token streams
+
+### RGBPair layer (visual + diagnostic)
+
+Two paths:
+
+1. palette16 mapping (`PairToken::to_rgb_pair()`) — MVP/back-compat
+2. field-driven `--rgb-from-field` — uses clamped field samples to influence paired RGB emission (DNA/Cone backends)
+
+**Key point:** RGB is currently an *output view*; it’s not yet part of the `.ark` encoding layer (the `.ark` encode/decode uses keystream bytes from PairTokens).
+
+---
+
+# 4) The big vision (do NOT lose this)
+
+We are building a deterministic generator such that:
+
+**A compact key (ARK) can regenerate large, structured output.**
+
+Dream:
+
+* Small ARK string contains deterministic parameters (orbits/seeds/field mapping/quant/clamp/mode/length/checksum).
+* Plugging ARK into the algorithm expands into many pages of reproducible text/bytes.
+* “Russian doll compression”: pages of ARK strings become inputs to another run.
+
+Important conceptual layer:
+
+* Pair tokens can be treated as digits (even binary) embedded in numbers.
+* Those numbers can define **curves/arcs** between averages of pair groups.
+* With known start values and time index, decoding becomes a “counting + curve evaluation” process.
+* “Double helix” analogy is meaningful:
+
+  * A and C behave like intertwined strands.
+  * Shared drift + differential modulation matches the “paired bases” idea.
+  * This may become the organizing structure for later model-fitting/compression.
+
+---
+
+# 5) What the measurements mean (interpretation we should carry forward)
+
+## 5.1 Ciphertext looks strong (high entropy) even if keystream is structured
+
+* Genesis plaintext is heavily biased (normal text).
+* XOR with our deterministic keystream yields ciphertext much closer to uniform.
+* This is good for:
+
+  * “artifact looks scrambled”
+  * distribution/packing sanity checks
+  * potential future layering (pages/residual streams)
+
+## 5.2 Keystream is not uniform—this is BOTH a problem and a clue
+
+* Keystream bias is a problem if we want “cipher-grade” randomness (not our primary goal).
+* But for “Cadence compression by model,” structured output may be beneficial because it preserves the “signature” we can fit.
+
+We likely want two layers long-term:
+
+* **raw cadence stream** (structured; good for helix/curve modeling)
+* **optional deterministic whitening/mixing** (for byte-level uniformity when desired)
+
+This keeps the vision intact while improving practical IO.
+
+---
+
+# 6) Immediate priorities for next instance (high leverage)
+
+## 6.1 Add optional keystream mixing / whitening (opt-in)
+
+Goal:
+
+* improve keystream distribution (distinct → 256, entropy closer to 7.5–8.0 on keystream itself)
+* keep determinism
+* do NOT break existing artifacts unless the user opts in
+
+Design:
+
+* Add `--keystream-mix none|splitmix64|xorshift|lcg` (default `none`) to `encode` and `decode`.
+* Mixer derives a per-byte mask from a deterministic PRNG seeded by recipe.seed (and optionally emission index).
+* Apply: `mixed_byte = raw_byte ^ mask_byte` (or a small invertible transform).
+* Keep raw keystream accessible for modeling experiments.
+
+Add tests:
+
+* determinism: same args + mix → identical outputs
+* improvement metric: mix yields higher distinct/entropy than raw on Genesis1 (do not overfit but confirm directionally)
+
+Recommended mixer:
+
+* splitmix64-derived byte (strong diffusion, tiny code, integer-only)
+
+## 6.2 Begin “model + residual” compression MVP (Genesis1 only)
+
+This is the biggest step toward the true “small key → large exact text” compression vision.
+
+Prototype approach:
+
+1. Generate a candidate output stream (same length as input).
+2. Compare to target bytes.
+3. Store only differences as a compact residual stream.
+4. `.ark` (or new artifact type) = (recipe + residual + checksum)
+
+Then iterate:
+
+* tune parameters (qshift neighborhood search, mapping variations, field parameters) to minimize residual size.
+
+This converts “deterministic generator” into “compressor by fitting.”
+
+## 6.3 Formalize ARK string design (start simple)
+
+We already have `.ark` binary container. Next:
+
+* define a human-copyable **ARK string** spec that can rehydrate a recipe + mode + length + checksum.
+* candidates (not final):
+
+  * `ARK1:` structured fields (A/B/C/M/L/H)
+  * compact `ARK1_<base64url(packed)>`
+  * `recipe_id + overrides` short form
+* keep deterministic decoding rules and versioning.
+
+## 6.4 Keep recipe schema coherent (avoid repeating old pain)
+
+We previously hit issues with multiple “Recipe” representations (runtime vs serde/wire).
+Rule going forward:
+
+* **one canonical runtime recipe** for Engine.
+* optional wire/serde struct lives in its own module with explicit conversion.
+
+---
+
+# 7) Canonical commands (copy/paste) for next instance verification
+
+## Build + tests
+
+```bash
+cargo build
+cargo test -p k8dnz-cli -- --nocapture
+```
+
+## Sim: tokens
+
+```bash
+cargo run -p k8dnz-cli -- sim --emissions 10 --mode pair --fmt jsonl
+```
+
+## Sim: rgbpair (field-driven)
+
+```bash
+cargo run -p k8dnz-cli -- sim --emissions 50 --mode rgbpair --fmt jsonl --rgb-from-field --rgb-backend dna > /tmp/dna.jsonl
+cargo run -p k8dnz-cli -- sim --emissions 50 --mode rgbpair --fmt jsonl --rgb-from-field --rgb-backend cone > /tmp/cone.jsonl
+diff -u /tmp/dna.jsonl /tmp/cone.jsonl | head
+```
+
+## Encode/Decode: Genesis1
+
+```bash
+cargo run -p k8dnz-cli -- encode --in text/Genesis1.txt --out /tmp/genesis1.ark --profile tuned --max-ticks 50000000
+cargo run -p k8dnz-cli -- decode --in /tmp/genesis1.ark --out /tmp/genesis1.decoded.txt --max-ticks 50000000
+diff -u text/Genesis1.txt /tmp/genesis1.decoded.txt | head
+```
+
+## Inspect + analyze ciphertext
+
+```bash
+cargo run -p k8dnz-cli -- ark-inspect --in /tmp/genesis1.ark --dump-ciphertext /tmp/genesis1.cipher.bin
+cargo run -p k8dnz-cli -- analyze --in /tmp/genesis1.cipher.bin --top 16
+cargo run -p k8dnz-cli -- analyze --in text/Genesis1.txt --top 16
+```
+
+## Dump + analyze keystream
+
+```bash
+cargo run -p k8dnz-cli -- encode \
+  --in text/Genesis1.txt \
+  --out /tmp/genesis1.ark \
+  --profile tuned \
+  --max-ticks 50000000 \
+  --dump-keystream /tmp/genesis1.keystream.bin
+
+cargo run -p k8dnz-cli -- analyze --in /tmp/genesis1.keystream.bin --top 16
+```
+
+## Genesis ×10 scaling test (time budget proof)
+
+```bash
+for i in {1..10}; do cat text/Genesis1.txt; done > /tmp/genesis10x.txt
+
+cargo run -p k8dnz-cli -- encode \
+  --in /tmp/genesis10x.txt \
+  --out /tmp/genesis10x_tuned.ark \
+  --profile tuned \
+  --max-ticks 200000000 \
+  --dump-keystream /tmp/genesis10x_tuned.keystream.bin
+
+cargo run -p k8dnz-cli -- analyze --in /tmp/genesis10x_tuned.keystream.bin --top 16
+```
+
+---
+
+# 8) Current files of interest (for next instance orientation)
+
+* `crates/k8dnz-cli/src/cmd/sim.rs`
+
+  * field-driven RGB law
+  * `RgbBackend::{Dna,Cone}` + divergence/resonance behavior
+  * qsearch functionality and distribution metrics
+
+* `crates/k8dnz-cli/src/cmd/encode.rs`
+
+  * encode precedence rules (qshift/recipe/profile)
+  * keystream generation + XOR into ciphertext
+  * writes `.ark` artifact
+  * supports `--dump-keystream` (important for generator analysis)
+
+* `crates/k8dnz-cli/tests/encode_decode_genesis.rs`
+
+  * roundtrip and determinism for Genesis1
+
+* `crates/k8dnz-cli/tests/sim_rgb_backends.rs`
+
+  * backend diverges + repeatability
+
+* `text/Genesis1.txt`
+
+  * canonical text sample used for all experiments until end-to-end compression is proven
+
+* `VISUAL.jpeg`
+
+  * vision reference image (kept in repo)
+
+---
+
+# 9) Ground rules / invariants (must remain true)
+
+1. **Determinism is sacred**
+
+   * same recipe + same seed + same params must reproduce identical output bit-for-bit
+
+2. **Fixed-point turns**
+
+   * no floats in core logic
+   * no π in core math (visualization can be optional/configurable)
+
+3. **Time sensitivity**
+
+   * tick index is the canonical “time”
+   * incorrect time → different pairs or no emission
+   * `max_ticks` is a hard guard; keystream short is expected behavior
+
+4. **Scope discipline**
+
+   * continue using Genesis1 for experiments until the end-to-end pipeline is proven
+   * only expand to more text/chapters after we have model+residual working and measurable gains
+
+---
+
+# 10) “Definition of Done” targets for next instance
+
+**Near-term DoD (high impact):**
+
+* Add optional keystream mixing (`--keystream-mix`) to encode+decode
+* Add tests:
+
+  * determinism under mix
+  * measurable improvement in keystream distinct/entropy (directionally)
+* Keep raw keystream accessible for modeling experiments
+
+**Compression direction DoD (first real breakthrough):**
+
+* Implement a “fit + residual” MVP for Genesis1:
+
+  * produce candidate output
+  * store minimal residual
+  * decode reconstructs exactly
+
+This is the step that turns “generator” into “compression-by-model.”
+
+---
+
+### END NOTE 0 FEBRUARY 12 2026 - 11:02 CST
