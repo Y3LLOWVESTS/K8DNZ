@@ -1,0 +1,69 @@
+# --- Rust / Cargo ---
+/target/
+**/target/
+Cargo.lock
+**/*.rs.bk
+
+# --- Rust Analyzer / IDE ---
+/.idea/
+/.vscode/
+*.iml
+*.swp
+*.swo
+.DS_Store
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.temp
+*.bak
+*.old
+*.out
+*.err
+*.pid
+*.seed
+*.trace
+
+# --- Local env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editor junk ---
+Thumbs.db
+ehthumbs.db
+
+# --- K8DNZ local artifacts (generated outputs) ---
+/tmp/
+/out/
+/outputs/
+/artifacts/
+/build/
+/dist/
+
+# Generated binary / analysis outputs
+*.ark
+*.k8r
+*.jsonl
+*.bin
+*.dec
+
+# If you want to keep small sample outputs in-repo, comment these out:
+# *.ark
+# *.k8r
+# *.jsonl
+# *.bin
+
+# --- Bundles / scratch ---
+codebundle*.md
+CODEBUNDLE*.md
+*codebundle*
+scratch/
+notes_local/

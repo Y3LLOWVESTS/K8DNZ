@@ -1,0 +1,19 @@
+--- k8dnz tune report ---
+base_recipe_id = 98b37faacc63a6aa42c90bdd0839f688
+base_quant = min=-147728900 max=80783500 shift=7141012
+base_clamp = min=-147728900 max=80783500
+best_shift = 7141012
+best_recipe_id = 98b37faacc63a6aa42c90bdd0839f688
+best_metrics distinct=93/256 entropy_byte=6.0221 peak_nibble=349 ticks=7775815
+elapsed_ms = 4100
+
+--- top candidates ---
+# 1 shift=7141012 recipe_id=98b37faacc63a6aa42c90bdd0839f688 entropy_byte=6.0221 distinct=93/256 peak_nibble=349 ticks=7775815
+# 2 shift=14282024 recipe_id=07971ca6fe8dac7c37b7f480ae832844 entropy_byte=5.9649 distinct=90/256 peak_nibble=463 ticks=7775815
+# 3 shift=-7141012 recipe_id=cb62e20192854c82255c6a55a59f672e entropy_byte=5.9572 distinct=87/256 peak_nibble=349 ticks=7775815
+# 4 shift=21423036 recipe_id=b263e2186e018dc59d1c73de4d04768c entropy_byte=5.9535 distinct=89/256 peak_nibble=349 ticks=7775815
+# 5 shift=0 recipe_id=4d2aa1e9971927817836e31cc06f254c entropy_byte=5.9164 distinct=88/256 peak_nibble=463 ticks=7775815
+# 6 shift=-21423036 recipe_id=9a213184a5e374bdcd2fac11af39a4ba entropy_byte=5.9132 distinct=83/256 peak_nibble=349 ticks=7775815
+# 7 shift=28564048 recipe_id=f03b5622e6486ae724914bfe7a72e4cf entropy_byte=5.8693 distinct=86/256 peak_nibble=463 ticks=7775815
+# 8 shift=35705060 recipe_id=4cf9bb1bfc80d648d79c60d3d31edba3 entropy_byte=5.8669 distinct=87/256 peak_nibble=349 ticks=7775815
+# 9 shift=-14282024 recipe_id=8d71dab74a1a3f763f09596c53732e32 entropy_byte=5.8583 distinct=84/256 peak_nibble=463 ticks=7775815

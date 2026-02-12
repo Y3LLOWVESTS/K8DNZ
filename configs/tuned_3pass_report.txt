@@ -1,0 +1,45 @@
+--- k8dnz tune report ---
+base_recipe_id = 98b37faacc63a6aa42c90bdd0839f688
+base_quant = min=-147728900 max=80783500 shift=7141012
+base_clamp = min=-147728900 max=80783500
+best_shift = 9818890
+best_recipe_id = 2b6d6e0e0ca171aec3d90c93d4e82761
+best_metrics distinct=104/256 entropy_byte=6.0295 peak_nibble=1079 ticks=19442815
+elapsed_ms = 37720
+
+--- pass 1 ---
+step_div = 32
+# 1 shift=7141012 recipe_id=98b37faacc63a6aa42c90bdd0839f688 entropy_byte=6.0213 distinct=99/256 peak_nibble=903 ticks=19442815
+# 2 shift=-7141012 recipe_id=cb62e20192854c82255c6a55a59f672e entropy_byte=5.9581 distinct=93/256 peak_nibble=903 ticks=19442815
+# 3 shift=21423036 recipe_id=b263e2186e018dc59d1c73de4d04768c entropy_byte=5.9498 distinct=96/256 peak_nibble=903 ticks=19442815
+# 4 shift=-21423036 recipe_id=9a213184a5e374bdcd2fac11af39a4ba entropy_byte=5.9106 distinct=87/256 peak_nibble=903 ticks=19442815
+# 5 shift=14282024 recipe_id=07971ca6fe8dac7c37b7f480ae832844 entropy_byte=5.9024 distinct=99/256 peak_nibble=1242 ticks=19442815
+# 6 shift=35705060 recipe_id=4cf9bb1bfc80d648d79c60d3d31edba3 entropy_byte=5.8482 distinct=94/256 peak_nibble=903 ticks=19442815
+# 7 shift=0 recipe_id=4d2aa1e9971927817836e31cc06f254c entropy_byte=5.8424 distinct=95/256 peak_nibble=1242 ticks=19442815
+# 8 shift=28564048 recipe_id=f03b5622e6486ae724914bfe7a72e4cf entropy_byte=5.8065 distinct=95/256 peak_nibble=1242 ticks=19442815
+# 9 shift=-14282024 recipe_id=8d71dab74a1a3f763f09596c53732e32 entropy_byte=5.7785 distinct=89/256 peak_nibble=1242 ticks=19442815
+
+--- pass 2 ---
+step_div = 256
+# 1 shift=9818890 recipe_id=2b6d6e0e0ca171aec3d90c93d4e82761 entropy_byte=6.0295 distinct=104/256 peak_nibble=1079 ticks=19442815
+# 2 shift=8926264 recipe_id=9a9eedc4df0b0b8627a53ce3159f6536 entropy_byte=6.0293 distinct=104/256 peak_nibble=997 ticks=19442815
+# 3 shift=7141012 recipe_id=98b37faacc63a6aa42c90bdd0839f688 entropy_byte=6.0213 distinct=99/256 peak_nibble=903 ticks=19442815
+# 4 shift=8033638 recipe_id=dea350e2aeb1a27260ea804b9e71d0a8 entropy_byte=6.0189 distinct=98/256 peak_nibble=916 ticks=19442815
+# 5 shift=6248386 recipe_id=4e685fe63e0ea0d50a71d2f66afeda1c entropy_byte=6.0133 distinct=98/256 peak_nibble=956 ticks=19442815
+# 6 shift=10711516 recipe_id=56342d61d7f1c8b83d09c1aa0101cbe4 entropy_byte=6.0085 distinct=102/256 peak_nibble=1146 ticks=19442815
+# 7 shift=5355760 recipe_id=00fb64fc903b8045ab79f2d2e68b1ee4 entropy_byte=5.9913 distinct=100/256 peak_nibble=985 ticks=19442815
+# 8 shift=11604142 recipe_id=de67184ac32b49304183134e884d6ebf entropy_byte=5.9704 distinct=101/256 peak_nibble=1204 ticks=19442815
+# 9 shift=4463134 recipe_id=0b0f6a570651c76dc1410b9b7bd8cbcc entropy_byte=5.9485 distinct=98/256 peak_nibble=993 ticks=19442815
+
+--- pass 3 ---
+step_div = 2048
+# 1 shift=9818890 recipe_id=2b6d6e0e0ca171aec3d90c93d4e82761 entropy_byte=6.0295 distinct=104/256 peak_nibble=1079 ticks=19442815
+# 2 shift=9930468 recipe_id=63ec92e4742243b485c62356c7f9aa82 entropy_byte=6.0287 distinct=103/256 peak_nibble=1085 ticks=19442815
+# 3 shift=9707312 recipe_id=ddc9e3b5141f08b3bea6f935970ee5b5 entropy_byte=6.0283 distinct=103/256 peak_nibble=1072 ticks=19442815
+# 4 shift=9372578 recipe_id=c2935706a8a1286e46d199c9e5115afb entropy_byte=6.0281 distinct=102/256 peak_nibble=1041 ticks=19442815
+# 5 shift=10042046 recipe_id=fdf4ae877f2cf585eb25123e93b936a5 entropy_byte=6.0277 distinct=102/256 peak_nibble=1092 ticks=19442815
+# 6 shift=9261000 recipe_id=cc5f97878b7d92a733b14f4963b06627 entropy_byte=6.0273 distinct=104/256 peak_nibble=1025 ticks=19442815
+# 7 shift=9595734 recipe_id=37c45361f5a1d613d2944ff4df054406 entropy_byte=6.0264 distinct=101/256 peak_nibble=1061 ticks=19442815
+# 8 shift=10153624 recipe_id=69aa33d7d6d660fa771bcc33b8b3a9a5 entropy_byte=6.0262 distinct=102/256 peak_nibble=1097 ticks=19442815
+# 9 shift=9484156 recipe_id=f5469e3328f597774c101f878c82845d entropy_byte=6.0243 distinct=101/256 peak_nibble=1054 ticks=19442815
+

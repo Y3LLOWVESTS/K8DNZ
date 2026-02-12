@@ -1,0 +1,11 @@
+[package]
+name = "k8dnz-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+crc32fast = { workspace = true }
+k8dnz-core = { path = "../k8dnz-core" }
