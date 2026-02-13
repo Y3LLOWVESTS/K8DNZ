@@ -1,4 +1,4 @@
-````md
+
 # K8DNZ / The Cadence Project (Rust)
 
 **Status: Experimental, but we now have a proven “time-indexed reconstruction” pipeline.**
@@ -134,7 +134,7 @@ The major remaining goal is to make these strands **small** (especially the resi
 ### Build
 ```bash
 cargo build
-````
+```
 
 ### Simulate (pair tokens)
 
