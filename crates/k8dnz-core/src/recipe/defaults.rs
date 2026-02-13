@@ -2,7 +2,8 @@
 
 use crate::fixed::turn32::Turn32;
 use crate::recipe::recipe::{
-    Alphabet, FieldClampParams, FieldParams, FieldWave, FreeOrbitParams, LockstepParams, QuantParams, Recipe, ResetMode,
+    Alphabet, FieldClampParams, FieldParams, FieldWave, FreeOrbitParams, KeystreamMix, LockstepParams, PayloadKind,
+    QuantParams, Recipe, ResetMode,
 };
 
 #[inline]
@@ -39,6 +40,11 @@ pub fn default_recipe() -> Recipe {
         seed: 0xD1CE_BA5E_F00D_CAFE, // deterministic default seed
 
         alphabet: Alphabet::N16,
+        reset_mode: ResetMode::FromLockstep,
+
+        // NEW (back-compat defaults; legacy behavior):
+        keystream_mix: KeystreamMix::None,
+        payload_kind: PayloadKind::CipherXor,
 
         free: FreeOrbitParams {
             v_a: frac_turn(1, 997),
@@ -55,8 +61,6 @@ pub fn default_recipe() -> Recipe {
             delta: frac_turn(1, 2),
             t_step: frac_unit32(1, 128),
         },
-
-        reset_mode: ResetMode::FromLockstep,
 
         field: FieldParams {
             waves: vec![

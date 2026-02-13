@@ -14,6 +14,27 @@ pub enum ResetMode {
     FromLockstep,
 }
 
+/// Optional, invertible keystream mixing.
+/// This is NOT about cryptographic strength; it’s about distribution shaping
+/// while preserving perfect determinism + invertibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeystreamMix {
+    None,
+    SplitMix64,
+}
+
+/// Semantic payload label for .ark data bytes.
+/// For now both are reconstructed with the same XOR law:
+///   plain = data XOR keystream
+/// But this field is the bridge for “model + residual” next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PayloadKind {
+    /// Data bytes are “ciphertext” (plain XOR keystream)
+    CipherXor,
+    /// Data bytes are “residual” (plain XOR model_stream), model_stream currently == keystream
+    ResidualXor,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FreeOrbitParams {
     pub phi_a0: Turn32,
@@ -103,8 +124,16 @@ impl Default for RgbRecipe {
 pub struct Recipe {
     pub version: u16,
     pub seed: u64,
+
     pub alphabet: Alphabet,
     pub reset_mode: ResetMode,
+
+    /// NEW (stored in recipe flags; back-compat default = None)
+    pub keystream_mix: KeystreamMix,
+
+    /// NEW (stored in recipe flags; back-compat default = CipherXor)
+    pub payload_kind: PayloadKind,
+
     pub free: FreeOrbitParams,
     pub lock: LockstepParams,
     pub field: FieldParams,

@@ -5,3 +5,5 @@ pub mod decode_file;
 pub mod ark_inspect;
 pub mod analyze;
 pub mod tune;
+pub mod timemap;
+pub mod arkkey;

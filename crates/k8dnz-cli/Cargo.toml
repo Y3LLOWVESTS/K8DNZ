@@ -8,4 +8,5 @@ license.workspace = true
 clap = { workspace = true }
 anyhow = { workspace = true }
 crc32fast = { workspace = true }
+zstd = { workspace = true }
 k8dnz-core = { path = "../k8dnz-core" }

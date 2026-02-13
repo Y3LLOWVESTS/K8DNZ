@@ -1,5 +1,8 @@
+// crates/k8dnz-cli/src/io/ark.rs
+
 use anyhow::Context;
 use k8dnz_core::recipe::format as recipe_format;
+use k8dnz_core::recipe::recipe::KeystreamMix;
 use k8dnz_core::Recipe;
 
 const MAGIC: &[u8; 4] = b"ARK1";
@@ -9,7 +12,7 @@ const MAGIC: &[u8; 4] = b"ARK1";
 /// recipe_len:u32
 /// recipe_bytes[recipe_len]   (this is the K8R1 recipe blob, includes its own crc + blake3_16)
 /// data_len:u64
-/// data_bytes[data_len]       (ciphertext)
+/// data_bytes[data_len]       (ciphertext OR residual; interpretation lives in recipe.payload_kind)
 /// crc32:u32                  (over everything before crc32)
 pub fn write_ark(path: &str, recipe: &Recipe, data: &[u8]) -> anyhow::Result<()> {
     let recipe_bytes = recipe_format::encode(recipe);
@@ -28,18 +31,12 @@ pub fn write_ark(path: &str, recipe: &Recipe, data: &[u8]) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Read ark and return (Recipe, data).
-/// Validates:
-/// - ARK1 magic
-/// - ark crc32
-/// - embedded recipe blob (via recipe_format::decode: magic + crc + blake3_16)
 #[allow(dead_code)]
 pub fn read_ark(path: &str) -> anyhow::Result<(Recipe, Vec<u8>)> {
     let (_rid, recipe, data) = read_ark_with_id(path)?;
     Ok((recipe, data))
 }
 
-/// Read ark and return (recipe_id_hex, Recipe, data).
 pub fn read_ark_with_id(path: &str) -> anyhow::Result<(String, Recipe, Vec<u8>)> {
     let bytes = std::fs::read(path).with_context(|| format!("read {path}"))?;
     if bytes.len() < 4 + 4 + 8 + 4 {
@@ -88,7 +85,6 @@ pub fn read_ark_with_id(path: &str) -> anyhow::Result<(String, Recipe, Vec<u8>)>
     Ok((rid, recipe, data))
 }
 
-/// Return the embedded recipe_id (hex) from an ark file without decoding the recipe.
 #[allow(dead_code)]
 pub fn ark_recipe_id_hex(path: &str) -> anyhow::Result<String> {
     let bytes = std::fs::read(path).with_context(|| format!("read {path}"))?;
@@ -99,7 +95,6 @@ pub fn ark_recipe_id_hex(path: &str) -> anyhow::Result<String> {
         anyhow::bail!("bad ark magic");
     }
 
-    // Verify ark crc
     let crc_off = bytes.len() - 4;
     let crc_expected = u32::from_le_bytes(bytes[crc_off..].try_into().unwrap());
     let crc_actual = crc32(&bytes[..crc_off]);
@@ -121,27 +116,78 @@ pub fn ark_recipe_id_hex(path: &str) -> anyhow::Result<String> {
 
 /// Generate N keystream bytes from the engine.
 /// One emission -> one byte (N=16 packed nybbles).
+///
+/// If recipe.keystream_mix != None, we apply an invertible XOR mask per-byte.
+/// This improves distribution while remaining 100% deterministic and reversible.
 pub fn keystream_bytes(
     engine: &mut k8dnz_core::Engine,
     n: usize,
     max_ticks: u64,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(n);
-    while out.len() < n && engine.stats.ticks < max_ticks {
+    let (mixed, _raw_opt) = keystream_impl(engine, n, max_ticks, false)?;
+    Ok(mixed)
+}
+
+/// Same as keystream_bytes(), but also returns the raw (unmixed) cadence keystream.
+/// This supports helix/curve modeling work while still enabling “mixed” IO.
+pub fn keystream_bytes_with_raw(
+    engine: &mut k8dnz_core::Engine,
+    n: usize,
+    max_ticks: u64,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let (mixed, raw_opt) = keystream_impl(engine, n, max_ticks, true)?;
+    Ok((mixed, raw_opt.expect("raw requested")))
+}
+
+fn keystream_impl(
+    engine: &mut k8dnz_core::Engine,
+    n: usize,
+    max_ticks: u64,
+    want_raw: bool,
+) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
+    let mut mixed = Vec::with_capacity(n);
+    let mut raw: Option<Vec<u8>> = if want_raw { Some(Vec::with_capacity(n)) } else { None };
+
+    // SplitMix64 state (only used if enabled)
+    let mut sm64_state: u64 = engine.recipe.seed ^ 0x6A09_E667_F3BC_C909;
+
+    while mixed.len() < n && engine.stats.ticks < max_ticks {
         if let Some(tok) = engine.step() {
-            out.push(((tok.a & 0x0F) << 4) | (tok.b & 0x0F));
+            let r = ((tok.a & 0x0F) << 4) | (tok.b & 0x0F);
+
+            if let Some(rr) = raw.as_mut() {
+                rr.push(r);
+            }
+
+            let m = match engine.recipe.keystream_mix {
+                KeystreamMix::None => r,
+                KeystreamMix::SplitMix64 => {
+                    // splitmix64 step -> take low byte as mask
+                    sm64_state = sm64_state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                    let mut z = sm64_state;
+                    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                    z ^= z >> 31;
+                    let mask = (z & 0xFF) as u8;
+                    r ^ mask
+                }
+            };
+
+            mixed.push(m);
         }
     }
-    if out.len() != n {
+
+    if mixed.len() != n {
         anyhow::bail!(
             "keystream short: need {} bytes, got {} (ticks={}, emissions={})",
             n,
-            out.len(),
+            mixed.len(),
             engine.stats.ticks,
             engine.stats.emissions
         );
     }
-    Ok(out)
+
+    Ok((mixed, raw))
 }
 
 fn crc32(bytes: &[u8]) -> u32 {

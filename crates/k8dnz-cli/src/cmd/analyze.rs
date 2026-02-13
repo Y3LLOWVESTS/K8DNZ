@@ -1,4 +1,5 @@
 use clap::Args;
+use std::io::Cursor;
 
 #[derive(Args, Debug)]
 pub struct AnalyzeArgs {
@@ -9,6 +10,14 @@ pub struct AnalyzeArgs {
     /// Show the top N most frequent bytes
     #[arg(long, default_value_t = 16)]
     pub top: usize,
+
+    /// Also report zstd compressed size (as a real-world compressibility scoreboard)
+    #[arg(long, default_value_t = true)]
+    pub zstd: bool,
+
+    /// Zstd compression level (1..=22 typical). Higher is slower.
+    #[arg(long, default_value_t = 3)]
+    pub zstd_level: i32,
 }
 
 pub fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
@@ -40,6 +49,15 @@ pub fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
     eprintln!("max_count       = {}", maxc);
     eprintln!("entropy_bits    = {:.6} (max 8.000000)", entropy);
 
+    if args.zstd {
+        let z = zstd_size(&bytes, args.zstd_level)?;
+        let ratio = if z == 0 { 0.0 } else { (n as f64) / (z as f64) };
+        eprintln!("--- zstd ---");
+        eprintln!("zstd_level      = {}", args.zstd_level);
+        eprintln!("zstd_bytes      = {}", z);
+        eprintln!("ratio_raw/zstd  = {:.4}x", ratio);
+    }
+
     let topn = args.top.min(rows.len());
     eprintln!("--- top {} bytes ---", topn);
     for (i, (b, c)) in rows.iter().take(topn).enumerate() {
@@ -55,6 +73,12 @@ pub fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn zstd_size(bytes: &[u8], level: i32) -> anyhow::Result<usize> {
+    // Deterministic given bytes+level; good enough for a “scoreboard”.
+    let out = zstd::stream::encode_all(Cursor::new(bytes), level)?;
+    Ok(out.len())
 }
 
 fn min_max_256(h: &[u64; 256]) -> (u64, u64) {

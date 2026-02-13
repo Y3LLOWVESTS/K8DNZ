@@ -5020,4 +5020,1055 @@ This is the step that turns “generator” into “compression-by-model.”
 
 ---
 
-### END NOTE 0 FEBRUARY 12 2026 - 11:02 CST
+### END NOTE - FEBRUARY 12 2026 - 11:02 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 12 2026 - 12:56 CST
+
+
+## K8DNZ Carry-Over Notes (for next instance) — 2026-02-12
+
+### 0) Current state in one sentence
+
+We now have an end-to-end **ResidualXor MVP** working: we can **encode Genesis1.txt into a tiny .ark** by storing **residual = plaintext XOR cadence_model_stream**, and we can **decode back to exact original bytes (ROUNDTRIP OK)** using only the recipe + cadence regeneration.
+
+---
+
+## 1) What we proved today (big wins)
+
+### 1.1 ResidualXor pipeline works end-to-end
+
+We ran:
+
+* `tune --fit-in text/Genesis1.txt --fit-by-residual ... --out-ark /tmp/residual_best.ark`
+* Then `decode --in /tmp/residual_best.ark --out /tmp/genesis_roundtrip.txt`
+* Then `cmp` confirmed: **ROUNDTRIP OK**
+
+This establishes the key invariant:
+
+* **Ark contains recipe + residual bytes**
+* Decode reconstructs `model_stream` deterministically from recipe + cadence timing
+* Then `plaintext = residual XOR model_stream`
+
+This is the “hello world” of the Cadence compression idea: **you don’t store the message, you store “what the model got wrong.”**
+
+---
+
+### 1.2 We successfully ranked candidate shifts by residual “compressibility”
+
+We created a **residual-based ranking mode** and used it in production runs.
+
+Residual metrics we’re using for ranking (in this order):
+
+1. `top16_mass` **DESC** (more mass in fewer symbols → easier compression)
+2. `zero_rate` **DESC** (exact matches are excellent)
+3. `entropy` **ASC** (lower entropy → more structure)
+4. `distinct` **ASC** (smaller alphabet)
+5. `peak_byte` **DESC** (more repeated structure)
+6. tie-break by `shift` **ASC** (deterministic stability)
+
+This is important because it aligns the tuner with the real goal:
+
+> Don’t maximize token “randomness.” Maximize **model fit** such that the residual becomes compressible.
+
+---
+
+### 1.3 Multi-pass refinement *actually improved* residual statistics
+
+We ran **passes=3** with derived step divisors (32 → 256 → 2048) and dumped best residual/model per pass:
+
+Command used:
+
+```bash
+cargo run -p k8dnz-cli -- tune \
+  --out-recipe /tmp/tuned_fit.k8r \
+  --fit-in text/Genesis1.txt \
+  --fit-by-residual \
+  --per-max-ticks 50000000 \
+  --candidates 9 \
+  --passes 3 \
+  --dump-residual-pass /tmp/res_pass_%d.bin \
+  --dump-model-pass /tmp/model_pass_%d.bin
+```
+
+Key observations:
+
+* **Pass 1 best:** shift `35705060` (recipe `4cf9...`) residual entropy **7.3527**, distinct **244/256**, peak_byte **114**, top16_mass **0.2485**
+* **Pass 2 best:** shift `39275564` (recipe `14af...`) residual entropy **7.2950**, distinct **243/256**, peak_byte **135**, top16_mass **0.2578**
+* **Pass 3 best:** shift `39498720` (recipe `0a9c...`) residual entropy **7.2866**, distinct **242/256**, peak_byte **138**, top16_mass **0.2587**
+
+So refinement is doing real work:
+
+* `top16_mass` increased (0.2485 → 0.2587)
+* entropy decreased (7.3527 → 7.2866)
+* distinct decreased (244 → 242)
+* peak_byte increased (114 → 138)
+
+Even though these are not huge jumps yet, **the direction is consistent and meaningful**.
+
+---
+
+### 1.4 Per-pass dump support is now implemented and validated
+
+We added:
+
+* `--dump-residual-pass`
+* `--dump-model-pass`
+* (optional) `--dump-raw-model-pass`
+
+These accept patterns like `/tmp/res_pass_%d.bin` (1-based pass index).
+The dumps were generated correctly and analyzed correctly.
+
+This is crucial because it lets us **track convergence** and build graphs later:
+
+* residual entropy vs pass
+* top16_mass vs pass
+* compression ratio vs pass (next)
+
+---
+
+## 2) Artifacts produced (important file paths & what they mean)
+
+### From earlier “single best” residual fit run
+
+* `/tmp/tuned_fit.k8r` (tuned recipe for best shift in that run)
+* `/tmp/res_best.bin` (residual bytes, same length as plaintext)
+* `/tmp/model_best.bin` (model stream bytes used)
+* `/tmp/model_raw.bin` (raw cadence model stream pre-mix; currently same as model_best because mix None)
+* `/tmp/residual_best.ark` (ARK payload_kind=ResidualXor; recipe + residual)
+
+### From the multi-pass test run
+
+* `/tmp/res_pass_1.bin`, `/tmp/res_pass_2.bin`, `/tmp/res_pass_3.bin`
+* `/tmp/model_pass_1.bin`, `/tmp/model_pass_2.bin`, `/tmp/model_pass_3.bin`
+* tuned recipe after pass 3:
+
+  * `/tmp/tuned_fit.k8r` saved with **best_shift=39498720** and recipe id **0a9c4c07...**
+
+---
+
+## 3) What the stats are telling us (interpretation)
+
+### 3.1 Residual is still “high entropy” but has growing structure
+
+Entropy ~7.29 bits/byte is still close to random (8.0), but:
+
+* `top16_mass ~ 0.259` means the top 16 symbols cover ~26% of bytes
+* peak symbol increases suggests certain byte values are becoming more common
+* distinct is slowly shrinking
+
+The tuner is finding shifts where the cadence stream aligns with Genesis text structure better.
+
+### 3.2 The residual’s top bytes are stabilizing
+
+Across passes, top byte values are very stable:
+
+* `0x24`, `0x60`, `0x25`, `0x34`, `0x61`, etc.
+
+That suggests we’re finding a consistent “difference language” between Genesis1 and the model stream. This is exactly what we want: **residual isn’t noise; it’s a patterned correction field.**
+
+### 3.3 Model stream itself is low-entropy
+
+`model_best.bin` entropy reported ~5.8556, distinct 94/256.
+
+That means our cadence keystream currently produces a relatively structured distribution—good for compressibility, but it also means:
+
+* It may be “too structured” in the wrong way relative to the plaintext.
+* We’re relying on tuning shift to line that structure up with the plaintext.
+
+This supports the long-term concept:
+
+> the “orbiting dots” model is a **structured generator**, and the goal is to align its structure with the structure of real language (Genesis), minimizing residual.
+
+---
+
+## 4) Critical invariants & mental model (for continuity)
+
+### 4.1 Time is the whole game
+
+We are effectively treating the cadence engine as a deterministic “time-indexed generator.”
+
+* If shift/time is off, the keystream is different → residual decode fails.
+* This is why **quant.shift** tuning is so central.
+
+### 4.2 Recipe is the compact “DNA”
+
+Recipe is the compact genotype:
+
+* defines orbital/field params
+* defines quantization and shift mapping
+* defines keystream mixing (None/SplitMix64)
+* defines payload_kind (ResidualXor, etc.)
+
+Residual is the phenotype correction:
+
+* everything the generator didn’t predict
+
+This maps perfectly onto the “double helix” analogy:
+
+* one strand = generator (model stream)
+* other strand = residual corrections
+* together they recreate the target text
+
+---
+
+## 5) What remains (next steps, ordered by impact)
+
+### 5.1 Measure *actual compression ratio*, not just residual metrics
+
+Right now we’re using proxy stats (entropy/top16). Next we need “real world” compression checks.
+
+Add a tiny tool path (or CLI flag) that reports:
+
+* `zstd(residual)` size (or lz4 / deflate)
+* maybe `zstd(model)` (optional)
+* total ark size vs input size
+* “effective ratio = input_bytes / (recipe_bytes + compressed_residual_bytes)”
+
+This will tell us if improvements in `top16_mass/entropy` translate to real compression.
+
+**Target**: a repeatable dashboard line:
+
+* pass N: residual_entropy, zstd_size, ratio
+
+### 5.2 Expand tuning search space beyond shift-only
+
+We’re currently tuning shift (and implicitly timing alignment). Next knobs to try:
+
+* quant clamp/quant range adjustments (qmin/qmax)
+* alternate mapping params (clamp/quant/shift transforms)
+* mixing modes (SplitMix64)
+* potentially multi-stream combination (A/B/C streams) if already present in engine design
+
+But keep it staged:
+
+* First: compare `--keystream-mix none` vs `splitmix64` using same tuning method and see residual compressibility.
+
+### 5.3 Build “Ark string / ARK1 textual representation” later — stay on bytes now
+
+We have working .ark binary. That is enough to prove the system.
+
+Later we can reintroduce the “ARK string” concept (like `_A-..._B-..._C-...`) when:
+
+* we know which parameters are truly necessary
+* we have stable versioning
+* we can pack them deterministically
+
+For now, **binary recipe blob inside ARK** is fine.
+
+### 5.4 Multi-segment / page mode (Russian-doll compression)
+
+We have proven single-file residual encoding.
+
+Next phase:
+
+* split Genesis1 into blocks (e.g., 1KB chunks)
+* tune per chunk or reuse one tuned recipe and see residual differences
+* optionally produce “pages” of mini-arks
+* then compress the page list (or build a super-ark of ark-strings later)
+
+This ties into the “cascading compression / Russian doll” idea.
+
+### 5.5 Maintain dataset discipline: Genesis only
+
+Continue using:
+
+* `text/Genesis1.txt` as the canonical test corpus until end-to-end is strong.
+  When we need more variety:
+* move to next chapter (Genesis2, etc.)
+  Eventually:
+* whole KJV as one canonical corpus.
+
+This prevents “overfitting to random samples” and keeps progress comparable.
+
+---
+
+## 6) Known implementation details / gotchas to remember
+
+### 6.1 Pass refinement schedule
+
+Default pass divisors used when `--passes > 1` and no explicit `--step-div`:
+
+* pass1: /32
+* pass2: /256
+* pass3: /2048
+* pass4: /16384
+  (×8 each pass)
+
+Derived steps we saw:
+
+* width=228,512,400
+* step1=7,141,012
+* step2=892,626
+* step3=111,578
+
+This scheme is working and producing improvements.
+
+### 6.2 ResidualXor ark write
+
+During `--out-ark`:
+
+* recipe is cloned to `r`
+* `r.payload_kind = PayloadKind::ResidualXor`
+* keystream bytes are generated (possibly mixed)
+* residual computed by XOR
+* `ark::write_ark(out_ark, &r, &residual)` writes it
+
+Decode then checks recipe id and regenerates stream.
+
+### 6.3 Model dumps
+
+* `dump-model` = mixed model used
+* `dump-raw-model` = pre-mix cadence stream
+  When `keystream_mix=None`, raw and used are identical (as we observed).
+
+---
+
+## 7) Current best results snapshot (for next session baseline)
+
+### Single-pass earlier best (baseline)
+
+* shift = `35705060`
+* residual entropy = `7.352726`
+* top16_mass = `0.2485`
+* peak_byte = `114`
+* distinct = `244/256`
+
+### After 3-pass refinement (new best)
+
+* **best_shift = `39498720`**
+* **best_recipe_id = `0a9c4c07d5713db1e3a95c8e5292e630`**
+* residual entropy = **`7.286591`**
+* top16_mass = **`0.2587`**
+* peak_byte = **`138`**
+* distinct = **`242/256`**
+* printable_rate ~ **0.717** (note: this is *residual* printability, not plaintext)
+
+---
+
+## 8) Suggested immediate “next commands” for the next instance
+
+### 8.1 Generate an ark using the new best tuned recipe and confirm roundtrip
+
+```bash
+cargo run -p k8dnz-cli -- encode \
+  --recipe /tmp/tuned_fit.k8r \
+  --in text/Genesis1.txt \
+  --out /tmp/genesis_best.ark
+
+cargo run -p k8dnz-cli -- decode --in /tmp/genesis_best.ark --out /tmp/genesis_best_roundtrip.txt
+cmp -s text/Genesis1.txt /tmp/genesis_best_roundtrip.txt && echo "ROUNDTRIP OK" || echo "ROUNDTRIP MISMATCH"
+```
+
+(If your current CLI uses tune→out-ark path instead of encode, then do the tune command with `--out-ark` and repeat `decode+cmp`.)
+
+### 8.2 Compare mix modes
+
+Run identical multi-pass with:
+
+* `--keystream-mix none`
+* `--keystream-mix splitmix64`
+
+and compare:
+
+* residual entropy
+* top16_mass
+* (soon) zstd residual size
+
+### 8.3 Add “real compression” measurement (highest priority code change)
+
+Implement either:
+
+* `k8dnz-cli analyze --compress zstd` (quick win)
+  or
+* `k8dnz-cli tune --report-compressed` (prints zstd size per candidate / per pass)
+
+---
+
+## 9) The deeper “why this matters” (carry-forward concept framing)
+
+We are building a codec where:
+
+* the cadence system acts like a deterministic **structured generator**
+* tuning makes it “lock onto” a text’s structure through time/shift alignment
+* the stored data becomes the small **correction set** (residual)
+* as the model improves (more parameters, better mapping, multi-stream, etc.), the residual gets smaller/more compressible
+
+This is the same fundamental idea as:
+
+* predictive coding
+* model-based compression
+* but with the special property that the “model” is a compact, time-derived orbit function rather than a trained neural net.
+
+And the “DNA / double helix” analogy is apt:
+
+* Model stream = one strand
+* Residual stream = other strand
+* The final text emerges from their deterministic interlock.
+
+--
+
+### END NOTE - FEBRUARY 12 2026 - 12:56 CST
+
+
+### BEGIN NOTE - FEBRUARY 12 2026 - 16:50 CST
+
+([Past chat][1])([Past chat][2])([Past chat][1])([Past chat][3])([Past chat][2])([Past chat][4])([Past chat][5])([Past chat][4])([Past chat][4])([Past chat][3])([Past chat][6])([Past chat][6])([Past chat][7])([Past chat][7])([Past chat][7])([Past chat][8])
+
+According to the current repo snapshot in your `codebundle.md` + `NOTES.MD` (the ones you just generated), here’s a **comprehensive carry-over note pack** for the next instance—focused on **what’s proven end-to-end**, what’s **still missing for the “ARK key = short string → lots of text” vision**, and the **highest-leverage next steps**.
+
+---
+
+# K8DNZ / Cadence / ARK — Carry-Over Notes (Next Instance)
+
+## 0) North Star (what we’re building)
+
+We’re building a **deterministic “Cadence machine”** that can be driven by a compact **ARK key** (a short string / recipe) to produce a long output stream. The vision is:
+
+* **Time is sacred**: if timing (phase / tick schedule) changes by even a hair, you get a different emission stream or nothing useful.
+* The “machine” is conceptually **two orbitals (A and C)** that occasionally align, then enter a **lockstep spiral** around a **colored frustum**, emitting **paired tokens** (ultimately **color pairs**) at the top.
+* The engineering translation: **a deterministic state machine** (phases/ticks) + **field sampling** + **quantization/mapping** + (optionally) a **residual correction stream** for arbitrary inputs.
+
+This project now has **two tracks** running in parallel:
+
+1. **Pragmatic codec track (already working)**: `recipe + residual` inside `.ark` proves deterministic portability and decode correctness.
+2. **Pure ARK-string generator track (the “10 pages from a short key” vision)**: requires new layers (emission mapping, timing map, and/or search/tuning).
+
+---
+
+## 1) What we accomplished (hard proof, not theory)
+
+### 1.1 Genesis1 end-to-end roundtrip is proven (real artifacts)
+
+You successfully ran a full pipeline:
+
+* `tune --fit-in text/Genesis1.txt … --out-ark /tmp/genesis.ark --rank-by-effective-zstd …`
+* `ark-inspect` validates:
+
+  * **ARK1 magic**
+  * **CRC32 verified**
+  * embedded recipe id matches recomputed recipe id
+* `decode` outputs `/tmp/genesis.decoded.txt`
+* `wc -c` confirms both are **4201 bytes**, and the roundtrip is lossless.
+
+This matters because it proves:
+
+* our recipe serialization is stable,
+* `.ark` packaging is valid,
+* decode determinism works on real data,
+* the system is not hand-wavy anymore: it’s executable and correct.
+
+### 1.2 The `.ark` container format is now real and verified
+
+The file format is implemented in `crates/k8dnz-cli/src/io/ark.rs` and is:
+
+* `MAGIC "ARK1"`
+* `recipe_len:u32`
+* `recipe_bytes[recipe_len]` (K8R1 recipe blob with its own checksum/id)
+* `data_len:u64`
+* `data_bytes[data_len]` (ciphertext or residual; meaning lives in recipe payload kind)
+* `crc32:u32` over everything before crc32
+
+Also, `read_ark_with_id()` extracts the embedded recipe id from the recipe blob and verifies ark crc32 before decoding recipe bytes.
+
+### 1.3 Tuning is now ranking “true cost” (recipe bytes + zstd(residual))
+
+Your tuning run uses **EFFECTIVE_ZSTD** ranking:
+
+* effective_bytes = recipe_bytes + zstd(residual) at chosen zstd level.
+* tie-breakers: smaller zstd_bytes, smaller recipe_bytes, then shift asc.
+
+This is crucial: it matches the real-world “total cost” framing, not proxy metrics.
+
+### 1.4 “Time budget invariant” is empirically demonstrated and now part of the mental model
+
+You hit the failure mode multiple times during testing and tuning:
+
+* “keystream short: need 4201 bytes, got 1286 (ticks=5,000,000, emissions=1286)”
+* This is *not* a flake: it proves our **max_ticks / emissions coupling** is real and directly enforces the “time matters” invariant.
+
+Your notes explicitly call out that “max_ticks failure is not a bug” — it’s a core invariant and must remain true because it’s the whole *time-sensitivity* backbone of the system.
+
+### 1.5 Tests exist, and now we know why one failed (and how to avoid future confusion)
+
+You verified the test inventory (`cargo test -- --list`) and ran tests successfully, **except** the tune-fit test initially failed due to CLI flag drift and later due to formatting and time budget:
+
+Common issues we saw in the failing `tune_fit_genesis` iterations:
+
+* CLI arg mismatch (old `--in` vs new `--fit-in`)
+* invalid numeric literal formatting: `5_000_000` rejected by clap as a string (underscores not accepted)
+* too-low `per_max_ticks` causing keystream-short (not enough ticks to emit 4201 bytes)
+
+Once the test used correct flags, correct numeric literal format, and sufficient tick budget, it passed.
+
+**Important carryover principle:** whenever `tune` or any test uses `per_max_ticks`, it must be large enough to generate `len(input)` emissions (for ResidualXor-style fitting).
+
+---
+
+## 2) Where we are *right now* (honest status)
+
+We have a strong “deterministic engine + packaging + tuning” foundation.
+
+But the **ARK string vision** (“short user-typeable key expands into pages”) is not done yet, and we already captured that explicitly:
+
+* We do **not** yet have RGB-pair emissions in the core engine.
+* We do **not** yet have a timing-map/extractor layer.
+* We do **not** yet have a finalized ARK key string format implemented (parse/encode/CRC).
+* We do **not** yet have a true recipe discovery pipeline that can find a key that *purely generates* Genesis1 without residual.
+* The current `.ark` path is a real proof of determinism/portability, but **not the final “pure synthesis” deliverable**.
+
+That’s the correct framing.
+
+---
+
+## 3) The “pigeonhole principle” / combinatorial-space debate (the correct stance)
+
+You and Grok converged on the correct *engineering* point:
+
+* If ARK has ~10 parameters (A/B/C seeds, orbital rates, qshift, clamp ranges, field params, delta, mapping/permutation, etc.), the **key space becomes astronomically large**.
+* That means *collisions are not forced in practice* for the regimes we care about, and “pigeonhole handwaving” isn’t the right lens **for feasibility of unique program handles**.
+
+**But** we must keep one thing crisp (and we already did in NOTES):
+
+* A huge key space does **not** automatically mean arbitrary files can be produced from tiny keys.
+* For arbitrary input compression, the realistic bridge is **recipe + residual**, and the tuner’s job is to minimize `bits(recipe)+bits(residual)`.
+
+This is exactly aligned with the “realistic compression truth” section: generator-only works if the data is generatable; general compression requires **generator + residual** (or some shared dictionary/corpus, which you explicitly rejected as “cheating”).
+
+So the correct posture is:
+
+* **ARK key can be an enormous program space** (true),
+* but **information theory still applies** to arbitrary targets,
+* therefore: *either* we focus on generatable structured outputs (procedural), *or* we embrace residual as the honest path to general-purpose compression.
+
+---
+
+## 4) The “DNA / double-helix” insight (how it maps to the machine)
+
+This is the conceptual piece you wanted preserved:
+
+* The Cadence machine naturally produces **paired outputs** (two dots / two colors / two numbers).
+* Thinking “double helix” is useful because:
+
+  * you can treat the output as **two interleaved strands** of symbols,
+  * and define a **curve/arc** between paired values (e.g., average-of-two, or derived midpoint) that evolves over time.
+* The key idea you emphasized: even if each “dot” is as primitive as **a single bit**, if it’s represented as a number and we can generate a curve between the two strands, then:
+
+  * with starting numbers known for both pairs + time known,
+  * decoding can become a deterministic “counting game” along that curve,
+  * and the stored “arc” data can be extremely generic while still allowing reconstruction.
+
+**Actionable translation:** treat emissions as `(left,right)` and define:
+
+* a deterministic mapping from time index `t` → `(left_t, right_t)` via orbital/field rules,
+* plus an optional derived “curve state” `c_t = f(left_t, right_t)` (midpoint, phase difference, etc.)
+* then explore encodings where the curve carries high-level structure and the residual corrects small mismatches.
+
+This is a strong conceptual bridge between “paired orbitals” and “paired strands.”
+
+---
+
+## 5) Current ARK / Recipe artifacts and specs (what exists vs what’s draft)
+
+### 5.1 What exists in code (real)
+
+* Binary `.ark` container with embedded recipe + payload + CRC32.
+* Tuner that can score candidates by effective zstd bytes.
+* Notes demonstrating proven end-to-end ARK roundtrip and analysis tooling.
+
+### 5.2 What exists as draft direction (not finalized)
+
+We have a conceptual ARK string skeleton (not set in stone):
+
+* `ARK1:` version
+* `A=` orbit/time params + seed
+* `B=` field seed + mapping/quant params
+* `C=` second orbit params + seed
+* `M=` mode (bytes/text/pages/rgbpair)
+* `L=` length target
+* `H=` checksum
+
+We also captured the example short string form:
+`_A-15724536_B-9aec763728_C-24354542` and the idea of expanding to “10 pages,” plus the realism constraints around generator-only vs residual.
+
+---
+
+## 6) Immediate “what remains” roadmap (high leverage, in order)
+
+### Phase A — lock in CLI/test stability (no more foot-guns)
+
+1. **Normalize numeric parsing in tests**
+   Avoid underscores in CLI integers (`5000000`, not `5_000_000`).
+2. **Ensure tune-fit tests always provide enough tick budget**
+   Because for fit-to-length N bytes, we need at least N emissions, which implies a minimum ticks (engine-dependent). The prior keystream-short failures show exactly what happens otherwise (not a hang; it’s a valid invariant).
+
+### Phase B — implement the missing “ARK-string vision” layers
+
+These are the real next steps if the goal is **short key → big deterministic output** (without embedding the text):
+
+1. **Add an emission mode that produces true “color pairs” / richer symbols**
+   The notes propose “RGB_A + RGB_C = 6 bytes per emission” as a natural mapping, because the vision is explicitly color pairs.
+   This is the most direct “vision → code” step.
+
+2. **Build the timing map / extractor layer (critical)**
+   The coherent plan already described is:
+
+   * generate a very large stream of emissions
+   * only some indices matter
+   * use a timing map to pick the needed emissions to reconstruct bytes/text
+     Without this, “pages from a key” has no mechanism for *selective reconstruction*.
+
+3. **Implement the ARK string format (parse/encode/checksum)**
+   We have the skeleton fields (`A,B,C,M,L,H`) but we still need:
+
+   * canonical encoding rules
+   * CRC/checksum rules
+   * strict parsing
+   * stable “versioned” semantics
+
+4. **Add a “key discovery / fitting” pipeline aimed at generator-only matches**
+   If we want “no residual,” we need:
+
+   * search methods that find keys that match chosen target chunks at chosen timing-map indices
+   * or a structured “instruction decoding” layer where emissions aren’t bytes directly but drive a higher-level text realizer.
+
+### Phase C — keep the “honest compression” path alive (recipe + residual)
+
+Even if generator-only is the dream, the project already has the right practical bridge:
+
+* **tune objective = recipe bytes + coded residual bytes**
+* keep pushing modeling so residual becomes smaller over time.
+
+This is exactly aligned with the “Cadence compression = shortest deterministic recipe that explains data + minimal residual” principle already written in the notes.
+
+---
+
+## 7) What to do first next session (concrete TODO list)
+
+If we want the next instance to move the project forward fastest, do this:
+
+1. **Decide emission target for the “vision track”:**
+
+   * `nibblepair` (byte = p0*16+p1), or
+   * `rgbpair` (6 bytes/emission, closer to vision)
+     My recommendation: implement `rgbpair` as the “wow factor” mode while keeping nibblepair for fast search.
+
+2. **Implement a “timing map MVP”**
+
+   * simplest version: a list of emission indices `[i0,i1,…]` stored compactly
+   * decoder runs generator, collects emissions at those indices, reconstructs bytes.
+
+3. **Define ARK string v0 that can carry:**
+
+   * A seed + C seed + B seed
+   * qshift / clamp/quant
+   * mode + length
+   * checksum
+     (Doesn’t need to be perfect—needs to be stable enough to iterate.)
+
+4. **Make a tiny “verse-1 target” experiment**
+
+   * Don’t jump to whole Genesis1 in generator-only mode.
+   * Start with a small target (e.g., first line/verse) and prove:
+
+     * key → emission stream
+     * timing map extracts bytes
+     * output matches target exactly
+       Then scale.
+
+---
+
+## 8) The “next step” answer to your immediate situation (right now)
+
+You already proved: **tune → ark → decode is correct** and **the tune_fit_genesis test can pass**.
+
+So the next step depends on which track you want to push:
+
+* If the goal is **better practical compression right now**: expand the tuner search space beyond `shift` (more parameters), keep ranking by effective bytes, and add block/chunk experiments.
+* If the goal is the **ARK string vision**: implement **rgbpair emissions + timing map + ARK string parser** (that’s the missing triangle; everything else is already a solid base).
+
+---
+
+If you want, in the next instance you can paste just these three things and we’ll pick up instantly:
+
+1. your preferred emission mode (`nibblepair` vs `rgbpair`),
+2. whether timing map is allowed to be stored alongside the ARK key (initially yes, tiny), or must be derivable from the same key (hard mode),
+3. the smallest target text chunk you want as the first “generator-only exact match” milestone (e.g., Genesis 1:1 line only).
+
+[1]: https://chatgpt.com/c/698d52d5-b20c-8326-96bc-f711955c5876 "K8DNZ Project Analysis"
+[2]: https://chatgpt.com/c/698e0899-1a0c-832f-b474-dd264eec3fa7 "K8DNZ Project Analysis"
+[3]: https://chatgpt.com/c/698e2465-feb8-8330-818e-87ecfcb510e5 "K8DNZ Progress Update"
+[4]: https://chatgpt.com/c/698cd24d-0a90-8326-9648-33f60375a523 "K8DNZ Cadence Project Progress"
+[5]: https://chatgpt.com/c/698ce530-6c78-832a-a788-6fe19bc3fdb0 "K8DNZ Project Progress"
+[6]: https://chatgpt.com/c/698bbf08-03f4-832f-a387-1ae9c6e05d9d "K8DNZ Project Analysis"
+[7]: https://chatgpt.com/c/698d0aa6-c02c-832f-90c8-be0390be0571 "K8DNZ Project Progress"
+[8]: https://chatgpt.com/c/698d43d5-6d1c-8333-bcaa-897e7e92555b "K8DNZ Project Continuation"
+
+### END NOTE - FEBRUARY 12 2026 - 16:50 CST
+
+
+### BEGIN NOTE - FEBRUARY 13 2026 - 12:23 CST
+
+
+## K8DNZ / Cadence Project — Carry-Over Notes (for next instance)
+
+### 0) What we’re building (current mental model)
+
+We are building a deterministic “stream generator” (Cadence Engine) where:
+
+* A **recipe (.k8r)** defines how the engine produces a token stream over **ticks** (time is sacred).
+* Each emission yields a **token** that can be expressed as:
+
+  * a packed **byte** (`tok.pack_byte()`), or
+  * an **rgbpair** (6 bytes per emission) (`tok.to_rgb_pair().to_bytes()`).
+* A compact “key” concept (ARK string / ARK1S) can point to the recipe params.
+* To reconstruct target data, we use:
+
+  1. a **timemap (TM1)** = indices into the stream (time positions),
+  2. an optional **mapping/permutation layer** (e.g., SplitMix64-based),
+  3. a **residual** (bytes) that XOR-patches what the stream doesn’t naturally match.
+
+This is now proven end-to-end for small samples. The remaining work is **making it small** and **scalable**.
+
+---
+
+### 1) What we accomplished (major milestones)
+
+#### A) The toolchain compiles clean and we have working CLI commands
+
+We have a working CLI that can:
+
+* Generate a timemap by stride: `timemap make`
+* Apply a timemap to extract bytes: `timemap apply`
+* Fit a timemap in a “match target exactly” greedy subsequence mode: `timemap fit` (this failed on real text as expected)
+* Fit a timemap window + XOR residual: `timemap fit-xor` (this works)
+* Reconstruct exact bytes using recipe + timemap + residual: `timemap reconstruct` (this works)
+* `regen` can generate stream outputs in jsonl/bin (but we discovered a key issue below)
+* `analyze` can measure entropy/distinct bytes and zstd compression of any blob
+
+#### B) We discovered and fixed a critical conceptual mismatch: regen output vs byte stream
+
+When using the tuned Genesis recipe (`/tmp/genesis_used.k8r`) produced by `tune --rank-by-effective-zstd`, `regen --out bin` produced an all-zero byte stream (entropy 0), and jsonl tokens were `{a:0,b:0}` repeatedly.
+
+However, regenerating from **known good configs** like `./configs/tuned_validated.k8r` produced a healthy distribution (distinct_bytes=135/256, entropy ~6.17 for the 50k emissions run), proving the engine is fine and the “bad stream” issue is tied to the tuned recipe settings (likely quant/clamp/shift/mapping interaction or recipe fields missing vs assumed defaults).
+
+This “all zeros from tuned recipe” is a known bug/behavior to debug later.
+
+#### C) We achieved the “impossible” demo: exact reconstruction with timemap + residual
+
+We proved end-to-end exact reconstruction:
+
+* For 57 bytes (first line Genesis1), `fit-xor` achieved ~5/57 direct matches (~8.77%), wrote `tm1 + resid`, then `reconstruct` reproduced exact bytes (`cmp ... OK`).
+* For 256 bytes (`/tmp/gen256.bin`), `fit-xor` achieved ~10/256 direct matches (~3.9%), then `reconstruct` reproduced exact bytes (`cmp ... OK`).
+* We verified this works both in **pair** mode and **rgbpair** mode.
+
+This is the big milestone: deterministic “time-indexed regeneration” + small side data enables perfect reconstruction.
+
+#### D) We built/clarified rgbpair semantics and fixed indexing correctness
+
+We found a semantic trap:
+
+* Legacy `timemap apply --mode rgbpair` treated TM1 indices as *emission indices* and output 6 bytes per emission.
+* But for `fit-xor` with rgbpair, the “stream” is naturally a **flattened 6-bytes-per-emission** stream, so TM1 indices must be **flattened positions**: `pos = emission*6 + lane`.
+
+We updated `cmd/timemap.rs` so that:
+
+* `fit-xor` supports `--mode rgbpair` and builds a flattened stream.
+* It outputs TM1 indices as flattened positions and prints window start as `(emission, lane)`.
+* `reconstruct` supports `--mode rgbpair` and interprets TM1 indices correctly via `collect_flat_stream_bytes()`.
+
+After this correction, `fit-xor` + `reconstruct` in rgbpair mode works and `cmp` returns OK.
+
+#### E) We introduced mapping/permutation as a next lever (SplitMix64)
+
+We added optional mapping to `fit-xor` and `reconstruct`:
+
+Latest proof:
+
+* `fit-xor --mode rgbpair --map splitmix64 --map-seed 1` achieved ~8/256 direct matches (~3.125%).
+* `reconstruct` with the same map settings reproduced exact bytes (`cmp ... OK`).
+
+This confirms the architecture: **stream → optional mapping → XOR residual → target** is coherent and reversible.
+
+---
+
+### 2) Key observations from the measurements (what they mean)
+
+#### A) Residual size is currently not compressing well at 256 bytes
+
+Example: for pair mode on 256 bytes:
+
+* Residual entropy ~6.83 bits/byte
+* zstd(3) residual was ~265 bytes (slightly bigger than raw 256)
+
+So at this stage:
+
+* We are not “compressing text into a tiny key” yet.
+* We are proving determinism and reconstructability, with residual acting like a one-time pad patch.
+
+This is expected early: with low match rate, residual looks close to random and won’t compress.
+
+#### B) The stream distribution matters a lot (rgbpair example)
+
+For a 4096 emission rgbpair extraction, we observed only **6 distinct bytes** and very high compressibility (zstd ~1050 for 24,576 bytes, ~23x ratio). That means the rgbpair output space is currently extremely constrained (values like 0xFF, 0x3C, 0x78, 0xC8, etc).
+
+This can be good or bad:
+
+* Good: constrained alphabets can compress, can be used as a “structured basis”.
+* Bad: it doesn’t naturally match ASCII text, so “direct match” rate is near 0 unless we add mapping.
+
+#### C) Matching is not the goal; reducing residual is the goal
+
+The algorithm’s success criterion is not “stream equals target”.
+It’s:
+
+* “Given a compact recipe+timemap, can we reconstruct target with minimal residual?”
+  Residual is what we must drive down.
+
+Current match rates (3–9%) are too low; residual remains ~random.
+
+---
+
+### 3) What we can do right now (next steps that matter)
+
+The project has now moved from “prove it works” to “make it small”.
+
+#### Track A — Fix the “tuned recipe generates zeros” issue (high priority)
+
+Symptoms:
+
+* `tune` produced `/tmp/genesis_used.k8r` (210 bytes) that later caused `regen` to output `{a:0,b:0}` and all-zero bin stream.
+* But configs like `./configs/tuned_validated.k8r` generate healthy entropy.
+
+Hypothesis buckets:
+
+1. The tuned recipe is missing some fields that defaults normally supply (e.g., mapping params, clamping bounds, widths).
+2. `Engine::new(recipe)` treats some combination (shift/step/width/clamp) as degenerate.
+3. `regen` is serializing tokens incorrectly (writing bytes from tokens incorrectly) — less likely because `regen` works fine with tuned_validated.
+4. The “tuned” recipe may be tuned for residual-XOR encoding path, not raw token stream.
+
+Next actions:
+
+* Compare printed recipe fields between `tuned_validated.k8r` and `/tmp/genesis_used.k8r`.
+* Add a `k8dnz-cli recipe inspect --recipe <file>` command that prints all fields in human readable form.
+* Add a `regen --dump-first N` (or just `regen --jsonl`) and compare `tok.pack_byte()` distribution for both recipes.
+
+Goal:
+
+* Ensure **any produced recipe** yields a healthy, non-degenerate stream.
+
+#### Track B — Residual reduction strategy (the real work)
+
+We need to increase “predictable structure” so residual is smaller and compressible.
+
+The levers available (and now proven reversible):
+
+1. **Mapping/permutation layer**:
+
+   * We already have SplitMix64 mapping with seed.
+   * Next: add mapping families:
+
+     * affine byte map: `b' = (a*b + c) mod 256` with odd `a`
+     * XOR mask stream: `b' = b ^ f(i,seed)` (very cheap)
+     * table permutation (256-byte perm) derived from seed
+     * lane-aware mapping for rgbpair (`lane` influences mapping)
+2. **Window selection**:
+
+   * Right now `fit-xor` chooses a single contiguous window that maximizes direct matches.
+   * That’s a crude strategy.
+   * Next: allow piecewise windows or “stride windows” (multiple smaller windows) if it reduces residual compressibility.
+3. **Better objective function** (most important):
+
+   * Don’t optimize “matches count”; optimize **residual compressibility**:
+
+     * measure zstd bytes of residual for candidate windows (and candidate maps)
+     * choose the window+map with smallest residual compressed size
+   * This aligns with the end goal.
+4. **Increase degrees of freedom in the generator** (later):
+
+   * Right now the stream may not have enough reachable diversity or mixing.
+   * Adjust quantization, orbit params, token packing, etc. But first exploit mapping + objective.
+
+Immediate next implementation idea:
+
+* Extend `timemap fit-xor` to:
+
+  * scan candidate window starts (maybe sample them rather than brute-force)
+  * for each candidate, compute residual
+  * compute `zstd(residual)` size (level 3 like we do elsewhere)
+  * keep the best candidate by **minimum zstd bytes**, not maximum matches
+* Then extend to also test a small set of map parameters per window.
+
+This turns the system into an optimizer.
+
+#### Track C — Scale tests from 256 bytes upward
+
+We should run a progression:
+
+* 256 bytes → 1024 bytes → 4096 bytes → full Genesis1.txt (4201 bytes)
+  Each time record:
+* tm length
+* residual length
+* residual zstd bytes
+* total “effective bytes” (recipe + tm + zstd(resid))
+  This becomes our scoreboard.
+
+#### Track D — ARK key story (format + reproducible decode)
+
+We already have ARK1S string generation from a recipe file:
+
+* `ark-key from-recipe --recipe ./configs/tuned_validated.k8r` outputs an ARK1S string.
+
+Next:
+
+* Ensure ARK1S contains enough to reconstruct:
+
+  * recipe params OR recipe_id + fetch mechanism
+  * mapping mode + seed
+  * timemap reference or encoded timemap
+  * residual reference or compressed residual
+    This becomes the “small string yields pages” narrative.
+    Right now, timemap and residual exist as files. Next step is “serialize them into a compact blob/string.”
+
+---
+
+### 4) Known gotchas / user constraints
+
+* User doesn’t want comments in bash snippets. Provide clean command lines only.
+* Zsh gotchas:
+
+  * `#` in pasted lines causes `zsh: command not found: #`
+  * `?` and some patterns can cause glob errors like “no matches found”
+  * Avoid unquoted `?` in text; always quote globs or avoid them.
+* Time/ticks matters: commands are bounded by `--max-ticks 80_000_000`. Keep respecting that.
+
+---
+
+### 5) Current state of success probability (estimate + why)
+
+**Estimated likelihood of “pulling it off” overall: ~70%** for achieving a working end-to-end system that can:
+
+* deterministically reconstruct arbitrary inputs from (recipe + timemap + residual),
+* with a coherent key format (ARK) and reproducible decoding.
+
+**Estimated likelihood of achieving the “wow” compression dream (tiny key → pages) as originally envisioned: ~35–50%** with the current generator + simple mapping, because:
+
+* Residual currently behaves near-random at low match rates and doesn’t compress.
+* To get “pages from a short string,” we must drastically reduce residual size or make residual highly compressible.
+* That likely requires: stronger mapping families, a better objective (min residual zstd), and potentially richer generator degrees of freedom.
+
+However, we already proved the hardest conceptual barrier:
+
+* “Impossible” → “possible” happened the moment we got deterministic fit-xor + reconstruct with `cmp OK`.
+
+Now it’s an engineering optimization problem.
+
+---
+
+### 6) What remains (high-level TODO list)
+
+#### Must-have (next instance goals)
+
+1. Fix/understand why tuned recipe from `tune` can yield degenerate regen stream (all zeros).
+2. Implement residual-compressibility optimization for fit-xor (choose window by min zstd bytes).
+3. Add more mapping options beyond SplitMix64 (at least affine + permute256).
+4. Build a scoreboard command that reports effective size:
+
+   * recipe bytes
+   * timemap bytes (raw + maybe compressed)
+   * residual zstd bytes
+   * total effective bytes
+5. Scale test: run on Genesis1.txt (4201 bytes) end-to-end and report the effective size.
+
+#### Nice-to-have
+
+6. Compress TM1 (delta encode, varint, then zstd).
+7. Add “multi-window” timemap mode (piecewise segments) to reduce residual.
+8. Add “lane-aware” rgbpair mapping (different map per lane).
+9. Create an “ark bundle” single file that contains:
+
+   * recipe blob
+   * TM1 blob
+   * residual blob
+   * metadata + CRC
+10. ARK string codec that base32/base64 encodes the bundle for portability.
+
+---
+
+### 7) Repro commands (clean, no comments)
+
+These are the known-good sequences we ran.
+
+**Pair mode:**
+
+```bash
+head -c 256 text/Genesis1.txt > /tmp/gen256.bin
+
+cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target /tmp/gen256.bin --out-timemap /tmp/gen256.tm1 --out-residual /tmp/gen256.resid --search-emissions 2000000 --max-ticks 80000000 --start-emission 0
+
+cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/gen256.tm1 --residual /tmp/gen256.resid --out /tmp/gen256.out --max-ticks 80000000
+
+cmp /tmp/gen256.bin /tmp/gen256.out && echo OK
+```
+
+**Rgbpair mode (flattened positions):**
+
+```bash
+head -c 256 text/Genesis1.txt > /tmp/gen256.bin
+
+cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target /tmp/gen256.bin --out-timemap /tmp/gen256_rgb.tm1 --out-residual /tmp/gen256_rgb.resid --mode rgbpair --search-emissions 2000000 --max-ticks 80000000 --start-emission 0
+
+cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/gen256_rgb.tm1 --residual /tmp/gen256_rgb.resid --out /tmp/gen256_rgb.out --mode rgbpair --max-ticks 80000000
+
+cmp /tmp/gen256.bin /tmp/gen256_rgb.out && echo OK
+```
+
+**Rgbpair + mapping SplitMix64:**
+
+```bash
+head -c 256 text/Genesis1.txt > /tmp/gen256.bin
+
+cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target /tmp/gen256.bin --out-timemap /tmp/gen256_rgb_mapped.tm1 --out-residual /tmp/gen256_rgb_mapped.resid --mode rgbpair --map splitmix64 --map-seed 1 --search-emissions 2000000 --max-ticks 80000000 --start-emission 0
+
+cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/gen256_rgb_mapped.tm1 --residual /tmp/gen256_rgb_mapped.resid --out /tmp/gen256_rgb_mapped.out --mode rgbpair --map splitmix64 --map-seed 1 --max-ticks 80000000
+
+cmp /tmp/gen256.bin /tmp/gen256_rgb_mapped.out && echo OK
+```
+
+---
+
+### 8) Concept expansion notes (DNA / double helix framing)
+
+We have an emerging metaphor that actually maps to the mechanics:
+
+* Two intertwined deterministic structures:
+
+  1. the **time curve** (timemap: which emissions/positions matter)
+  2. the **value patch** (residual: what must be XOR’d to become target)
+
+This resembles a “double helix” where:
+
+* One strand is **index/time information**
+* One strand is **delta/value information**
+  Together they reconstruct the organism (text/data).
+  The real breakthrough is learning to encode that helix compactly (especially the residual) and deriving more of it from the recipe/mapping rather than storing it.
+
+---
+
+### 9) The single most important next objective
+
+Move from optimizing “matches” to optimizing **compressed residual size**.
+
+That is the pivot from “it works” to “it’s useful”.
+
+If we do that, we’ll quickly learn whether the current generator + mapping has enough degrees of freedom to meaningfully reduce residual, or if we need deeper changes in the cadence engine itself.
+
+---
+
+If you want the next instance to begin in the most productive place: start by implementing the **fit-xor objective upgrade** (min zstd residual bytes), then immediately re-run the 256/1024/4096/Genesis1 ladder and record the scoreboard.
+
+
+
+### END NOTE - FEBRUARY 13 2026 - 12:23 CST

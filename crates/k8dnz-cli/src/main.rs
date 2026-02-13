@@ -1,3 +1,5 @@
+// src/main.rs
+
 use clap::{Parser, Subcommand};
 
 mod cmd;
@@ -31,8 +33,14 @@ pub enum Commands {
     /// Analyze a file as raw bytes (histogram, entropy, top bytes)
     Analyze(cmd::analyze::AnalyzeArgs),
 
-    /// Placeholder for tuner (Deliverable 4)
+    /// Tune/search recipes (fit + qsearch + stats)
     Tune(cmd::tune::TuneArgs),
+
+    /// Timing map tools (TM1)
+    Timemap(cmd::timemap::TimemapArgs),
+
+    /// ARK string tools (ARK1S)
+    ArkKey(cmd::arkkey::ArkKeyArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,5 +54,7 @@ fn main() -> anyhow::Result<()> {
         Commands::ArkInspect(args) => cmd::ark_inspect::run(args),
         Commands::Analyze(args) => cmd::analyze::run(args),
         Commands::Tune(args) => cmd::tune::run(args),
+        Commands::Timemap(args) => cmd::timemap::run(args),
+        Commands::ArkKey(args) => cmd::arkkey::run(args),
     }
 }

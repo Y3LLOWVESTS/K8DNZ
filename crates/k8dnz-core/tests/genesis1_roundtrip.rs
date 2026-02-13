@@ -4,10 +4,9 @@ use std::path::PathBuf;
 
 use k8dnz_core::{Engine, Recipe};
 use k8dnz_core::signal::token::PairToken;
+use k8dnz_core::recipe::recipe::{KeystreamMix, PayloadKind};
 
 fn workspace_root_from_core_manifest() -> PathBuf {
-    // CARGO_MANIFEST_DIR points to crates/k8dnz-core
-    // workspace root is two levels up.
     let here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     here.parent()
         .and_then(|p| p.parent())
@@ -15,14 +14,9 @@ fn workspace_root_from_core_manifest() -> PathBuf {
         .to_path_buf()
 }
 
-/// Generate `n_bytes` of keystream using ONLY core primitives:
-/// - run Engine emissions
-/// - pack PairToken nibble pairs into bytes
 fn keystream_bytes_core(engine: &mut Engine, n_bytes: usize, max_ticks: u64) -> Vec<u8> {
-    // For N16: each emission => one packed byte: (a<<4) | b
     let toks: Vec<PairToken> = engine.run_emissions(n_bytes as u64, max_ticks);
 
-    // Guard: if max_ticks is too small, we'd generate fewer bytes.
     assert_eq!(
         toks.len(),
         n_bytes,
@@ -42,7 +36,6 @@ fn keystream_bytes_core(engine: &mut Engine, n_bytes: usize, max_ticks: u64) -> 
 
 #[test]
 fn genesis1_keystream_xor_roundtrip_is_lossless() {
-    // Hard rule: Genesis1 is canonical sample until we intentionally move on.
     let root = workspace_root_from_core_manifest();
     let genesis1 = root.join("text").join("Genesis1.txt");
     let plain = std::fs::read(&genesis1)
@@ -54,7 +47,6 @@ fn genesis1_keystream_xor_roundtrip_is_lossless() {
     let enc = k8dnz_core::recipe::format::encode(&recipe);
     let dec = k8dnz_core::recipe::format::decode(&enc).expect("recipe decode failed");
 
-    // spot-check critical fields (we don't need to re-assert every nested wave field)
     assert_eq!(dec.version, recipe.version);
     assert_eq!(dec.seed, recipe.seed);
     assert_eq!(dec.free.phi_a0, recipe.free.phi_a0);
@@ -72,6 +64,14 @@ fn genesis1_keystream_xor_roundtrip_is_lossless() {
     assert_eq!(dec.quant.shift, recipe.quant.shift);
     assert_eq!(dec.field.waves.len(), recipe.field.waves.len());
 
+    // NEW: flags-based knobs must roundtrip
+    assert_eq!(dec.keystream_mix, recipe.keystream_mix);
+    assert_eq!(dec.payload_kind, recipe.payload_kind);
+
+    // sanity: defaults should remain legacy behavior
+    assert_eq!(recipe.keystream_mix, KeystreamMix::None);
+    assert_eq!(recipe.payload_kind, PayloadKind::CipherXor);
+
     // 2) Generate keystream and do XOR roundtrip (core codec invariant)
     let mut e1 = Engine::new(recipe.clone()).expect("engine init failed");
     let key = keystream_bytes_core(&mut e1, plain.len(), 50_000_000);
@@ -81,7 +81,6 @@ fn genesis1_keystream_xor_roundtrip_is_lossless() {
         *c ^= *k;
     }
 
-    // Decode: same recipe => same keystream => XOR back to plain.
     let mut e2 = Engine::new(recipe.clone()).expect("engine init failed (decode)");
     let key2 = keystream_bytes_core(&mut e2, cipher.len(), 50_000_000);
 
@@ -91,8 +90,6 @@ fn genesis1_keystream_xor_roundtrip_is_lossless() {
     }
 
     assert_eq!(roundtrip, plain, "Genesis1 roundtrip mismatch");
-
-    // Sanity: consistent cadence budget for same length.
     assert_eq!(e1.stats.emissions, e2.stats.emissions);
     assert_eq!(e1.stats.ticks, e2.stats.ticks);
 }

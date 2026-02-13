@@ -1,11 +1,52 @@
-use clap::Args;
+// crates/k8dnz-cli/src/cmd/tune.rs
+//
+// Tune = shift search / refinement (existing behavior) + optional "fit + residual" MVP.
+//
+// Back-compat preserved:
+// - still writes a tuned .k8r via --out-recipe (required)
+// - still supports measure_field / set_clamp_from_field
+// - still supports passes / step_div refinement
+// - still supports validate_best
+//
+// NEW (optional):
+// - --fit-in <path> + --out-ark <path> => write a .ark whose data is RESIDUAL = plaintext XOR model_stream
+// - --fit-by-residual => rank candidate shifts by residual metrics (enhanced proxies)
+// - --rank-by-effective-zstd => rank candidate shifts by TRUE effective size:
+//       effective_bytes = recipe_bytes + zstd(residual) at --zstd-level
+// - --zstd-level <n> sets zstd compression level for effective ranking (default 3)
+// - --keystream-mix none|splitmix64 stored in recipe + used for model stream generation
+// - dumps: --dump-residual / --dump-model / --dump-raw-model (work with or without --out-ark)
+// - per-pass dumps (optional): --dump-residual-pass / --dump-model-pass / --dump-raw-model-pass
+//   Pattern supports "%d" for 1-based pass index, e.g. "/tmp/res_pass_%d.bin".
+//
+// NOTE:
+// - "model_stream" here is the cadence keystream bytes (optionally mixed).
+// - payload_kind is set to ResidualXor when writing --out-ark, so decode knows how to reconstruct.
+
+use clap::{Args, ValueEnum};
 use k8dnz_core::dynamics::engine::FieldRangeStats;
+use k8dnz_core::recipe::format as recipe_format;
+use k8dnz_core::recipe::recipe::{KeystreamMix, PayloadKind};
 use k8dnz_core::signal::token::PairToken;
 use k8dnz_core::{Engine, Recipe};
 
-use crate::io::recipe_file;
+use crate::io::{ark, recipe_file};
 
 use std::time::Instant;
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum KeystreamMixArg {
+    None,
+    Splitmix64,
+}
+impl KeystreamMixArg {
+    fn to_core(self) -> KeystreamMix {
+        match self {
+            KeystreamMixArg::None => KeystreamMix::None,
+            KeystreamMixArg::Splitmix64 => KeystreamMix::SplitMix64,
+        }
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct TuneArgs {
@@ -75,10 +116,12 @@ pub struct TuneArgs {
     pub step: Option<i64>,
 
     /// Per-candidate emissions (keep small; tuning is directional).
+    /// Used when ranking by token distribution (default mode).
     #[arg(long, default_value_t = 2_000)]
     pub per_emissions: u64,
 
     /// Per-candidate max ticks.
+    /// Also used as max ticks when ranking by residual (fit-by-residual).
     #[arg(long, default_value_t = 20_000_000)]
     pub per_max_ticks: u64,
 
@@ -107,6 +150,69 @@ pub struct TuneArgs {
     /// Max ticks for validation run (only if --validate-best)
     #[arg(long, default_value_t = 80_000_000)]
     pub validate_max_ticks: u64,
+
+    // --- Fit + residual (optional) ---
+
+    /// If set, tuner will load these bytes and (optionally) rank shifts by residual compressibility.
+    #[arg(long)]
+    pub fit_in: Option<String>,
+
+    /// If set, writes a .ark where data_bytes = RESIDUAL (plaintext XOR model_stream).
+    /// Requires --fit-in.
+    #[arg(long)]
+    pub out_ark: Option<String>,
+
+    /// If set, ranks candidates by residual proxy metrics instead of token entropy.
+    /// Requires --fit-in.
+    #[arg(long, default_value_t = false)]
+    pub fit_by_residual: bool,
+
+    /// NEW: rank candidates by *true* effective size:
+    /// effective_bytes = recipe_bytes_len + zstd(residual)_len at --zstd-level.
+    /// Requires --fit-in. Implies residual-based evaluation.
+    #[arg(long, default_value_t = false)]
+    pub rank_by_effective_zstd: bool,
+
+    /// zstd compression level for --rank-by-effective-zstd (and reporting).
+    #[arg(long, default_value_t = 3)]
+    pub zstd_level: i32,
+
+    /// Keystream mixing used when generating model stream for fit/residual.
+    /// Stored in the tuned recipe (and used when writing out_ark).
+    #[arg(long, value_enum, default_value_t = KeystreamMixArg::None)]
+    pub keystream_mix: KeystreamMixArg,
+
+    /// Dump residual bytes (requires --fit-in). If --out-ark is present, dump is aligned to that output too.
+    #[arg(long)]
+    pub dump_residual: Option<String>,
+
+    /// Dump model bytes used (mixed, if mix enabled) (requires --fit-in).
+    #[arg(long)]
+    pub dump_model: Option<String>,
+
+    /// Dump raw cadence model bytes (pre-mix) (requires --fit-in).
+    #[arg(long)]
+    pub dump_raw_model: Option<String>,
+
+    // --- NEW: per-pass dumps (optional) ---
+
+    /// Dump residual for the best candidate of EACH pass.
+    /// Pattern supports "%d" for 1-based pass index, e.g. "/tmp/res_pass_%d.bin".
+    /// Requires --fit-in.
+    #[arg(long)]
+    pub dump_residual_pass: Option<String>,
+
+    /// Dump model-used bytes for the best candidate of EACH pass.
+    /// Pattern supports "%d" for 1-based pass index.
+    /// Requires --fit-in.
+    #[arg(long)]
+    pub dump_model_pass: Option<String>,
+
+    /// Dump raw cadence model bytes (pre-mix) for the best candidate of EACH pass.
+    /// Pattern supports "%d" for 1-based pass index.
+    /// Requires --fit-in.
+    #[arg(long)]
+    pub dump_raw_model_pass: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +220,23 @@ struct Metrics {
     distinct_bytes: usize,
     entropy_byte: f64,
     peak_nibble: u64,
+    ticks: u64,
+}
+
+#[derive(Clone, Debug)]
+struct ResidualMetrics {
+    distinct_bytes: usize,
+    entropy_byte: f64,
+    peak_byte: u64,
+    zero_rate: f64,
+    printable_rate: f64,
+    top16_mass: f64,
+
+    // NEW: real-world size metrics
+    zstd_bytes: usize,
+    recipe_bytes: usize,
+    effective_bytes: usize,
+
     ticks: u64,
 }
 
@@ -141,6 +264,9 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
         recipe.field_clamp.max = v;
     }
 
+    // Apply requested keystream mix (matters for fit/residual; harmless otherwise).
+    recipe.keystream_mix = args.keystream_mix.to_core();
+
     // Guards.
     if recipe.quant.min >= recipe.quant.max {
         anyhow::bail!(
@@ -157,10 +283,41 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
         );
     }
 
+    // Fit input (optional)
+    let fit_bytes: Option<Vec<u8>> = if let Some(p) = args.fit_in.as_deref() {
+        Some(std::fs::read(p)?)
+    } else {
+        None
+    };
+
+    let wants_any_fit_dump = args.dump_residual.is_some()
+        || args.dump_model.is_some()
+        || args.dump_raw_model.is_some()
+        || args.dump_residual_pass.is_some()
+        || args.dump_model_pass.is_some()
+        || args.dump_raw_model_pass.is_some();
+
+    if args.rank_by_effective_zstd && fit_bytes.is_none() {
+        anyhow::bail!("--rank-by-effective-zstd requires --fit-in <path>");
+    }
+
+    // If ranking by effective zstd, we must evaluate residuals (not tokens).
+    let effective_implies_residual = args.rank_by_effective_zstd;
+
+    if (args.fit_by_residual || effective_implies_residual) && fit_bytes.is_none() {
+        anyhow::bail!("--fit-by-residual/--rank-by-effective-zstd requires --fit-in <path>");
+    }
+    if args.out_ark.is_some() && fit_bytes.is_none() {
+        anyhow::bail!("--out-ark requires --fit-in <path>");
+    }
+    if wants_any_fit_dump && fit_bytes.is_none() {
+        anyhow::bail!("--dump-* requires --fit-in <path>");
+    }
+
     let base_rid = k8dnz_core::recipe::format::recipe_id_hex(&recipe);
 
     let mut report_lines: Vec<String> = Vec::new();
-    report_lines.push(format!("--- k8dnz tune report ---"));
+    report_lines.push("--- k8dnz tune report ---".to_string());
     report_lines.push(format!("base_recipe_id = {}", base_rid));
     report_lines.push(format!(
         "base_quant = min={} max={} shift={}",
@@ -170,9 +327,33 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
         "base_clamp = min={} max={}",
         recipe.field_clamp.min, recipe.field_clamp.max
     ));
+    report_lines.push(format!("keystream_mix = {:?}", recipe.keystream_mix));
+    report_lines.push(format!("fit_in = {:?}", args.fit_in));
+    report_lines.push(format!("fit_by_residual = {}", args.fit_by_residual));
+    report_lines.push(format!("rank_by_effective_zstd = {}", args.rank_by_effective_zstd));
+    report_lines.push(format!("zstd_level = {}", args.zstd_level));
+    report_lines.push(format!("dump_residual_pass = {:?}", args.dump_residual_pass));
+    report_lines.push(format!("dump_model_pass = {:?}", args.dump_model_pass));
+    report_lines.push(format!("dump_raw_model_pass = {:?}", args.dump_raw_model_pass));
+    report_lines.push("".to_string());
 
     eprintln!("--- tune ---");
     eprintln!("base_recipe_id = {}", base_rid);
+    eprintln!("keystream_mix = {:?}", recipe.keystream_mix);
+    if let Some(p) = args.fit_in.as_deref() {
+        eprintln!("fit_in = {} ({} bytes)", p, fit_bytes.as_ref().unwrap().len());
+    }
+
+    if args.rank_by_effective_zstd {
+        eprintln!(
+            "ranking mode = EFFECTIVE_ZSTD (effective_bytes = recipe_bytes + zstd(residual) @ level {})",
+            args.zstd_level
+        );
+    } else if args.fit_by_residual {
+        eprintln!("ranking mode = residual proxy metrics (top16_mass/zero_rate/entropy/distinct/peak)");
+    } else {
+        eprintln!("ranking mode = token metrics (entropy/distinct/peak_nibble)");
+    }
 
     // Optional field measurement pass.
     if args.measure_field {
@@ -206,11 +387,18 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
             eprintln!("field_measured: no samples observed (unexpected)");
             report_lines.push("field_measured: no samples observed (unexpected)".to_string());
         }
+        report_lines.push("".to_string());
     }
 
     // Multi-pass shift search / refinement.
-    let (best_recipe, best_shift, best_metrics, per_pass_rankings, elapsed_ms) =
-        tune_shift_multipass(&args, recipe)?;
+    let (
+        best_recipe,
+        best_shift,
+        best_metrics_opt,
+        best_rmetrics_opt,
+        per_pass_rankings,
+        elapsed_ms,
+    ) = tune_shift_multipass(&args, recipe, fit_bytes.as_deref())?;
 
     let best_rid = k8dnz_core::recipe::format::recipe_id_hex(&best_recipe);
 
@@ -223,44 +411,94 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
 
     report_lines.push(format!("best_shift = {}", best_shift));
     report_lines.push(format!("best_recipe_id = {}", best_rid));
-    report_lines.push(format!(
-        "best_metrics distinct={}/256 entropy_byte={:.4} peak_nibble={} ticks={}",
-        best_metrics.distinct_bytes,
-        best_metrics.entropy_byte,
-        best_metrics.peak_nibble,
-        best_metrics.ticks
-    ));
+
+    if let Some(m) = best_metrics_opt.as_ref() {
+        report_lines.push(format!(
+            "best_token_metrics distinct={}/256 entropy_byte={:.4} peak_nibble={} ticks={}",
+            m.distinct_bytes, m.entropy_byte, m.peak_nibble, m.ticks
+        ));
+    }
+    if let Some(m) = best_rmetrics_opt.as_ref() {
+        report_lines.push(format!(
+            "best_residual_metrics effective_bytes={} (recipe_bytes={} + zstd_bytes={}) top16_mass={:.4} zero_rate={:.4} printable_rate={:.4} entropy_byte={:.4} distinct={}/256 peak_byte={} ticks={}",
+            m.effective_bytes,
+            m.recipe_bytes,
+            m.zstd_bytes,
+            m.top16_mass,
+            m.zero_rate,
+            m.printable_rate,
+            m.entropy_byte,
+            m.distinct_bytes,
+            m.peak_byte,
+            m.ticks
+        ));
+    }
     report_lines.push(format!("elapsed_ms = {}", elapsed_ms));
     report_lines.push("".to_string());
 
     // Per-pass report.
-    for (pass_idx, (div_opt, rows)) in per_pass_rankings.iter().enumerate() {
+    for (pass_idx, (div_opt, rows_token_opt, rows_resid_opt)) in per_pass_rankings.iter().enumerate()
+    {
         report_lines.push(format!("--- pass {} ---", pass_idx + 1));
         if let Some(div) = div_opt {
             report_lines.push(format!("step_div = {}", div));
         } else {
             report_lines.push("step_div = (explicit step)".to_string());
         }
-        for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
-            report_lines.push(format!(
-                "#{:>2} shift={} recipe_id={} entropy_byte={:.4} distinct={}/256 peak_nibble={} ticks={}",
-                rank + 1,
-                shift,
-                rid,
-                m.entropy_byte,
-                m.distinct_bytes,
-                m.peak_nibble,
-                m.ticks
-            ));
+
+        if let Some(rows) = rows_token_opt.as_ref() {
+            report_lines.push("ranking = token_metrics".to_string());
+            for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
+                report_lines.push(format!(
+                    "#{:>2} shift={} recipe_id={} entropy_byte={:.4} distinct={}/256 peak_nibble={} ticks={}",
+                    rank + 1,
+                    shift,
+                    rid,
+                    m.entropy_byte,
+                    m.distinct_bytes,
+                    m.peak_nibble,
+                    m.ticks
+                ));
+            }
         }
+
+        if let Some(rows) = rows_resid_opt.as_ref() {
+            if args.rank_by_effective_zstd {
+                report_lines.push(format!(
+                    "ranking = effective_zstd (zstd_level={})",
+                    args.zstd_level
+                ));
+            } else {
+                report_lines.push("ranking = residual_metrics".to_string());
+            }
+            for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
+                report_lines.push(format!(
+                    "#{:>2} shift={} recipe_id={} effective_bytes={} (recipe_bytes={} + zstd_bytes={}) top16_mass={:.4} zero_rate={:.4} printable_rate={:.4} entropy={:.4} distinct={}/256 peak_byte={} ticks={}",
+                    rank + 1,
+                    shift,
+                    rid,
+                    m.effective_bytes,
+                    m.recipe_bytes,
+                    m.zstd_bytes,
+                    m.top16_mass,
+                    m.zero_rate,
+                    m.printable_rate,
+                    m.entropy_byte,
+                    m.distinct_bytes,
+                    m.peak_byte,
+                    m.ticks
+                ));
+            }
+        }
+
         report_lines.push("".to_string());
     }
 
-    // Optional validation run.
+    // Optional validation run (token stream)
     if args.validate_best {
         let mut e = Engine::new(best_recipe.clone())?;
         let toks = e.run_emissions(args.validate_emissions, args.validate_max_ticks);
-        let m = compute_metrics(&toks, e.stats.ticks);
+        let m = compute_token_metrics(&toks, e.stats.ticks);
         eprintln!(
             "validate_best: emissions={} max_ticks={} -> distinct={}/256 entropy_byte={:.4} peak_nibble={} ticks={}",
             args.validate_emissions,
@@ -283,6 +521,130 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
         report_lines.push("".to_string());
     }
 
+    // Optional: dump residual/model even without writing ark (requires fit_in)
+    if let Some(plain) = fit_bytes.as_deref() {
+        let want_any_dump =
+            args.dump_residual.is_some() || args.dump_model.is_some() || args.dump_raw_model.is_some();
+        if want_any_dump && args.out_ark.is_none() {
+            let mut r = best_recipe.clone();
+            // We don't need to set payload_kind for dumping, but keep it stable if you later write ark.
+            r.payload_kind = PayloadKind::ResidualXor;
+
+            let mut engine = Engine::new(r.clone())?;
+            let want_raw = args.dump_raw_model.is_some();
+            let (model_used, raw_opt) = if want_raw {
+                ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.per_max_ticks)?
+            } else {
+                (ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?, Vec::new())
+            };
+
+            let mut residual = plain.to_vec();
+            for (b, k) in residual.iter_mut().zip(model_used.iter()) {
+                *b ^= *k;
+            }
+
+            if let Some(p) = args.dump_residual.as_deref() {
+                std::fs::write(p, &residual)?;
+                eprintln!("dumped residual: {} ({} bytes)", p, residual.len());
+            }
+            if let Some(p) = args.dump_model.as_deref() {
+                std::fs::write(p, &model_used)?;
+                eprintln!("dumped model: {} ({} bytes)", p, model_used.len());
+            }
+            if let Some(p) = args.dump_raw_model.as_deref() {
+                if !raw_opt.is_empty() {
+                    std::fs::write(p, &raw_opt)?;
+                    eprintln!("dumped raw model: {} ({} bytes)", p, raw_opt.len());
+                } else {
+                    eprintln!("dump_raw_model requested but raw model not available (unexpected)");
+                }
+            }
+        }
+    }
+
+    // Optional: write residual .ark (model+residual MVP)
+    if let (Some(out_ark), Some(plain)) = (args.out_ark.as_deref(), fit_bytes.as_deref()) {
+        let mut r = best_recipe.clone();
+        r.payload_kind = PayloadKind::ResidualXor;
+
+        let mut engine = Engine::new(r.clone())?;
+
+        let want_raw = args.dump_raw_model.is_some();
+        let (model_used, raw_opt) = if want_raw {
+            ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.per_max_ticks)?
+        } else {
+            (ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?, Vec::new())
+        };
+
+        let mut residual = plain.to_vec();
+        for (b, k) in residual.iter_mut().zip(model_used.iter()) {
+            *b ^= *k;
+        }
+
+        if let Some(p) = args.dump_residual.as_deref() {
+            std::fs::write(p, &residual)?;
+            eprintln!("dumped residual: {} ({} bytes)", p, residual.len());
+        }
+        if let Some(p) = args.dump_model.as_deref() {
+            std::fs::write(p, &model_used)?;
+            eprintln!("dumped model: {} ({} bytes)", p, model_used.len());
+        }
+        if let Some(p) = args.dump_raw_model.as_deref() {
+            if !raw_opt.is_empty() {
+                std::fs::write(p, &raw_opt)?;
+                eprintln!("dumped raw model: {} ({} bytes)", p, raw_opt.len());
+            }
+        }
+
+        ark::write_ark(out_ark, &r, &residual)?;
+
+        // Report effective size as well
+        let rb = recipe_format::encode(&r);
+        let z = zstd_compress_len(&residual, args.zstd_level);
+        let eff = rb.len() + z;
+
+        let m = residual_metrics(&residual);
+        eprintln!(
+            "wrote residual ark: out={} recipe_id={} ticks={} emissions={} residual: effective_bytes={} (recipe_bytes={} + zstd_bytes={} @ lvl {}) top16_mass={:.4} zero_rate={:.4} printable_rate={:.4} entropy={:.4} distinct={}/256 peak_byte={}",
+            out_ark,
+            k8dnz_core::recipe::format::recipe_id_hex(&r),
+            engine.stats.ticks,
+            engine.stats.emissions,
+            eff,
+            rb.len(),
+            z,
+            args.zstd_level,
+            m.top16_mass,
+            m.zero_rate,
+            m.printable_rate,
+            m.entropy_byte,
+            m.distinct_bytes,
+            m.peak_byte
+        );
+
+        report_lines.push("--- residual_ark ---".to_string());
+        report_lines.push(format!("out_ark = {}", out_ark));
+        report_lines.push(format!("payload_kind = {:?}", r.payload_kind));
+        report_lines.push(format!("keystream_mix = {:?}", r.keystream_mix));
+        report_lines.push(format!(
+            "effective_bytes = {} (recipe_bytes={} + zstd_bytes={} @ lvl {})",
+            eff,
+            rb.len(),
+            z,
+            args.zstd_level
+        ));
+        report_lines.push(format!(
+            "residual_metrics top16_mass={:.4} zero_rate={:.4} printable_rate={:.4} entropy={:.4} distinct={}/256 peak_byte={}",
+            m.top16_mass,
+            m.zero_rate,
+            m.printable_rate,
+            m.entropy_byte,
+            m.distinct_bytes,
+            m.peak_byte
+        ));
+        report_lines.push("".to_string());
+    }
+
     // Optional report write.
     if let Some(path) = args.report.as_deref() {
         let text = report_lines.join("\n") + "\n";
@@ -292,9 +654,94 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
 
     // Final summary.
     eprintln!(
-        "tune ok: best_shift={} best_recipe_id={} entropy_byte={:.4} distinct={}/256 elapsed_ms={}",
-        best_shift, best_rid, best_metrics.entropy_byte, best_metrics.distinct_bytes, elapsed_ms
+        "tune ok: best_shift={} best_recipe_id={} elapsed_ms={}",
+        best_shift, best_rid, elapsed_ms
     );
+
+    Ok(())
+}
+
+fn zstd_compress_len(bytes: &[u8], level: i32) -> usize {
+    // NOTE: zstd::encode_all allocates a Vec; fine for our 4KB-ish Genesis tests.
+    // If later you do multi-meg blocks, we can stream + only count.
+    zstd::encode_all(bytes, level).map(|v| v.len()).unwrap_or(usize::MAX)
+}
+
+fn expand_pass_pattern(pat: &str, pass_1based: usize) -> String {
+    if pat.contains("%d") {
+        pat.replace("%d", &pass_1based.to_string())
+    } else {
+        // If they forgot "%d", keep deterministic behavior by appending ".passN"
+        format!("{pat}.pass{pass_1based}")
+    }
+}
+
+fn maybe_dump_best_of_pass(
+    args: &TuneArgs,
+    pass_1based: usize,
+    recipe_for_pass_best: &Recipe,
+    plain: &[u8],
+) -> anyhow::Result<()> {
+    let want_any = args.dump_residual_pass.is_some()
+        || args.dump_model_pass.is_some()
+        || args.dump_raw_model_pass.is_some();
+
+    if !want_any {
+        return Ok(());
+    }
+
+    let mut r = recipe_for_pass_best.clone();
+    // Keep stable semantics for fit-related artifacts.
+    r.payload_kind = PayloadKind::ResidualXor;
+
+    let mut engine = Engine::new(r)?;
+    let want_raw = args.dump_raw_model_pass.is_some();
+
+    let (model_used, raw_opt) = if want_raw {
+        ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.per_max_ticks)?
+    } else {
+        (ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?, Vec::new())
+    };
+
+    let mut residual = plain.to_vec();
+    for (b, k) in residual.iter_mut().zip(model_used.iter()) {
+        *b ^= *k;
+    }
+
+    if let Some(pat) = args.dump_residual_pass.as_deref() {
+        let path = expand_pass_pattern(pat, pass_1based);
+        std::fs::write(&path, &residual)?;
+        eprintln!(
+            "dumped residual(pass {}): {} ({} bytes)",
+            pass_1based,
+            path,
+            residual.len()
+        );
+    }
+    if let Some(pat) = args.dump_model_pass.as_deref() {
+        let path = expand_pass_pattern(pat, pass_1based);
+        std::fs::write(&path, &model_used)?;
+        eprintln!(
+            "dumped model(pass {}): {} ({} bytes)",
+            pass_1based,
+            path,
+            model_used.len()
+        );
+    }
+    if let Some(pat) = args.dump_raw_model_pass.as_deref() {
+        let path = expand_pass_pattern(pat, pass_1based);
+        if !raw_opt.is_empty() {
+            std::fs::write(&path, &raw_opt)?;
+            eprintln!(
+                "dumped raw model(pass {}): {} ({} bytes)",
+                pass_1based,
+                path,
+                raw_opt.len()
+            );
+        } else {
+            eprintln!("dump_raw_model_pass requested but raw model not available (unexpected)");
+        }
+    }
 
     Ok(())
 }
@@ -306,7 +753,9 @@ fn parse_step_div_list(s: &str) -> anyhow::Result<Vec<i64>> {
         if p.is_empty() {
             continue;
         }
-        let v: i64 = p.parse().map_err(|_| anyhow::anyhow!("invalid --step-div entry: {}", p))?;
+        let v: i64 = p
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid --step-div entry: {}", p))?;
         if v <= 0 {
             anyhow::bail!("--step-div entries must be > 0 (got {})", v);
         }
@@ -318,10 +767,21 @@ fn parse_step_div_list(s: &str) -> anyhow::Result<Vec<i64>> {
     Ok(out)
 }
 
+type TokenRows = Vec<(i64, Metrics, String)>;
+type ResidRows = Vec<(i64, ResidualMetrics, String)>;
+
 fn tune_shift_multipass(
     args: &TuneArgs,
     base_recipe: Recipe,
-) -> anyhow::Result<(Recipe, i64, Metrics, Vec<(Option<i64>, Vec<(i64, Metrics, String)>)>, u128)> {
+    fit_plain: Option<&[u8]>,
+) -> anyhow::Result<(
+    Recipe,
+    i64,
+    Option<Metrics>,
+    Option<ResidualMetrics>,
+    Vec<(Option<i64>, Option<TokenRows>, Option<ResidRows>)>,
+    u128,
+)> {
     let width: i64 = base_recipe.quant.max - base_recipe.quant.min;
     let t0 = Instant::now();
 
@@ -329,7 +789,7 @@ fn tune_shift_multipass(
     let (pass_divs, use_explicit_step) = if let Some(s) = args.step_div.as_deref() {
         (Some(parse_step_div_list(s)?), false)
     } else if args.passes > 1 {
-        // Default refinement schedule: 32, 256, 2048, 16384, ...
+        // Default refinement schedule: 32, 256, 2048, 16384, ... (x8 each pass).
         let mut v = Vec::with_capacity(args.passes);
         let mut div: i64 = 32;
         for _ in 0..args.passes {
@@ -338,69 +798,123 @@ fn tune_shift_multipass(
         }
         (Some(v), false)
     } else {
-        // Single pass: may use explicit step.
         (None, true)
     };
 
     let mut current_recipe = base_recipe.clone();
-    let mut per_pass_rows: Vec<(Option<i64>, Vec<(i64, Metrics, String)>)> = Vec::new();
+    let mut per_pass_rows: Vec<(Option<i64>, Option<TokenRows>, Option<ResidRows>)> = Vec::new();
 
     if let Some(divs) = pass_divs {
-        // Multi-pass derived steps.
         for (pass_idx, div) in divs.into_iter().enumerate() {
+            let pass_1based = pass_idx + 1;
             let step = (width / div).max(1);
             eprintln!(
                 "pass {}/? : derived step = width/{} = {}",
-                pass_idx + 1,
-                div,
-                step
+                pass_1based, div, step
             );
-            let (best_recipe, best_shift, best_metrics, rows) = tune_shift_once(
-                args,
-                current_recipe.clone(),
-                Some(div),
-                Some(step),
-            )?;
-            per_pass_rows.push((Some(div), rows));
+
+            let (
+                best_recipe,
+                best_shift,
+                best_token_m,
+                best_resid_m,
+                rows_token_opt,
+                rows_resid_opt,
+            ) = tune_shift_once(args, current_recipe.clone(), Some(div), Some(step), fit_plain)?;
+
+            per_pass_rows.push((Some(div), rows_token_opt, rows_resid_opt));
+
+            // NEW: per-pass dumps for best-of-pass (if requested)
+            if let Some(plain) = fit_plain {
+                maybe_dump_best_of_pass(args, pass_1based, &best_recipe, plain)?;
+            }
+
             current_recipe = best_recipe;
-            // Keep shift as center for next pass
             current_recipe.quant.shift = best_shift;
-            // Small sanity: carry best_metrics forward not required here; final pass returns below
-            let _ = best_metrics;
+
+            let _ = best_token_m;
+            let _ = best_resid_m;
         }
     } else if use_explicit_step {
-        // Single pass: explicit step or default width/32.
         let default_step: i64 = (width / 32).max(1);
         let step: i64 = args.step.unwrap_or(default_step);
 
-        let (best_recipe, _best_shift, best_metrics, rows) =
-            tune_shift_once(args, current_recipe.clone(), None, Some(step))?;
-        per_pass_rows.push((None, rows));
+        let (best_recipe, _best_shift, best_token_m, best_resid_m, rows_token_opt, rows_resid_opt) =
+            tune_shift_once(args, current_recipe.clone(), None, Some(step), fit_plain)?;
+
+        per_pass_rows.push((None, rows_token_opt, rows_resid_opt));
+
+        // If single-pass explicit-step, treat it as pass 1 for per-pass dumps.
+        if let Some(plain) = fit_plain {
+            maybe_dump_best_of_pass(args, 1, &best_recipe, plain)?;
+        }
 
         let elapsed_ms = t0.elapsed().as_millis();
         return Ok((
             best_recipe.clone(),
             best_recipe.quant.shift,
-            best_metrics,
+            best_token_m,
+            best_resid_m,
             per_pass_rows,
             elapsed_ms,
         ));
     }
 
-    // After multi-pass, do one last metrics summary on the final chosen shift using per_emissions/per_max_ticks
-    // to provide a deterministic "best_metrics" aligned with search settings.
-    let mut e = Engine::new(current_recipe.clone())?;
-    let toks = e.run_emissions(args.per_emissions, args.per_max_ticks);
-    let best_metrics = compute_metrics(&toks, e.stats.ticks);
+    // After multi-pass, summarize "best" metrics deterministically with the final shift.
+    // If we’re doing effective zstd ranking, treat as residual summary.
+    if args.fit_by_residual || args.rank_by_effective_zstd {
+        let Some(plain) = fit_plain else {
+            anyhow::bail!("internal: residual mode but no fit_plain");
+        };
+        let mut e = Engine::new(current_recipe.clone())?;
+        let used = ark::keystream_bytes(&mut e, plain.len(), args.per_max_ticks)?;
+        let mut residual = plain.to_vec();
+        for (b, k) in residual.iter_mut().zip(used.iter()) {
+            *b ^= *k;
+        }
 
-    let elapsed_ms = t0.elapsed().as_millis();
-    Ok((
-        current_recipe.clone(),
-        current_recipe.quant.shift,
-        best_metrics,
-        per_pass_rows,
-        elapsed_ms,
-    ))
+        let m0 = residual_metrics(&residual);
+
+        let rb = recipe_format::encode(&current_recipe);
+        let z = zstd_compress_len(&residual, args.zstd_level);
+        let eff = rb.len() + z;
+
+        let best_r = ResidualMetrics {
+            distinct_bytes: m0.distinct_bytes,
+            entropy_byte: m0.entropy_byte,
+            peak_byte: m0.peak_byte,
+            zero_rate: m0.zero_rate,
+            printable_rate: m0.printable_rate,
+            top16_mass: m0.top16_mass,
+            zstd_bytes: z,
+            recipe_bytes: rb.len(),
+            effective_bytes: eff,
+            ticks: e.stats.ticks,
+        };
+
+        let elapsed_ms = t0.elapsed().as_millis();
+        Ok((
+            current_recipe.clone(),
+            current_recipe.quant.shift,
+            None,
+            Some(best_r),
+            per_pass_rows,
+            elapsed_ms,
+        ))
+    } else {
+        let mut e = Engine::new(current_recipe.clone())?;
+        let toks = e.run_emissions(args.per_emissions, args.per_max_ticks);
+        let best_m = compute_token_metrics(&toks, e.stats.ticks);
+        let elapsed_ms = t0.elapsed().as_millis();
+        Ok((
+            current_recipe.clone(),
+            current_recipe.quant.shift,
+            Some(best_m),
+            None,
+            per_pass_rows,
+            elapsed_ms,
+        ))
+    }
 }
 
 fn tune_shift_once(
@@ -408,11 +922,16 @@ fn tune_shift_once(
     base_recipe: Recipe,
     pass_div: Option<i64>,
     step_override: Option<i64>,
-) -> anyhow::Result<(Recipe, i64, Metrics, Vec<(i64, Metrics, String)>)> {
-    let mut n = args.candidates;
-    if n < 1 {
-        n = 1;
-    }
+    fit_plain: Option<&[u8]>,
+) -> anyhow::Result<(
+    Recipe,
+    i64,
+    Option<Metrics>,
+    Option<ResidualMetrics>,
+    Option<TokenRows>,
+    Option<ResidRows>,
+)> {
+    let mut n = args.candidates.max(1);
     if n % 2 == 0 {
         n += 1;
     }
@@ -436,69 +955,257 @@ fn tune_shift_once(
         );
     }
 
-    let mut rows: Vec<(i64, Metrics, String)> = Vec::with_capacity(n);
+    // Decide whether we are in residual evaluation mode.
+    let residual_mode = args.fit_by_residual || args.rank_by_effective_zstd;
 
-    for idx in 0..n {
-        let offset = (idx as i64) - half;
-        let shift = base_shift.saturating_add(offset.saturating_mul(step));
+    if residual_mode {
+        let Some(plain) = fit_plain else {
+            anyhow::bail!("internal: residual mode but no fit_plain");
+        };
 
-        let mut r = base_recipe.clone();
-        r.quant.shift = shift;
+        let mut rows: Vec<(i64, ResidualMetrics, String)> = Vec::with_capacity(n);
 
-        let rid = k8dnz_core::recipe::format::recipe_id_hex(&r);
+        for idx in 0..n {
+            let offset = (idx as i64) - half;
+            let shift = base_shift.saturating_add(offset.saturating_mul(step));
 
-        let start = Instant::now();
-        let mut e = Engine::new(r.clone())?;
-        let toks = e.run_emissions(args.per_emissions, args.per_max_ticks);
-        let m = compute_metrics(&toks, e.stats.ticks);
+            let mut r = base_recipe.clone();
+            r.quant.shift = shift;
 
-        eprintln!(
-            "cand {}/{} shift={} recipe_id={} -> distinct={}/256 entropy_byte={:.4} peak_nibble={} ticks={} elapsed_ms={}",
-            idx + 1,
-            n,
-            shift,
-            rid,
-            m.distinct_bytes,
-            m.entropy_byte,
-            m.peak_nibble,
-            m.ticks,
-            start.elapsed().as_millis()
-        );
+            let rid = k8dnz_core::recipe::format::recipe_id_hex(&r);
 
-        rows.push((shift, m, rid));
+            let start = Instant::now();
+            let mut e = Engine::new(r.clone())?;
+
+            // model stream must be at least plain.len() bytes within per_max_ticks
+            let used = match ark::keystream_bytes(&mut e, plain.len(), args.per_max_ticks) {
+                Ok(v) => v,
+                Err(err) => {
+                    eprintln!(
+                        "cand {}/{} shift={} recipe_id={} -> residual: FAILED ({})",
+                        idx + 1,
+                        n,
+                        shift,
+                        rid,
+                        err
+                    );
+                    rows.push((
+                        shift,
+                        ResidualMetrics {
+                            distinct_bytes: 256,
+                            entropy_byte: 8.0,
+                            peak_byte: 0,
+                            zero_rate: 0.0,
+                            printable_rate: 0.0,
+                            top16_mass: 0.0,
+                            zstd_bytes: usize::MAX,
+                            recipe_bytes: recipe_format::encode(&r).len(),
+                            effective_bytes: usize::MAX,
+                            ticks: e.stats.ticks,
+                        },
+                        rid,
+                    ));
+                    continue;
+                }
+            };
+
+            let mut residual = plain.to_vec();
+            for (b, k) in residual.iter_mut().zip(used.iter()) {
+                *b ^= *k;
+            }
+
+            let m0 = residual_metrics(&residual);
+
+            let rb = recipe_format::encode(&r);
+            let z = zstd_compress_len(&residual, args.zstd_level);
+            let eff = rb.len().saturating_add(z);
+
+            let m = ResidualMetrics {
+                distinct_bytes: m0.distinct_bytes,
+                entropy_byte: m0.entropy_byte,
+                peak_byte: m0.peak_byte,
+                zero_rate: m0.zero_rate,
+                printable_rate: m0.printable_rate,
+                top16_mass: m0.top16_mass,
+                zstd_bytes: z,
+                recipe_bytes: rb.len(),
+                effective_bytes: eff,
+                ticks: e.stats.ticks,
+            };
+
+            eprintln!(
+                "cand {}/{} shift={} recipe_id={} -> residual: effective_bytes={} (recipe={} + zstd={} @lvl {}) top16_mass={:.4} zero_rate={:.4} printable_rate={:.4} entropy={:.4} distinct={}/256 peak_byte={} ticks={} elapsed_ms={}",
+                idx + 1,
+                n,
+                shift,
+                rid,
+                m.effective_bytes,
+                m.recipe_bytes,
+                m.zstd_bytes,
+                args.zstd_level,
+                m.top16_mass,
+                m.zero_rate,
+                m.printable_rate,
+                m.entropy_byte,
+                m.distinct_bytes,
+                m.peak_byte,
+                m.ticks,
+                start.elapsed().as_millis()
+            );
+
+            rows.push((shift, m, rid));
+        }
+
+        if args.rank_by_effective_zstd {
+            // Rank by TRUE cost: smallest effective_bytes wins.
+            // Tie-breakers: smaller zstd_bytes, smaller recipe_bytes, then shift asc.
+            rows.sort_by(|a, b| {
+                a.1.effective_bytes
+                    .cmp(&b.1.effective_bytes)
+                    .then_with(|| a.1.zstd_bytes.cmp(&b.1.zstd_bytes))
+                    .then_with(|| a.1.recipe_bytes.cmp(&b.1.recipe_bytes))
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+
+            eprintln!(
+                "--- tune ranking (EFFECTIVE_ZSTD top 9, zstd_level={}) ---",
+                args.zstd_level
+            );
+            for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
+                eprintln!(
+                    "#{:>2} shift={} recipe_id={} effective_bytes={} (recipe={} + zstd={}) top16_mass={:.4} zero_rate={:.4} entropy={:.4} distinct={}/256 peak_byte={} ticks={}",
+                    rank + 1,
+                    shift,
+                    rid,
+                    m.effective_bytes,
+                    m.recipe_bytes,
+                    m.zstd_bytes,
+                    m.top16_mass,
+                    m.zero_rate,
+                    m.entropy_byte,
+                    m.distinct_bytes,
+                    m.peak_byte,
+                    m.ticks
+                );
+            }
+        } else {
+            // Rank residual for proxy compressibility:
+            // 1) top16_mass DESC (more mass in small alphabet)
+            // 2) zero_rate DESC  (exact matches are great)
+            // 3) entropy ASC     (lower is better)
+            // 4) distinct ASC    (fewer symbols)
+            // 5) peak DESC       (more structure)
+            // 6) shift ASC       (stable tie-break)
+            rows.sort_by(|a, b| {
+                b.1.top16_mass
+                    .partial_cmp(&a.1.top16_mass)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        b.1.zero_rate
+                            .partial_cmp(&a.1.zero_rate)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| {
+                        a.1.entropy_byte
+                            .partial_cmp(&b.1.entropy_byte)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| a.1.distinct_bytes.cmp(&b.1.distinct_bytes))
+                    .then_with(|| b.1.peak_byte.cmp(&a.1.peak_byte))
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+
+            eprintln!("--- tune ranking (residual proxy top 9) ---");
+            for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
+                eprintln!(
+                    "#{:>2} shift={} recipe_id={} effective_bytes={} (recipe={} + zstd={}) top16_mass={:.4} zero_rate={:.4} printable_rate={:.4} entropy={:.4} distinct={}/256 peak_byte={} ticks={}",
+                    rank + 1,
+                    shift,
+                    rid,
+                    m.effective_bytes,
+                    m.recipe_bytes,
+                    m.zstd_bytes,
+                    m.top16_mass,
+                    m.zero_rate,
+                    m.printable_rate,
+                    m.entropy_byte,
+                    m.distinct_bytes,
+                    m.peak_byte,
+                    m.ticks
+                );
+            }
+        }
+
+        let (best_shift, best_m, _best_rid) = rows[0].clone();
+        let mut best_recipe = base_recipe.clone();
+        best_recipe.quant.shift = best_shift;
+
+        Ok((best_recipe, best_shift, None, Some(best_m), None, Some(rows)))
+    } else {
+        let mut rows: Vec<(i64, Metrics, String)> = Vec::with_capacity(n);
+
+        for idx in 0..n {
+            let offset = (idx as i64) - half;
+            let shift = base_shift.saturating_add(offset.saturating_mul(step));
+
+            let mut r = base_recipe.clone();
+            r.quant.shift = shift;
+
+            let rid = k8dnz_core::recipe::format::recipe_id_hex(&r);
+
+            let start = Instant::now();
+            let mut e = Engine::new(r.clone())?;
+            let toks = e.run_emissions(args.per_emissions, args.per_max_ticks);
+            let m = compute_token_metrics(&toks, e.stats.ticks);
+
+            eprintln!(
+                "cand {}/{} shift={} recipe_id={} -> distinct={}/256 entropy_byte={:.4} peak_nibble={} ticks={} elapsed_ms={}",
+                idx + 1,
+                n,
+                shift,
+                rid,
+                m.distinct_bytes,
+                m.entropy_byte,
+                m.peak_nibble,
+                m.ticks,
+                start.elapsed().as_millis()
+            );
+
+            rows.push((shift, m, rid));
+        }
+
+        // Rank token: entropy desc, distinct desc, peak nibble asc
+        rows.sort_by(|a, b| {
+            b.1.entropy_byte
+                .partial_cmp(&a.1.entropy_byte)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.1.distinct_bytes.cmp(&a.1.distinct_bytes))
+                .then_with(|| a.1.peak_nibble.cmp(&b.1.peak_nibble))
+        });
+
+        eprintln!("--- tune ranking (token top 9) ---");
+        for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
+            eprintln!(
+                "#{:>2} shift={} recipe_id={} entropy_byte={:.4} distinct={}/256 peak_nibble={} ticks={}",
+                rank + 1,
+                shift,
+                rid,
+                m.entropy_byte,
+                m.distinct_bytes,
+                m.peak_nibble,
+                m.ticks
+            );
+        }
+
+        let (best_shift, best_m, _best_rid) = rows[0].clone();
+        let mut best_recipe = base_recipe.clone();
+        best_recipe.quant.shift = best_shift;
+
+        Ok((best_recipe, best_shift, Some(best_m), None, Some(rows), None))
     }
-
-    // Rank: entropy desc, distinct desc, peak nibble asc
-    rows.sort_by(|a, b| {
-        b.1.entropy_byte
-            .partial_cmp(&a.1.entropy_byte)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.1.distinct_bytes.cmp(&a.1.distinct_bytes))
-            .then_with(|| a.1.peak_nibble.cmp(&b.1.peak_nibble))
-    });
-
-    eprintln!("--- tune ranking (top 9) ---");
-    for (rank, (shift, m, rid)) in rows.iter().take(9).enumerate() {
-        eprintln!(
-            "#{:>2} shift={} recipe_id={} entropy_byte={:.4} distinct={}/256 peak_nibble={} ticks={}",
-            rank + 1,
-            shift,
-            rid,
-            m.entropy_byte,
-            m.distinct_bytes,
-            m.peak_nibble,
-            m.ticks
-        );
-    }
-
-    let (best_shift, best_m, _best_rid) = rows[0].clone();
-    let mut best_recipe = base_recipe.clone();
-    best_recipe.quant.shift = best_shift;
-
-    Ok((best_recipe, best_shift, best_m, rows))
 }
 
-fn compute_metrics(toks: &[PairToken], ticks: u64) -> Metrics {
+fn compute_token_metrics(toks: &[PairToken], ticks: u64) -> Metrics {
     let mut ha = [0u64; 16];
     let mut hb = [0u64; 16];
     let mut hbyte = [0u64; 256];
@@ -528,6 +1235,53 @@ fn compute_metrics(toks: &[PairToken], ticks: u64) -> Metrics {
         entropy_byte,
         peak_nibble,
         ticks,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ResidualSummary {
+    distinct_bytes: usize,
+    peak_byte: u64,
+    entropy_byte: f64,
+    zero_rate: f64,
+    printable_rate: f64,
+    top16_mass: f64,
+}
+
+fn residual_metrics(bytes: &[u8]) -> ResidualSummary {
+    let mut h = [0u64; 256];
+    let mut zeros: u64 = 0;
+    let mut printable: u64 = 0;
+
+    for &b in bytes {
+        h[b as usize] += 1;
+        if b == 0 {
+            zeros += 1;
+        }
+        if (0x20..=0x7E).contains(&b) {
+            printable += 1;
+        }
+    }
+
+    let total_u64 = bytes.len() as u64;
+    let total_f = bytes.len() as f64;
+
+    let distinct = h.iter().filter(|&&c| c > 0).count();
+    let peak = h.iter().copied().max().unwrap_or(0);
+    let entropy = entropy_bits_256(&h, total_u64);
+
+    // top16 mass
+    let mut counts: Vec<u64> = h.iter().copied().collect();
+    counts.sort_unstable_by(|a, b| b.cmp(a));
+    let top16_sum: u64 = counts.into_iter().take(16).sum();
+
+    ResidualSummary {
+        distinct_bytes: distinct,
+        peak_byte: peak,
+        entropy_byte: entropy,
+        zero_rate: if total_f == 0.0 { 0.0 } else { (zeros as f64) / total_f },
+        printable_rate: if total_f == 0.0 { 0.0 } else { (printable as f64) / total_f },
+        top16_mass: if total_f == 0.0 { 0.0 } else { (top16_sum as f64) / total_f },
     }
 }
 

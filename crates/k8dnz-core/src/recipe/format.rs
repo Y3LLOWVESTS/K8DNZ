@@ -11,7 +11,7 @@ const MAGIC: &[u8; 4] = b"K8R1";
 /// Layout (little-endian):
 /// MAGIC[4]
 /// version:u16
-/// flags:u16          (alphabet/reset_mode)
+/// flags:u16          (alphabet/reset_mode/keystream_mix/payload_kind)
 /// seed:u64
 /// free: phi_a0:u32 phi_c0:u32 v_a:u32 v_c:u32 epsilon:u32
 /// lock: v_l:u32 delta:u32 t_step:u32
@@ -25,14 +25,13 @@ const MAGIC: &[u8; 4] = b"K8R1";
 ///
 /// NOTE: RGB params are currently NOT encoded in this binary format.
 /// They are injected via defaults on decode() for back-compat.
-/// When we bump the format, we’ll extend the layout under a new version gate.
 pub fn encode(r: &Recipe) -> Vec<u8> {
     let mut b = Vec::with_capacity(256);
     b.extend_from_slice(MAGIC);
 
     b.extend_from_slice(&r.version.to_le_bytes());
 
-    let flags: u16 = pack_flags(r.alphabet, r.reset_mode);
+    let flags: u16 = pack_flags(r.alphabet, r.reset_mode, r.keystream_mix, r.payload_kind);
     b.extend_from_slice(&flags.to_le_bytes());
 
     b.extend_from_slice(&r.seed.to_le_bytes());
@@ -92,7 +91,7 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
 
     let version = read_u16(bytes, &mut i)?;
     let flags = read_u16(bytes, &mut i)?;
-    let (alphabet, reset_mode) = unpack_flags(flags)?;
+    let (alphabet, reset_mode, keystream_mix, payload_kind) = unpack_flags(flags)?;
 
     let seed = read_u64(bytes, &mut i)?;
 
@@ -126,14 +125,13 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
         quant.max = read_i64(bytes, &mut i)?;
     }
 
-    // v4+ quant shift (applies to BOTH min and max at quantization time)
+    // v4+ quant shift
     if version >= 4 {
         if bytes.len() < i + 8 {
             return Err(K8Error::RecipeFormat("unexpected eof reading qshift".into()));
         }
         quant.shift = read_i64(bytes, &mut i)?;
     } else {
-        // v1..v3 recipes have no shift; default to 0 for back-compat.
         quant.shift = 0;
     }
 
@@ -171,23 +169,20 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
         seed,
         alphabet,
         reset_mode,
+        keystream_mix,
+        payload_kind,
         free: FreeOrbitParams { phi_a0, phi_c0, v_a, v_c, epsilon },
         lock: LockstepParams { v_l, delta, t_step },
         field: FieldParams { waves },
         field_clamp,
         quant,
-
-        // Back-compat injection: RGB params are not yet in the binary format.
-        // Deterministic defaults keep old recipes loading cleanly.
         rgb: RgbRecipe::default(),
     })
 }
 
 /// A stable recipe identifier: the trailing blake3_16 that `encode()` appends.
-/// This is canonical because it is computed over the CRC-inclusive payload bytes.
 pub fn recipe_id_16(r: &Recipe) -> [u8; 16] {
     let enc = encode(r);
-    // encode() always appends 16 bytes.
     enc[enc.len() - 16..].try_into().unwrap()
 }
 
@@ -215,28 +210,74 @@ fn hex16(id: &[u8; 16]) -> String {
     s
 }
 
-fn pack_flags(a: Alphabet, r: ResetMode) -> u16 {
-    let a_bits = match a {
+// ---- flags packing ----
+//
+// Goal: add new knobs WITHOUT changing old recipe bytes when defaults are used.
+//
+// Old encoding:
+//  - low byte: alphabet (0)
+//  - high byte: reset_mode (0 or 1)
+//
+// New encoding (high byte bitfield; still equals 0 or 1 when mix/payload are default):
+//  - bits 0..1: reset_mode  (0..1)
+//  - bits 2..3: keystream_mix (0..1)
+//  - bits 4..5: payload_kind  (0..1)
+//  - bits 6..7: reserved
+fn pack_flags(a: Alphabet, r: ResetMode, m: KeystreamMix, p: PayloadKind) -> u16 {
+    let a_bits: u16 = match a {
         Alphabet::N16 => 0u16,
     };
-    let r_bits = match r {
-        ResetMode::HoldAandC => 0u16,
-        ResetMode::FromLockstep => 1u16,
+
+    let r_bits: u8 = match r {
+        ResetMode::HoldAandC => 0u8,
+        ResetMode::FromLockstep => 1u8,
     };
-    a_bits | (r_bits << 8)
+
+    let m_bits: u8 = match m {
+        KeystreamMix::None => 0u8,
+        KeystreamMix::SplitMix64 => 1u8,
+    };
+
+    let p_bits: u8 = match p {
+        PayloadKind::CipherXor => 0u8,
+        PayloadKind::ResidualXor => 1u8,
+    };
+
+    let hi: u8 = (r_bits & 0x03) | ((m_bits & 0x03) << 2) | ((p_bits & 0x03) << 4);
+    a_bits | ((hi as u16) << 8)
 }
 
-fn unpack_flags(flags: u16) -> Result<(Alphabet, ResetMode)> {
+fn unpack_flags(flags: u16) -> Result<(Alphabet, ResetMode, KeystreamMix, PayloadKind)> {
     let a = match flags & 0x00FF {
         0 => Alphabet::N16,
         _ => return Err(K8Error::RecipeFormat("unknown alphabet".into())),
     };
-    let r = match (flags >> 8) & 0x00FF {
+
+    let hi: u8 = ((flags >> 8) & 0x00FF) as u8;
+
+    let r_bits = hi & 0x03;
+    let m_bits = (hi >> 2) & 0x03;
+    let p_bits = (hi >> 4) & 0x03;
+
+    let r = match r_bits {
         0 => ResetMode::HoldAandC,
         1 => ResetMode::FromLockstep,
         _ => return Err(K8Error::RecipeFormat("unknown reset mode".into())),
     };
-    Ok((a, r))
+
+    let m = match m_bits {
+        0 => KeystreamMix::None,
+        1 => KeystreamMix::SplitMix64,
+        _ => return Err(K8Error::RecipeFormat("unknown keystream mix".into())),
+    };
+
+    let p = match p_bits {
+        0 => PayloadKind::CipherXor,
+        1 => PayloadKind::ResidualXor,
+        _ => return Err(K8Error::RecipeFormat("unknown payload kind".into())),
+    };
+
+    Ok((a, r, m, p))
 }
 
 fn need(bytes: &[u8], i: usize, n: usize) -> Result<()> {
