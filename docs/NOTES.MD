@@ -6072,3 +6072,3514 @@ If you want the next instance to begin in the most productive place: start by im
 
 
 ### END NOTE - FEBRUARY 13 2026 - 12:23 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 13 2026 - 13:30 CST
+
+([Past chat][1])([Past chat][2])([Past chat][1])([Past chat][3])
+
+Got it: **we’re not aiming for secrecy** here — we’re aiming for **a short “key” (recipe/ARK) that lets you reconstruct data because the model predicts it well**, leaving a **small residual** that compresses hard.
+
+Right now, **your best results are coming from “non-mixed” keystream** (no splitmix), because it leaves structure in the residual that zstd can exploit. The splitmix64 option makes the model/residual look too “random,” which is *good for crypto*, but *bad for compression*.
+
+## What your latest numbers mean
+
+### 1) The `zstd ratio_raw/zstd ~ 7.65x` you saw on the **keystream** output
+
+That line is from `analyze` on `/tmp/keystream_now2.bin`:
+
+* raw = 20,000 bytes
+* zstd = 2,615 bytes
+* ratio = 20,000 / 2,615 ≈ **7.65x**
+
+Yes: that means **zstd shrank that keystream sample ~7.65×**.
+
+But important: **that’s keystream compressibility**, not the “full-file key-compression” win. It *does* tell us the stream has exploitable structure (great sign), but the metric that matters for the project is:
+
+### 2) The “effective size” from tune (what you’re already using correctly)
+
+From `tune` output:
+
+* plaintext = 4,201 bytes (Genesis1.txt)
+* recipe bytes ≈ 210
+* zstd(residual) ≈ 3,958
+* effective = 210 + 3,958 = **4,168 bytes**
+
+So: **your current end-to-end “keyed payload” is 4,168 bytes vs 4,201 original** — about **0.8% smaller** (≈33 bytes saved). That’s real, but small so far.
+
+So the next steps are about **increasing model predictiveness** so the **residual shrinks a lot more** (not just a few dozen bytes).
+
+---
+
+## Next steps (key-based compression, not encryption)
+
+### Step 1 — Lock the goal metric and stop mixing
+
+* Keep using: `--rank-by-effective-zstd` (this is correct)
+* Keep `--keystream-mix none` for compression experiments (mixing destroys structure)
+* Keep reporting: `effective_bytes = recipe_bytes + zstd(residual)` (this is your KPI)
+
+**Action:** treat `SplitMix64` as a “crypto mode” you can keep around, but it’s not the compression path.
+
+---
+
+### Step 2 — Add a “true baseline” comparison report
+
+Right now you’re seeing improvements, but you need a stable baseline printed beside it:
+
+* `zstd(plaintext)` at same zstd level
+* compare:
+
+  * `baseline = zstd(plaintext)`
+  * `our_effective = recipe_bytes + zstd(residual)`
+
+**If baseline zstd is already tiny**, your method must beat a very strong compressor on small text.
+
+**Action:** add to tune report (or a helper command) something like:
+
+* `plain_zstd_bytes`
+* `plain_ratio`
+* `delta_vs_plain_zstd = effective_bytes - plain_zstd_bytes`
+
+This tells you if your method is actually winning vs “just compress the file.”
+
+---
+
+### Step 3 — Stop optimizing only `quant.shift` (you’ve basically converged it)
+
+Your 3-pass runs show the search is stable and converging. Good.
+
+But the reason gains are small is: **shift alone isn’t enough expressiveness**.
+
+**Action:** expand the “key” (recipe) search space in a controlled way:
+
+* Add at least **one more low-cost tunable parameter** that changes the keystream structure **without randomizing it**.
+
+Examples of *compression-friendly* knobs:
+
+* small phase/offset tweaks (deterministic)
+* alternate mapping/quantization shaping
+* low-order permutation that is *structured* (not PRNG whitening)
+
+---
+
+### Step 4 — Introduce “chunking + per-chunk micro-keys” (this is the big lever)
+
+A single recipe for the whole file is too rigid. Compression systems win by adapting.
+
+**Action: implement chunked residual mode**:
+
+* split plaintext into fixed chunks (start with 512 or 1024 bytes)
+* for each chunk:
+
+  * derive a small sub-key (like a small shift delta, or small param tweak)
+  * generate model bytes for that chunk
+  * store per-chunk metadata compactly (varint deltas, RLE, etc.)
+* residual becomes **much more compressible** because the model can re-align locally.
+
+This is where your “key-based compression” starts feeling real.
+
+---
+
+### Step 5 — Move from “XOR residual” to “symbolic modeling” for text
+
+Genesis is ASCII English. XOR residual is generic, but **not text-aware**.
+
+Two strong next upgrades:
+
+1. **Token-space modeling**: model predicts bytes *as symbols* (space/newline/letters patterns)
+2. **Delta residual**: `residual[i] = plain[i] - model[i] mod 256` can sometimes cluster more than XOR
+
+**Action:** keep XOR as MVP, but add a second residual mode to compare:
+
+* `ResidualXor`
+* `ResidualSub` (mod 256)
+
+Rank by effective size for each.
+
+---
+
+### Step 6 — Scale test set carefully (don’t overfit one file)
+
+Keep Genesis1.txt as your “unit test,” but you need:
+
+* Genesis2.txt
+* Psalms snippet (different rhythm)
+* a random binary sample (to confirm you don’t hallucinate wins)
+
+**Action:** add a CLI “suite” command that runs tune/encode/decode on a small corpus and prints a table of effective sizes.
+
+---
+
+## Why splitmix64 performed “worse” for compression (but “better” for crypto)
+
+Your splitmix run shows:
+
+* model_distinct = 256/256
+* model_entropy ≈ 7.95 bits (near-max)
+* residual_entropy ≈ 7.95 bits (near-max)
+* zstd(residual) ≈ 4210 (basically no compression)
+
+That’s expected: whitening makes the stream look like noise. Noise is not compressible.
+
+So for your goal: **we want structured, biased, learnable keystream**.
+
+---
+
+# Carry-over notes for next instance (K8DNZ / Cadence key-based compression)
+
+## Mission
+
+Build a **key-based compression** system (not encryption) where a short “key” (Recipe/ARK) deterministically regenerates a model stream; the stored payload is a **small residual** that compresses well. Decode reconstructs plaintext losslessly using the same key/time recipe. Focus on compression wins, not secrecy.
+
+## Core artifacts / formats
+
+* **.k8r recipe**: deterministic parameters (quant range, clamp, shift, etc.) used by Engine.
+* **.ark container**: MAGIC `ARK1`, recipe blob, data bytes, CRC32.
+
+  * In “fit/residual” mode, `payload_kind = ResidualXor` so decode knows to reconstruct: `plain = residual XOR model_stream`.
+* **Tune command** (`k8dnz-cli tune`): shift search refinement + optional fit/residual mode.
+
+  * Supports multipass via `--passes` + default divisors (32,256,2048,...) or explicit `--step-div`.
+  * **Key improvement added:** `--rank-by-effective-zstd` ranks candidates by:
+
+    * `effective_bytes = recipe_bytes + zstd(residual) at --zstd-level`
+  * Health guard rails:
+
+    * Candidate shift is clamped to ±width (`width = qmax - qmin`) to avoid degenerate shifts.
+    * **Dead keystream penalty/refusal**: reject near-constant model streams (distinct<=2 or entropy<=0.50) so residual mode can’t “cheat” by making model zero and residual=plaintext.
+* **Genesis1.txt** is the canonical experiment input for now.
+
+## What we accomplished (verified working)
+
+1. **Build is clean** and deterministic.
+2. Added/used **fit + residual MVP**:
+
+   * `tune --fit-in text/Genesis1.txt --out-ark ...` writes a residual-based .ark.
+   * `decode` reconstructs text losslessly (diff is clean).
+3. Added **effective size ranking**:
+
+   * `--rank-by-effective-zstd --zstd-level N` ranks based on real-world output size.
+4. Verified behavior with real runs:
+
+   * Non-mixed keystream (keystream_mix=None) yields residuals that zstd compresses somewhat.
+   * **SplitMix64 mixing makes residual nearly random** -> zstd can’t compress (effective bytes worse). Great for crypto-like whitening, bad for compression.
+
+## Key observed results
+
+* Genesis1 plaintext length: **4201 bytes**.
+* Best non-mixed run (zstd level 3) achieved:
+
+  * `recipe_bytes ≈ 210`
+  * `zstd(residual) ≈ 3958`
+  * `effective_bytes = 4168`
+  * Net win vs raw plaintext: **4201 → 4168** (~33 bytes saved, ~0.8%).
+* Keystream samples (`regen --out bin` then `analyze`) show zstd ratios ~7–8×, meaning the generated stream has strong structure and is compressible — encouraging, but this metric is *secondary* to residual effective size.
+
+## What we learned / current direction
+
+* We do **not** want encryption/whitening. We want **predictable structure** so residual shrinks and compresses.
+* Shift-only tuning is converging, but improvements are small; we likely need more expressive modeling than just `quant.shift`.
+* The real path to large gains is **adaptation** (chunking / per-chunk micro-keys) and/or improved residual definition.
+
+## Immediate next steps (highest ROI)
+
+1. **Add baseline reporting**
+
+   * Compute and print `zstd(plaintext)` at the same zstd level.
+   * Always compare `our_effective_bytes` vs `baseline_plain_zstd_bytes`.
+   * Goal: beat baseline, not just raw.
+2. **Expand the tuning search space**
+
+   * Add one or two additional deterministic, compression-friendly knobs beyond `quant.shift`.
+   * Avoid “whitening” knobs that push entropy toward 8.0.
+3. **Implement chunked mode (major lever)**
+
+   * Split plaintext into chunks (start 512/1024 bytes).
+   * Allow small per-chunk key deltas (e.g., shift delta) stored compactly.
+   * Rank by total effective bytes: recipe + per-chunk metadata + zstd(residual).
+4. **Try additional residual functions**
+
+   * Add `ResidualSub (plain - model mod 256)` alongside XOR and compare by effective size.
+5. **Expand test corpus (still Genesis-first)**
+
+   * Keep Genesis1 as primary.
+   * Add Genesis2 and a few other controlled samples to avoid overfitting.
+
+## Recommended “standard experiment command”
+
+Non-mixed compression mode:
+
+* `tune` with `--rank-by-effective-zstd` and `--keystream-mix none`
+* write out recipe + ark
+* `decode` and diff for correctness
+* optionally `analyze` keystream for sanity, but don’t optimize keystream compression directly.
+
+## Guard rails to keep
+
+* Shift clamping to ±width.
+* Dead keystream rejection (distinct/entropy thresholds) especially for residual mode.
+* Deterministic behavior: same input + recipe => same outputs.
+
+---
+
+If you want, paste the output of a plain `zstd -3` (or your CLI baseline once you add it) on Genesis1, and I’ll help interpret whether we’re actually beating “normal compression” yet — and how far chunking needs to move the needle.
+
+[1]: https://chatgpt.com/c/698e2465-feb8-8330-818e-87ecfcb510e5 "K8DNZ Progress Update"
+[2]: https://chatgpt.com/c/698e590f-b1ac-8327-af1c-23ba19890495 "Next Step Proposal"
+[3]: https://chatgpt.com/c/698e0899-1a0c-832f-b474-dd264eec3fa7 "K8DNZ Project Analysis"
+
+
+### END NOTE - FEBRUARY 13 2026 - 13:30 CST
+
+
+
+
+
+### BEGIN NOTE - FEBRUARY 13 2026 - 20:44 CST
+
+ ### CARRY-OVER NOTES — K8DNZ / “Cadence” Project
+
+**Date:** 2026-02-13 (America/Chicago)
+**Goal:** preserve continuity so the next instance can pick up immediately with the *same mental model, same commands, same known results, and the next concrete engineering steps.*
+
+---
+
+## 0) Mission (re-stated, clarified)
+
+We are building a **deterministic, modular codec prototype** inspired by the vision:
+
+> time → two dots orbit → align → lockstep spiral on a truncated cone (frustum) with a deterministic color field → emit paired token (color pair) → repeat.
+
+But the *practical codec objective* is:
+
+**A short key (Recipe / ARK string) + tiny payload (if needed) deterministically reconstructs the full data.**
+
+* We are **not pursuing secrecy** as the primary goal (crypto whitening is optional, and it harms compression).
+* We are pursuing **predictability**: the generator should produce a stream that correlates with the target, leaving a **small residual** that compresses hard.
+* This is “keyed reconstruction,” not “traditional compression only.” But we must still beat strong baselines like `zstd(plaintext)` to claim real compression wins.
+
+---
+
+## 1) What is implemented and verified working (MVP success)
+
+### 1.1 Deterministic stream generator (Engine)
+
+* Engine emits a deterministic token stream over **ticks** and **emissions**.
+* Output modes:
+
+  * `Pair`: 1 byte per emission (`tok.pack_byte()`).
+  * `Rgbpair`: 6 bytes per emission (`tok.to_rgb_pair().to_bytes()`).
+* Determinism is verified: same recipe + same run parameters → same outputs.
+
+### 1.2 Fit → TM1 + Residual → Reconstruct pipeline (works end-to-end)
+
+We now have a working “codec loop”:
+
+1. Generate a model stream (Engine).
+2. Find positions in that stream that best match/compress the target (“fit”).
+3. Store positions as **TM1** (TimingMap file format).
+4. Store the per-byte correction as **residual**.
+5. Reconstruct exactly by regenerating the stream and applying the residual.
+
+Reconstruction was repeatedly validated with `cmp ... && echo OK`.
+
+### 1.3 TM1 (“timemap”) format + zstd compressibility is solved
+
+TM1 encodes indices and is extremely compressible because it’s mostly delta-1 runs (lots of `01 01 01...`), especially when chunks choose near-contiguous positions.
+
+We directly inspected TM1 bytes (hex dump) and observed it’s largely repeating `01`, explaining why zstd crushes it.
+
+**Key milestone:** TM1 is effectively “free” in compressed size for large targets.
+
+---
+
+## 2) Current experiments and what we learned (hard data)
+
+### 2.1 Baseline is now always printed (important)
+
+The timemap command prints:
+
+* `plain_zstd_bytes` at the same zstd level
+* `tm1_zstd_bytes`
+* `resid_zstd_bytes`
+* `effective_bytes_no_recipe = tm1_zstd + resid_zstd`
+* `effective_bytes_with_recipe = recipe_bytes + effective_no_recipe`
+* `delta_vs_plain_zstd_*`
+
+This makes it impossible to fool ourselves: we compare against “just use zstd.”
+
+### 2.2 The huge success: TM1 compresses ~98%+
+
+Full Genesis1 test:
+
+* `tm1_raw_bytes ~ 4216–4218`
+* `tm1_zstd_bytes ~ 65–70`
+
+That’s roughly **98.3–98.5% reduction**, consistently.
+This validates a major part of the vision: **the “time path” / navigation metadata can be extremely compact.**
+
+### 2.3 The blocker: Residual is still huge vs baseline zstd
+
+Full Genesis1 results (Text40, Rgbpair, chunk 512, scan_step 8):
+
+#### zstd level 3, residual XOR
+
+* `plain_raw_bytes = 4201`
+* `plain_zstd_bytes = 1326`
+* `tm1_zstd_bytes = 70`
+* `resid_zstd_bytes = 3009`
+* `effective_no_recipe = 3079`
+* `effective_with_recipe = 3289`
+* `delta_vs_plain_zstd_no_recipe = +1753`
+* `delta_vs_plain_zstd_with_recipe = +1963`
+
+#### zstd level 9, residual XOR
+
+* `plain_zstd_bytes = 1250`
+* `tm1_zstd_bytes = 69`
+* `resid_zstd_bytes = 2996`
+* `effective_no_recipe = 3065`
+* `delta_vs_plain_zstd_no_recipe = +1815`
+
+**Interpretation:** raising zstd level helps the plaintext baseline a bit, but does not make our residual collapse. Residual is still “noise-like” to zstd.
+
+### 2.4 Residual modes: XOR beats SUB (for this model/mapping)
+
+Full Genesis1 with `ResidualSub` (same config) was worse:
+
+* `tm1_zstd_bytes = 65`
+* `resid_zstd_bytes = 3119`
+* `effective_no_recipe = 3184`
+* `delta_vs_plain_zstd_no_recipe = +1858`
+
+**Conclusion:** residual function is not our lever right now. Keep XOR as default.
+
+### 2.5 Mapping modes: Text40 is a consistent (but small) improvement
+
+On 2048-byte slice tests, consistent ranking:
+
+* `Text40` beats `Ascii7` by ~38–50 bytes in residual zstd and effective size.
+* `Text64` performed worse and sometimes hit “no room for chunk” due to stream limits.
+
+**Conclusion:** alphabet projection / mapping is a real lever, but not enough alone.
+
+### 2.6 Chunking mode works, but is currently limited by stream budget
+
+Chunked fitting chooses start positions per chunk, with a “jump_cost” penalty based on varint delta sizes.
+
+We hit “no room for chunk” when stream length wasn’t enough. This happened because:
+
+* In `Rgbpair`, stream bytes = `emissions * 6`.
+* Even if `--search-emissions` is huge, we were often **ticks-limited** by `--max-ticks`.
+* Example: at `--max-ticks 80,000,000`, engine only reached ~20,571 emissions → 123,426 bytes stream.
+* Full Genesis1 required more stream; raising `--max-ticks` to 240M fixed it.
+
+**Conclusion:** for large targets, `--max-ticks` is the real budget knob.
+
+---
+
+## 3) Where we are now (state of the project)
+
+We are at:
+
+### “MVP works: navigation + correction works; now make the generator predictive.”
+
+* The architecture for a keyed reconstruction codec is real and verified.
+* TM1 compression indicates we can store the “time path” compactly.
+* But the generator is not yet producing a stream that looks like English text (even after mapping), so residual is large and not compressing down.
+
+This means the next stage is not “more scan tuning.” It’s “make the model stream more text-shaped / more expressive.”
+
+---
+
+## 4) How the current implementation maps to the vision (honest alignment)
+
+### Implemented / strongly represented
+
+* **Time:** ticks/emissions drive everything.
+* **Two orbiting sources → paired emissions:** Pair/Rgbpair streams implement “paired tokens over time.”
+* **Alignment concept:** we are sampling at specific times/indices (timemap), which is analogous to selecting moments of alignment.
+
+### Partially implemented / weakly represented
+
+* **Frustum spiral:** not yet a rich geometric trajectory affecting emission with strong structure. We don’t have a true spiral state evolving along a cone wall that modulates outputs.
+* **Color bars/waves field:** we have mapping/projection functions (Text40, Ascii7) which are more like post-processing than a true deterministic 2D/3D color field sampled along the spiral.
+
+### Missing (and likely required for real gains)
+
+* A true **frustum field sampler** that produces alphabet-ish outputs by construction (banded waves, harmonics, structured palette), so residual shrinks.
+
+---
+
+## 5) Commands we used (copy/paste reference)
+
+### 5.1 Full Genesis1 “best so far” run (XOR, Text40, zstd3)
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/genesis1.tm1 \
+  --out-residual /tmp/genesis1.resid \
+  --chunk-size 512 \
+  --scan-step 8 \
+  --zstd-level 3 \
+  --search-emissions 2000000 \
+  --max-ticks 240000000 \
+  --start-emission 0 \
+  --mode rgbpair \
+  --map text40 \
+  --residual xor
+```
+
+### 5.2 Confirm reconstruction (when outputs exist)
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/genesis1.tm1 \
+  --residual /tmp/genesis1.resid \
+  --out /tmp/genesis1.out \
+  --max-ticks 240000000 \
+  --mode rgbpair \
+  --map text40 \
+  --residual-mode xor
+
+cmp text/Genesis1.txt /tmp/genesis1.out && echo OK
+```
+
+### 5.3 zstd level 9 validation run (showed no hidden compressibility)
+
+Same as 5.1 but `--zstd-level 9`. Result: still ~+1815 bytes worse than baseline.
+
+---
+
+## 6) Key conceptual results (what to remember)
+
+1. **TM1 is solved.**
+   TM1 is tiny once zstd’d, even for full Genesis1. This confirms the “time navigation can be compact.”
+
+2. **Residual is the problem.**
+   Residual zstd stays ~3KB even when baseline plaintext zstd is ~1.25KB. Our model isn’t predictive enough.
+
+3. **Don’t whiten.**
+   Any “SplitMix64 / whitening” makes streams look random → zstd can’t compress residual. Keep whitening only for optional crypto mode, not compression.
+
+4. **Text40 is the best mapping so far.**
+   It provides consistent improvements vs Ascii7, but the gains are still small.
+
+5. **Ticks are the real budget limiter.**
+   `--search-emissions` won’t help if `--max-ticks` caps emissions early. For full Genesis, we needed 240M ticks.
+
+---
+
+## 7) ARK key string status (where we are)
+
+We are not yet at the “pretty” ARK key string format. We are effectively using “ARK components” in practice:
+
+* **Recipe** (`.k8r` file): engine parameters.
+* **Mode:** `pair` or `rgbpair`.
+* **Map:** `text40`, `ascii7`, etc.
+* **Residual mode:** `xor` (best).
+* **TM1 file:** the time path (compresses insanely well).
+* **Residual file:** correction bytes (still too big).
+
+Next instance should start formalizing an ARK string that packs these parameters + seeds + checksums, e.g.:
+
+* `ARK1:` prefix
+* `R=` recipe hash or embedded recipe blob
+* `M=` mode
+* `P=` mapping mode + seed
+* `T=` tm1 compressed bytes (or hash + external reference)
+* `X=` residual compressed bytes (or hash + external reference)
+* `Z=` zstd level, etc.
+* `H=` checksum
+
+But **do not try to “finalize ARK format”** until residual is meaningfully smaller; otherwise it’s just packaging a big correction.
+
+---
+
+## 8) What remains to complete the project (real work)
+
+### 8.1 Make the generator “text-shaped”
+
+We need more expressiveness that is **structured**, not random. The next development should focus on making “frustum + color wave field” real.
+
+Concrete direction:
+
+* Treat the emission as sampling a **field**:
+
+  * coordinates derived from time/turns/phase (fixed-point turns)
+  * “sides” / lanes correspond to opposite-dot symmetry (Δ = 0.5)
+  * sample banded functions: stripes, saw/ramp, sine-like LUT waveforms, harmonics, palette mapping
+* Then quantize output into Text40 (or better, a text-optimized alphabet) *at the source*, rather than only as post-map.
+
+If the emitted bytes are already constrained to text alphabets with structured distribution, residual can shrink dramatically.
+
+### 8.2 Improve chunking strategy (but only after 8.1 starts working)
+
+Chunking is working, but currently it’s mostly choosing times that minimize zstd(residual), not truly matching content. Once the stream is more predictive, chunking will become a major lever.
+
+Also implement a code fix:
+
+* When “no room for chunk,” don’t crash:
+
+  * either extend stream (step engine more up to max_ticks)
+  * or stop gracefully, write partial output, and report `completed_bytes/target_bytes`.
+
+### 8.3 Expand the parameter space carefully
+
+We already proved “shift-only tuning converges but gains are limited.”
+We need additional deterministic knobs that change structure without whitening:
+
+* phase offsets
+* stripe frequency / band width
+* frustum progression rate (spiral pitch)
+* palette mapping tables derived from seeds but structured
+* lane coupling between the two sides
+
+### 8.4 Only after real shrinkage: finalize ARK strings
+
+Once residual collapses to near baseline or better, lock an ARK string format that can:
+
+* embed or reference recipe
+* include mapping + field params
+* include TM1 + residual compressed payloads
+* include CRC/checksums
+
+---
+
+## 9) “Is it possible?” — current odds update (grounded)
+
+What the latest runs tell us:
+
+* We are **not stuck**. We reached a functioning codec pipeline with deterministic reconstruction.
+* We discovered a major win: TM1 metadata is negligible after compression.
+* The remaining difficulty is singular and clear: **text predictiveness**.
+
+So the odds of success improved in the sense that:
+
+* the system architecture is validated,
+* the “time-driven navigation” idea is proven compact,
+* and we have a precise target for improvement (model expressiveness).
+
+But we must be realistic:
+
+* to beat zstd on English text, the generator must become much more language-shaped than it is now.
+* this will require implementing the “frustum color field” concept in a way that actually biases outputs into text patterns.
+
+---
+
+## 10) Immediate next-instance checklist (do these first)
+
+1. **Implement the “no room for chunk” fix** (extend stream or graceful partial output).
+2. **Add a real frustum field sampler** (deterministic stripes/waves/palette) and a new map mode that uses it.
+3. Re-run:
+
+   * Genesis1 full, chunk512, scan8, zstd3
+   * Compare baseline vs effective again.
+4. If residual drops meaningfully (hundreds of bytes), then:
+
+   * expand search space (more parameters)
+   * start formal ARK string packing.
+
+---
+
+## 11) Key files / assets provided this instance
+
+* `codebundle.md`: full project code in markdown bundle (source of truth for next instance).
+* `NOTES.MD`: running project notes.
+* `README.md`: project overview.
+* `VISUAL.jpeg`: vision diagram; use it to guide frustum+field sampling implementation.
+
+---
+
+## 12) Final “anchor” takeaway
+
+We have effectively proven:
+
+* **Time path compression is real and extremely strong.**
+* The project now lives or dies on: **making the frustum/field emission generate text-like structure** so the residual collapses.
+
+That is the next engineering frontier.
+
+
+### END NOTE - FEBRUARY 13 2026 - 20:44 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 13 2026 - 22:37 CST
+
+## K8DNZ Timemap / Cadence Carry-Over Notes (for next instance)
+
+### 0) Where we are right now (the “state of the world”)
+
+We have a working end-to-end “timemap + residual” codec loop for `Genesis1.txt`:
+
+* **Fit (chunked XOR)** finds a set of time positions (`.tm1`) and produces a residual stream (`.resid`).
+* **Reconstruct** replays the engine, applies the same mapping, then applies the residual (xor/sub) to recover the original bytes.
+* We have confirmed correctness with:
+
+  * `cmp text/Genesis1.txt /tmp/genesis1.out && echo OK` → **OK**
+  * `reconstruct ok: ... bytes=4201 ticks=... emissions=...`
+
+So: **the pipeline works**. The core remaining question is: **can we drive effective size down toward the “ARK string” vision by improving modeling / mapping / selection?**
+
+---
+
+### 1) Core idea we are executing
+
+We are treating the engine’s emission stream as a deterministic “signal generator” and encoding text by:
+
+1. Choosing positions in the stream (timemap indices)
+2. Applying a mapping transform to the raw stream bytes to shape them toward the target distribution
+3. Saving only what we still can’t predict (residual), compressed
+4. Reconstructing by replaying engine + mapping + residual
+
+This is a “model + residual” codec, but the “model” is a deterministic orbital engine keyed by the recipe.
+
+---
+
+### 2) Important files / artifacts
+
+* `crates/k8dnz-cli/src/cmd/timemap.rs` — main CLI logic for:
+
+  * `fit-xor`, `fit-xor-chunked`, `reconstruct`, mapping modes, residual modes, scoring
+* `configs/tuned_validated.k8r` — recipe used for all experiments
+* `text/Genesis1.txt` — canonical test corpus for now (do not switch yet)
+* Output artifacts (typically):
+
+  * `/tmp/genesis1*.tm1`
+  * `/tmp/genesis1*.resid`
+  * `/tmp/genesis1*.out`
+
+---
+
+### 3) What we’ve proven (major milestones)
+
+#### A) End-to-end correctness is solid
+
+* `fit-xor-chunked` + `reconstruct` successfully round-trips Genesis1.
+* We can vary:
+
+  * `--mode rgbpair`
+  * mapping modes
+  * residual mode xor/sub (xor is currently used)
+  * scan_step, chunk_size, max_ticks
+    and still reconstruct.
+
+#### B) Chunked fitting works and gives diagnostics per chunk
+
+For each chunk we print:
+
+* start_pos (absolute stream pos)
+* emission+lane (for rgbpair)
+* scanned_windows
+* matches / % matches
+* jump_cost
+* residual metric (often zstd length)
+* chunk_score
+
+This per-chunk output is critical: it shows where the search is “finding structure” vs failing.
+
+#### C) Mapping matters enormously
+
+We tried multiple maps:
+
+* `ascii7` performed poorly (near-zero matches; residual compress worse).
+* `text40` and `text40-weighted` improved slightly but were still mediocre.
+* `text40-lane` improved match rates but did not guarantee better compression.
+* **text40-field** was a major jump: match rates ~10–14% and effective bytes improved a lot vs the earlier text40-weighted / lane work.
+
+Conclusion: **the best path is improving mapping/model alignment**, not brute scan.
+
+---
+
+### 4) The critical discovery: objective selection can make runs faster but worse
+
+We modified `timemap.rs` to support a faster objective path:
+
+* `FitObjective` exists: `Matches` vs `Zstd`
+* Some runs printed:
+
+  * `objective=Matches refine_topk=256`
+
+Those runs became *much faster*, but the results got **worse** on the metric we actually care about (effective size vs plain zstd).
+
+Key insight:
+
+* **Maximizing “residual==0 count” (matches) is not strongly correlated with minimizing zstd(residual).**
+* zstd cares about **repeatable patterns / runs / structure**, not simply the number of zeros.
+
+So: “Matches objective” is a speed lever but must be treated as a proxy only; it can easily produce worse compression.
+
+---
+
+### 5) Best (known) results so far and what they imply
+
+#### Earlier “good direction” (compression-aligned)
+
+From the earlier text40-field seed exploration (before the fast “Matches objective” runs dominated), we saw effective totals trending down:
+
+* Example strong region:
+
+  * `map=text40-field`
+  * seeds like `65537`, `1337`, `0`, `7` gave improvements
+  * effective size got into the **~2.4k–2.7k range (no-recipe)** depending on run
+  * reconstruct remained correct
+
+This was a meaningful qualitative improvement from:
+
+* text40-weighted / lane runs which were around ~3.0k+ effective no recipe
+
+#### Later “fast objective=Matches” runs (regression)
+
+Example:
+
+* `objective=Matches refine_topk=256`
+* `effective_no_recipe ~3082–3094`
+* manual zstd of tm1/resid corroborated totals
+
+So:
+
+* **Speed improved**
+* **Compression regressed**
+* This confirms our earlier best path is “compression-aware selection”, even if slower.
+
+---
+
+### 6) Performance / runtime observations
+
+* Runs were reported as “very slow” after a timemap.rs change.
+* After adjustments (and/or objective shift), runs became “much faster”.
+* There was a compile error due to `FitObjective` missing `PartialEq`:
+
+  * fixed by adding `#[derive(PartialEq)]` (or equivalent)
+* There is currently a warning:
+
+  * `unused variable: proxy_score` in refine loop
+  * This indicates refine scaffolding exists but scoring plumbing may not match intent.
+
+---
+
+### 7) What we believe is happening mathematically (important conceptual framing)
+
+We’re doing a deterministic time-indexed lookup into an emitted byte stream.
+
+* The “engine” is a deterministic oscillator.
+* The timemap is the “time coordinate system” telling us which bytes to sample.
+* The mapping is an attempt to make the sampled bytes “look like text” (or at least reduce entropy relative to the target distribution).
+* Residual captures what we still can’t predict.
+
+This is akin to:
+
+* a generative model + correction stream
+* but the model is “orbiting dots / lanes / fields” rather than a learned NN.
+
+The key is to make the model’s output **statistically and structurally close** to the target so that:
+
+* residual has long repeated patterns → compressible
+* timemap representation is itself compressible (often tiny already)
+
+---
+
+### 8) What remains (clear next steps for next instance)
+
+This is the actionable roadmap.
+
+#### A) Restore compression-aligned optimization as the main objective
+
+We need the fitting search to prefer:
+
+* minimal `zstd(resid)` **plus** minimal `tm1_len/jump_cost` (effective bytes)
+
+The “Matches objective” should only be used as:
+
+* a first-pass filter to produce candidate starts
+* then finalize with zstd-based scoring
+
+**Goal:** keep speed improvements without losing compression quality.
+
+#### B) Fix / tighten the refine logic (it exists but may be miswired)
+
+We saw:
+
+* `objective=Matches refine_topk=256`
+* warning about `proxy_score` unused
+
+Likely needed:
+
+* ensure refine candidate ranking / selection is:
+
+  * step 1: cheap metric (matches, small histogram proxy, etc.)
+  * step 2: zstd metric on top K candidates
+* ensure printed scoreboard uses the same objective as the actual selection
+
+#### C) Continue exploring `text40-field` mapping + seed strategy (this is currently the strongest lever)
+
+We already saw seed sensitivity:
+
+* seed 65537 and 1337 sometimes good
+* seed 1 had partial output earlier due to stream length “no room for chunk”; resolved by increasing ticks/stream or ensuring stream growth
+
+Next instance should:
+
+* systematically search seeds (small range or randomized)
+* record effective sizes
+
+#### D) Consider a stronger “field” mapping variant
+
+If `text40-field` is:
+
+* `raw -> some field mixing -> text alphabet projection`
+  then improvement ideas:
+* incorporate lane awareness into field mapping (field+lane hybrid)
+* incorporate position-dependent mixing that preserves locality (zstd likes locality)
+* ensure mapping produces long runs of spaces/newlines/punctuation in plausible patterns, not random scatter
+
+#### E) Push beyond Genesis1 eventually, but not yet
+
+Genesis1 remains our canonical test because:
+
+* stable length (4201 bytes)
+* known structure
+* easy to compare runs
+
+Only after we beat plain zstd meaningfully (or at least approach it) do we scale to:
+
+* Genesis2, etc., eventually whole KJV.
+
+---
+
+### 9) Key lessons learned (to avoid repeating mistakes)
+
+1. **Match rate ≠ compressibility.**
+   High `resid==0` count can still be a poor zstd residual if zeros are scattered.
+2. **Mapping is the dominant lever.**
+   ascii7 and naive text40 were dead ends; field mapping was the breakthrough.
+3. **Stream length / “no room for chunk” failures are engineering, not theory.**
+   Fix by ensuring stream grows enough:
+
+   * higher `max_ticks`
+   * higher `search_emissions`
+   * correct ensure_stream_len logic
+4. **We must use the right objective.**
+   If we optimize the wrong proxy, we’ll get fast but useless runs.
+
+---
+
+### 10) Metrics we track (standard scoreboard interpretation)
+
+From each run we care about:
+
+* `plain_zstd_bytes` (baseline)
+* `tm1_zstd_bytes` (usually tiny; can be ~60–75 bytes)
+* `resid_zstd_bytes` (dominant term)
+* `effective_bytes_no_recipe = tm1_zstd + resid_zstd`
+* `effective_bytes_with_recipe = recipe_raw + effective_no_recipe`
+* deltas vs plain zstd
+
+Reality so far:
+
+* We are still **worse than plain zstd** on Genesis1.
+* But we’ve **moved from ~3.0k effective** toward **~2.4–2.7k effective** in best runs via field mapping.
+* That’s real progress: the model is starting to “explain” more of the text.
+
+---
+
+### 11) Strategic “odds of success” snapshot
+
+Odds are increasing because:
+
+* We have a correct pipeline.
+* We found a mapping family (`text40-field`) that significantly improves structure alignment.
+* We can now iterate systematically with measurable progress.
+
+The remaining work is not “will this work at all” — it’s **optimization and model shaping**:
+
+* align objective with compression
+* improve mapping so residual becomes structurally compressible
+* reduce timemap overhead further (already very small)
+
+---
+
+### 12) Minimal “restart instructions” for the next instance
+
+When starting next session:
+
+1. Confirm current code state:
+
+   * `cargo build`
+2. Run one known baseline (field mapping, zstd objective):
+
+   * `fit-xor-chunked` with `map text40-field`, seed 65537, scan_step 4, chunk 512
+3. Immediately run reconstruct:
+
+   * confirm `cmp` passes
+4. Compare effective bytes across:
+
+   * different seeds
+   * objective modes (but always finalize with zstd scoring)
+5. Keep notes of “best effective_no_recipe” and the exact CLI flags used.
+
+---
+
+If you want, when you start the next instance, paste just:
+
+* the current `timemap.rs` (full file or codebundle snippet)
+* the best 2–3 terminal scoreboards
+  and we’ll immediately lock a clean “baseline run set” + a seed-search plan that’s compression-aligned and fast.
+
+
+### END NOTE - FEBRUARY 13 2026 - 22:37 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 14 2026 - 13:05 CST
+
+## K8DNZ / Cadence Project — Carry-Over Notes (Next Instance)
+
+**Timestamp:** 2026-02-14 (America/Chicago)
+**Canonical test corpus:** `text/Genesis1.txt` (keep using this until we clearly beat baselines)
+**Primary goal (updated):** **~90% compression**: store data in an ARK-style key about **10% the size** of the original (i.e., for Genesis1 ≈4201 bytes, target key+payload ≲ ~420 bytes).
+**Secondary goal:** Make ARK keys composable (cascading compression) once residuals are structured.
+
+---
+
+# 1) State of the world
+
+### What we have working
+
+We have a **deterministic, end-to-end “timemap + residual” codec loop**:
+
+* **Fit (timemap selection + residual construction)** produces:
+
+  * `*.tm1` (time positions / indices)
+  * `*.resid` (residual stream)
+* **Reconstruct** replays the same deterministic engine stream, applies the same mapping, then applies residual to recover bytes.
+
+Core concept:
+We treat the engine as a **deterministic signal generator**, and encode text as:
+
+1. A **coordinate system** (timemap indices into the stream), plus
+2. A deterministic **mapping** (shaping engine bytes toward “text-like”), plus
+3. A **residual** for what the model didn’t predict.
+
+This is a classic **model + correction** codec, except the model is orbital/frustum mechanics instead of a learned model.
+
+### What is currently broken/limiting
+
+We are frequently producing **partial outputs** (EOF on cmp) because `fit-xor-chunked` runs out of stream near the end:
+
+* Fit reports: `no room for chunk ... (writing partial)`
+* Reconstruct succeeds *for the produced bytes* but output length is short (e.g., 3072/3584 bytes), and `cmp` fails with EOF.
+
+This is not corruption. It’s **coverage** failure.
+
+---
+
+# 2) Key artifacts / files
+
+### Key code
+
+* `crates/k8dnz-cli/src/cmd/timemap.rs`
+
+  * Implements:
+
+    * `timemap fit-xor-chunked` (main workhorse)
+    * `timemap reconstruct`
+    * mapping modes (Text40Field is the current best)
+    * residual modes (xor/sub; xor used)
+    * objective modes: `Matches` vs `Zstd`
+    * refine path: matches proxy + optional zstd refine on topK
+
+### Key config + corpus
+
+* `configs/tuned_validated.k8r` (current recipe for experiments)
+* `text/Genesis1.txt` (canonical test corpus)
+
+### Script work
+
+You created a local suite script (`/tmp/run_timemap_suite.sh`) to avoid huge paste sessions and iterate ticks/objectives. This is good; we should evolve it into the standard “baseline suite” script.
+
+---
+
+# 3) What we learned from the latest runs
+
+## 3.1 Determinism and correctness are good (when we have full coverage)
+
+* Reconstruct produces exactly the bytes implied by `tm1+resid` for the portion encoded.
+* Failures are **EOF**, not mismatch in content, indicating selection/stream exhaustion rather than algorithmic non-determinism.
+
+## 3.2 The biggest current blocker is the “teleport-to-end” search pathology
+
+In `fit-xor-chunked`, per chunk we search across a window of the stream and pick the best by the scoring objective. What’s happening:
+
+* With more ticks (120M, 160M), the available stream gets longer, so the search has more opportunities.
+* The scorer often finds a “great” candidate near the **end of the current stream**.
+* That makes the next chunk’s `min_start` near the end too, leaving no runway → partial output.
+
+This is why increasing ticks did not fix the problem; it just moved “best chunk starts” later.
+
+**Root cause:** the fitter is allowed to choose any future start position across the entire available stream and has no constraint to preserve future room.
+
+## 3.3 Objective behavior confirmed again
+
+* `objective=Zstd` is “true scoring” but slow (compress per window).
+* `objective=Matches` is fast but only weakly correlated with actual compressibility.
+* The hybrid refine path exists (`Matches` + `refine_topk`) and is the right direction, but we still need continuity constraints.
+
+## 3.4 Current compression numbers (interpretation)
+
+From the latest script run output (partial at 3072 bytes):
+
+* `tm1_zstd_bytes ~47–49` (excellent; timemap compresses very well)
+* `resid_zstd_bytes ~2156–2183` (dominant; still far above our <10% goal)
+* `effective_bytes_no_recipe ~2205–2230` (for partial slice)
+* Plain zstd on that slice ~953 bytes → we are still *worse* than plain zstd.
+
+Important: because the output is partial, these totals are not yet the final “Genesis1 full length” scoreboard; but they reflect the current residual is still too high.
+
+---
+
+# 4) Updated target and what it mathematically means
+
+## 4.1 New goal: “90% compression” (≈10% key)
+
+For Genesis1 (~4201 bytes), 10% target is roughly:
+
+* **≤ ~420 bytes total** (including recipe/params + tm1 + residual)
+
+Since tm1_zstd is already ~50 bytes, the real requirement becomes:
+
+* Residual zstd ≲ **~300–350 bytes** (order of magnitude)
+
+We are currently at ~2.1k+ for partial slices, so we need a major improvement in residual structure (roughly 6–8×+ better for the endgame).
+
+## 4.2 Cascading compression is allowed (Russian doll)
+
+We explicitly allow:
+
+* compressing sets of ARK keys into a meta-ARK using the same codec,
+* recursively.
+
+Key reality:
+
+* Cascading only helps if the stage-1 artifacts (residuals/timemap patterns/params) contain **repeatable structure**.
+* Cascading does not compress “white noise.”
+* Therefore: first we must make residuals **structured** (not merely smaller).
+
+Cascading becomes a phase-2 “overhead reducer,” not the primary miracle lever.
+
+---
+
+# 5) What remains (engineering roadmap)
+
+## 5.1 Fix coverage: enforce continuity / lookahead constraints (CRITICAL)
+
+We must stop chunk starts from jumping to the tail of the stream.
+
+### Required change (concept)
+
+Add a per-chunk constraint:
+
+* **Lookahead cap**: for each chunk, restrict candidate `s` to:
+
+  * `s ∈ [min_start, min_start + lookahead_bytes]`
+  * where `lookahead_bytes` is fixed (deterministic) and configurable (CLI flag)
+
+This guarantees:
+
+* We won’t pick a best window that consumes all future runway.
+* We can cover all chunks if the stream is long enough.
+
+This is the single most important fix to return to **full-length cmp OK** runs reliably.
+
+### Recommended CLI addition
+
+Add to `FitXorChunkedArgs`:
+
+* `--lookahead-bytes <N>` (default something like 262144 or 1048576 depending on perf)
+  and compute:
+* `max_start = min(stream.len() - n, min_start + lookahead_bytes)`
+
+Also ensure:
+
+* if lookahead is too small and we can’t find good windows, we can increase it deterministically.
+
+## 5.2 Speed + quality: finalize the “proxy + refine” pipeline
+
+Once coverage is fixed:
+
+* Keep `objective=Matches` as the cheap scan proxy
+* Always do a **zstd refine** on topK candidates (but only within lookahead window)
+* Ensure printed chunk metrics clearly distinguish proxy vs final zstd score.
+
+Potential improvement: upgrade proxy to correlate with zstd:
+
+* reward longer zero runs,
+* penalize high distinct byte count,
+* penalize frequent byte changes (high transition count).
+
+But don’t overcomplicate until lookahead is in.
+
+## 5.3 Continue mapping evolution (Text40Field is best so far)
+
+Current best mapping family:
+
+* `text40-field` with lane-aware weighted alphabets and low-frequency “field” mixing.
+
+Next mapping experiments after coverage fix:
+
+* “field+lane hybrid” (already partially present)
+* add “banding” that increases locality: encourage spaces/newlines to cluster in bands (zstd loves locality)
+* consider using larger chunk sizes (e.g., 768/1024) once lookahead makes continuity stable.
+
+## 5.4 Full-length baseline suite (standardize measurement)
+
+We need a repeatable suite that always outputs:
+
+* full-length `cmp OK`
+* scoreboard for full 4201 bytes:
+
+  * `plain_zstd_bytes`
+  * `tm1_zstd_bytes`
+  * `resid_zstd_bytes`
+  * effective totals
+
+**Do not trust partial scoreboards** as success metrics.
+
+---
+
+# 6) Why this work is necessary for the ARK key parameter algorithms
+
+The ARK key vision requires that:
+
+* a small set of parameters deterministically defines:
+
+  * engine/recipe (orbit rates, thresholds, field seeds)
+  * mapping (field mixing, lane alphabet choices, quantization rules)
+  * timemap strategy (chunk size, scan step, lookahead rules, objective mode)
+  * residual mode and compression framing
+
+What we’re doing now is discovering which knobs matter and how to package them into a stable schema:
+
+* The **recipe + mapping** are the “model”
+* The **timemap selection strategy** is the “coordinate embedding”
+* The **residual** is the “error correction stream”
+
+An ARK key is essentially:
+
+* “Here is the deterministic generator configuration”
+* “Here is how to sample it”
+* “Here is the minimal correction data to make it exact”
+
+We can’t define a good ARK parameter schema until:
+
+* coverage is stable (full-length decode)
+* objectives align with compressibility
+* mapping is strong enough that residual shrinks
+
+---
+
+# 7) Concrete next-instance checklist
+
+### Step 1 — Make runs full-length again (must happen first)
+
+Implement lookahead constraint in `fit-xor-chunked`:
+
+* Add `--lookahead-bytes` to args
+* Apply it to the scan range for each chunk
+* Re-run baseline suite
+
+Success criterion:
+
+* Fit produces all bytes (`produced_bytes == 4201`)
+* Reconstruct outputs 4201 bytes
+* `cmp text/Genesis1.txt out && echo OK` prints OK
+
+### Step 2 — Establish baseline scoreboard (full length)
+
+Run two baseline modes:
+
+* `objective matches --refine-topk 256` (fast)
+* `objective zstd` (slow sanity reference)
+
+Record full scoreboards.
+
+### Step 3 — Iterate parameters in a controlled grid
+
+Only after we have full-length baselines:
+
+* sweep `map_seed` (0, 1, 7, 1337, 65537, maybe 42, 12345, etc.)
+* try chunk sizes: 512 → 768 → 1024
+* try lookahead sizes: 256k → 1M → 4M
+
+Track:
+
+* `effective_bytes_no_recipe`
+* `resid_zstd_bytes` (main KPI)
+* runtime (secondary KPI)
+
+### Step 4 — Decide when cascading starts to matter
+
+Once we can repeatedly get under ~10% for the first stage (or close), then:
+
+* package tm1+resid+params into a binary “ARK payload”
+* run the codec on that payload as a second stage
+* measure whether residual-of-residual shrinks (requires structured residual)
+
+---
+
+# 8) Current “known issues” summary
+
+1. **Partial output (EOF)**
+
+   * Caused by chunk start positions drifting to the stream tail → no runway.
+   * Fix: lookahead continuity constraint.
+
+2. **Objective mismatch**
+
+   * `Matches` is fast but not compression-optimal.
+   * Fix: matches proxy + zstd refine (already present) + better proxy later.
+
+3. **Misleading progress perception**
+
+   * Small tm1_zstd (~50 bytes) is good, but residual dominates.
+   * Must measure full-length totals and target residual reductions.
+
+---
+
+# 9) Practical notes / conventions
+
+* Keep everything deterministic: no floats, no nondeterministic randomness.
+* Keep Genesis1 as canonical until we’re beating baselines or near target.
+* Use scripts for runs (avoid huge paste sessions).
+* Always require full-length `cmp OK` before believing a scoreboard.
+
+---
+
+# 10) What to paste into the next instance to resume fast
+
+1. This carry-over note.
+2. The updated `timemap.rs` after adding `--lookahead-bytes`.
+3. A single “baseline suite” output that shows:
+
+   * full-length decode OK
+   * scoreboard for full 4201 bytes
+4. The best (lowest) full-length scoreboard achieved so far and the exact CLI flags.
+
+---
+
+## One-line summary
+
+We proved determinism and the model+residual loop; the immediate blocker is chunk selection “teleporting” to the stream tail causing partial outputs. Next instance must add a deterministic per-chunk lookahead/continuity constraint to restore full-length recon, then iterate mapping/seeds/objectives toward the new 90% compression (10% key) goal, and only then pursue cascading compression as a second-stage overhead reducer.
+
+
+### END NOTE - FEBRUARY 14 2026 - 13:05 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 14 2026 - 15:10 CST
+
+## K8DNZ / Cadence Project — Carry-Over Notes (Next Instance)
+
+### Snapshot: where we are right now
+
+We have a working **deterministic “engine → byte stream”** pipeline, plus a **timemap + residual** layer that can reconstruct **Genesis1.txt exactly** from:
+
+* a **recipe** (`tuned_validated.k8r`)
+* a **timemap** (`.tm1`) describing *when/where* to sample the stream (the “dot landings”)
+* a **residual** (`.resid`) that patches differences between model output and the target
+* a **map** function (critical) that shapes raw engine bytes into a structured “field” that matches the vision (color walls / gamut / time-evolving surface)
+
+This is a major milestone: **fit → reconstruct is exact** for multiple modes and parameters.
+
+We are **not yet compressing better than zstd** (effective sizes are larger than `plain_zstd`), but we now have a controllable parameter surface and an experimental harness to push match rate and residual structure.
+
+---
+
+# 1) What we accomplished (hard facts + why it matters)
+
+## 1.1 Exact end-to-end reconstruction works
+
+We successfully ran:
+
+* `timemap fit-xor-chunked ...` → produced `.tm1` and `.resid`
+* `timemap reconstruct ...` → produced `.recon`
+* `cmp -s recon Genesis1.txt` → **OK exact match**
+
+This proves:
+
+* determinism: engine + mapping + timemap indexing is repeatable
+* time correctness: “landing times” (positions) are coherent enough to fully reconstruct
+* residual invertibility: XOR/SUB residual modes round-trip correctly
+
+### Verified variants that reconstruct OK
+
+* `mode=pair`, `map=text40-field`, `residual=xor` ✅
+* `mode=pair`, `map=text40-field`, `residual=sub` ✅ (but worse compression)
+* `mode=rgbpair`, `map=text40-field`, `residual=xor` ✅ (works; different dynamics)
+
+This means we can explore different “representation planes” (pair vs rgbpair) without breaking the pipeline.
+
+---
+
+## 1.2 timemap fit-xor-chunked now has “sacred time / runway” constraint
+
+We added a critical constraint to prevent “teleporting”:
+
+* candidate start positions must allow finishing the **entire remaining payload**
+* `s + remaining_total <= stream.len()` constraint (plus lookahead cap)
+
+This aligns with the vision: time is sacred, no cheating by jumping arbitrarily.
+
+---
+
+## 1.3 We have a vision-aligned “field mapping”: Text40Field
+
+We implemented `MapMode::Text40Field` to create a structured, evolving “surface” that maps raw bytes into a text-ish alphabet.
+
+**Key elements in Text40Field (already in code):**
+
+* “space” structure: `stripe` and `phase` derived from `pos` shifts
+* “lane” structure: `(pos % 6)` selects lane alphabets (like bands/strips)
+* deterministic “texture”: `splitmix64(seed_lo ^ pos)` noise term (not random, fixed per seed+pos)
+* time-varying intensity (“breathing”): triangle wave `tri(t)` controlled by `tshift` + `phase0`
+* intensity strength: `rate`
+
+### Packing strategy (important)
+
+We deliberately packed parameters into `map_seed` **without adding CLI flags** initially:
+
+* seed_lo = lower 32 bits
+* rate = bits 32..39
+* tshift = bits 40..47
+* phase0 = bits 48..55
+
+This gives us parameter richness while keeping the CLI stable.
+
+---
+
+# 2) What the latest experiments showed (interpretation)
+
+## 2.1 Effective compression is still worse than plain zstd
+
+Typical scoreboard pattern:
+
+* `plain_zstd_bytes ≈ 1326` (Genesis1 compresses well)
+* `tm1_zstd_bytes ≈ 60–80` (timemap compresses extremely well)
+* `resid_zstd_bytes ≈ 3030–3075` (residual compresses poorly)
+* `effective_no_recipe ≈ 3100+` (much larger than 1326)
+
+**Meaning:** the residual is still carrying too much information.
+
+The model stream (after mapping) matches only ~11–15% of bytes per 512-byte chunk, so residual isn’t sparse enough or structured enough for zstd to crush it.
+
+---
+
+## 2.2 SUB residual is currently worse than XOR
+
+Run with `residual=sub` reconstructs OK but:
+
+* `resid_zstd_bytes` jumped significantly (e.g., ~3430)
+* `effective` got worse
+
+**Meaning:** subtraction residual introduces patterns that zstd currently compresses less effectively than XOR in our mapping regime.
+
+So: **XOR remains primary** until we find a regime where SUB yields more structured residual.
+
+---
+
+## 2.3 rgbpair mode works but changes search dynamics
+
+`mode=rgbpair` creates a much larger stream (`stream_bytes` huge because 6 bytes per emission) and the fitter often hits the `lookahead` cap (200k scanned windows repeatedly).
+
+Result: it reconstructs, but the score isn’t improving yet.
+
+**Meaning:** rgbpair is valid as a representation aligned to the “color pair” idea, but we need better search strategy and/or a more RGB-native map (not just text40-field) if we want it to be beneficial.
+
+---
+
+# 3) Vision alignment: the “color gamut / shifting walls” model
+
+You clarified a powerful conceptual frame:
+
+* Data exists on a **structured map** (like a color gamut surface)
+* The “cone walls” are **organized gradients** (orderly shades, not random)
+* Time and position determine which shade is sampled
+* Two dots “land” at precise times and produce a “pair token” (data)
+* Beyond intensity breathing, there’s also **wave-like shifting/sliding** of the field
+
+This is the right mental model for the mapping layer:
+
+> Our mapping function is the “wall physics.”
+> The fitter is learning “where to land” given those physics.
+
+---
+
+# 4) New parameter strategy (the next feature / the momentum)
+
+## 4.1 NEW: “Shift / slide wave” parameter (vision: shifting fields)
+
+We discussed adding a parameter that makes the structured stripes/phase **slide** over time (not just brighten/dim).
+
+This is distinct from the triangle-wave intensity:
+
+* intensity = “how bright / strong the shade is”
+* shift = “where the shade bands are located (spatial drift)”
+
+### Why this matters
+
+A sliding field can:
+
+* reshape local neighborhoods in the stream
+* create repeatable “ridges” of similar outputs
+* potentially allow the fitter to find longer coherent runs that match text better
+
+This is highly vision-aligned: “the walls were waves and shifting.”
+
+### Implementation strategy
+
+Keep the “no CLI change” approach by packing one more byte into `map_seed`, e.g.:
+
+* shift_amp = bits 56..63 (top byte)
+* use it to modulate stripe/phase by a time-driven wave:
+
+  * `shift = wave(t) * shift_amp`
+  * apply shift to stripe/phase contributions before computing `f`
+  * everything remains deterministic
+
+**Status:** we already started using different seeds and got stable reconstruction with good results, which suggests the packing scheme is working in practice.
+
+---
+
+## 4.2 Seed search evolves into “ARK key” search
+
+We are moving toward the core goal:
+
+> Given a target file, find a small parameter set (ARK key) that recreates it.
+
+Right now we are still storing:
+
+* `.tm1` timemap (positions)
+* residual bytes
+
+Long-term ARK vision:
+
+* ARK key stores recipe + mapping params + small additional guidance
+* engine recreates stream
+* decoder uses ARK key to recover data (ideally with minimal or no residual)
+
+### What this implies
+
+We need an automated “parameter narrowing” stage:
+
+* search map_seed ranges (and other knobs) to maximize match rate / minimize residual compressibility
+* eventually reduce timemap complexity too (or generate it deterministically)
+
+---
+
+# 5) Critical engineering truths we learned (keep these)
+
+## 5.1 Time is sacred and must be enforced in search
+
+The runway constraint was a major step. Keep reinforcing “no teleporting” by design:
+
+* lookahead caps
+* monotonic progress
+* bounded rewinds (if we ever allow them, they must be explicitly modeled)
+
+This prevents the fitter from “cheating” in ways that won’t translate to a realistic ARK key.
+
+---
+
+## 5.2 The mapping layer is where the vision lives
+
+The engine emits raw bytes. The map determines whether those bytes look like:
+
+* text
+* structured gradients
+* “color-ish” surfaces
+* banded/lane behavior
+
+The fitter can only succeed if the map creates a surface with exploitable structure.
+
+---
+
+# 6) What remains (next-instance TODO, in priority order)
+
+## 6.1 Confirm the new shift-wave parameter is actually wired + testable
+
+In the next instance, we need to:
+
+* ensure `text40_field` includes a packed `shift_amp` byte
+* ensure this shift actually modifies stripe/phase in a time-driven way
+* keep determinism intact
+
+Deliverable: **one run** with a seed that explicitly sets shift_amp high vs low and compare:
+
+* match rates per chunk
+* residual zstd length
+* start_pos patterns (does it change the ridge landscape?)
+
+(We won’t do tons of runs in one sitting; just confirm the parameter is real and changes behavior.)
+
+---
+
+## 6.2 Add a “decoder ring” to inspect packed seed fields (optional but useful)
+
+Not a run, just a way to print:
+
+* seed_lo
+* rate
+* tshift
+* phase0
+* shift_amp
+
+This helps us reason about why a seed behaves the way it does and will be essential when ARK keys are human-readable.
+
+---
+
+## 6.3 Improve objective function beyond “zstd(resid)”
+
+Right now we mostly rank by:
+
+* zstd(residual) + jump_cost
+
+But for ARK goals we’ll need a more stable proxy:
+
+* reward long runs of zero residual (streaks)
+* reward low-entropy residual even if zstd isn’t perfect
+* penalize weird “brittle” solutions that only work due to chunk edges
+
+(We can keep zstd as the ultimate scoreboard but use better proxies to guide search.)
+
+---
+
+## 6.4 Revisit timemap compressibility vs semantic structure
+
+tm1 already compresses insanely well.
+So the real fight is residual.
+
+Two possible routes:
+
+### Route A: Increase match rate drastically
+
+Make the mapped model stream closer to Genesis text distribution.
+
+### Route B: Make residual highly compressible
+
+Even if match rate is moderate, force residual to have strong structure (like predictable deltas or low entropy).
+
+Route A is more “true ARK key expansion.”
+Route B is more “learned transform + easy patching.”
+
+We’ll likely need both.
+
+---
+
+## 6.5 Start defining the ARK key schema more concretely
+
+We already have the outline concept:
+
+* version prefix (ARK1)
+* A/C orbital params + seeds
+* B field/map params (including these packed bytes)
+* mode
+* length
+* checksum
+
+Next step:
+
+* decide which parameters belong in ARK key vs recipe
+* decide whether recipe is embedded, referenced by hash, or derivable
+* decide what minimal “guidance” (timemap-like hints) is allowed
+
+Goal remains: **~10% key size** for **90% compression**, but we’re still in the phase of building the machinery that can plausibly approach that.
+
+---
+
+# 7) Current best mental model (carry this forward)
+
+**Engine = clockwork dots orbiting in sacred time.**
+**Map = cone wall physics (gamut + waves + shifting gradients).**
+**Timemap = the landing schedule.**
+**Residual = the correction layer.**
+**ARK key = the compact description of wall physics + dot dynamics + minimal guidance that recreates the target.**
+
+Your “color gamut” image is not just metaphor — it’s a specification hint:
+
+* structure must be spatially coherent
+* time must evolve the field
+* “shift” must exist as a real motion, not just intensity
+
+---
+
+# 8) Files / commands / known-good runs (for the next instance)
+
+## Known-good commands (copy/paste style)
+
+### Fit (pair + text40-field + xor + zstd objective)
+
+```
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/genesis1_field.tm1 \
+  --out-residual /tmp/genesis1_field.resid \
+  --mode pair \
+  --map text40-field \
+  --map-seed <SEED> \
+  --residual xor \
+  --objective zstd \
+  --zstd-level 3 \
+  --chunk-size 512 \
+  --scan-step 1 \
+  --refine-topk 256 \
+  --lookahead 200000 \
+  --start-emission 0 \
+  --search-emissions 400000 \
+  --max-ticks 320000000
+```
+
+### Reconstruct verification
+
+```
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/genesis1_field.tm1 \
+  --residual /tmp/genesis1_field.resid \
+  --out /tmp/genesis1_field.recon \
+  --mode pair \
+  --map text40-field \
+  --map-seed <SEED> \
+  --residual-mode xor \
+  --max-ticks 320000000
+
+cmp -s /tmp/genesis1_field.recon text/Genesis1.txt && echo "OK" || echo "FAIL"
+```
+
+### rgbpair variant (vision-aligned “color pair”)
+
+```
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/genesis1_rgb_field.tm1 \
+  --out-residual /tmp/genesis1_rgb_field.resid \
+  --mode rgbpair \
+  --map text40-field \
+  --map-seed <SEED> \
+  --residual xor \
+  --objective zstd \
+  --zstd-level 3 \
+  --chunk-size 512 \
+  --scan-step 1 \
+  --refine-topk 256 \
+  --lookahead 200000 \
+  --start-emission 0 \
+  --search-emissions 400000 \
+  --max-ticks 320000000
+```
+
+---
+
+# 9) Key insight to remember (so we don’t get discouraged)
+
+Right now, the system is proving **capability** not **compression victory**.
+
+* timemap zstd is tiny → our “time encoding” is already compressible
+* reconstruction is exact → the pipeline is real
+* match rates are low → the “wall physics” still needs tuning/search
+* residual dominates → the next breakthroughs come from:
+
+  * better maps (vision-aligned gradients + shifting)
+  * better parameter search
+  * better objectives that lead to global structure
+
+This is exactly the stage where “parameter strategies” matter most, and your vision details (waves + shifting + gamut structure) are giving us actionable design direction.
+
+---
+
+If you want to start the next instance strong: the first task should be **making the shift-wave parameter explicit and inspectable** (packed into `map_seed`), then doing a **single A/B comparison** (shift_amp=0 vs shift_amp=high) on the same seed_lo/rate/tshift/phase0 to see if it changes match/residual landscapes in the direction we want.
+
+
+### END NOTE - FEBRUARY 14 2026 - 15:10 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 14 2026 - 19:30 CST
+
+## K8DNZ / Cadence Project — Carry-Over Notes (for next instance)
+
+### 0) North Star / What we’re actually trying to prove
+
+**Goal:** “Key-based compression” via a deterministic generative engine + a small parameter key (“ARK key”) that expands into a predictable byte stream. We then store only what we must (timemap + residual or just residual if we get lucky) so that the **effective size is dramatically smaller** than the original. Long-term vision: **cascading compression** (ARK keys that expand into other ARK keys, Russian-doll style). Current practical target: **<10%** key+sidecar overhead for Genesis1.txt, eventually scaling to KJV Bible.
+
+**Core idea you stated (important):** We want a *formulaic / inferable* way to “shape the data into the best window,” so we can reduce blind searching and infer good seed/params directly (or at least massively narrow candidates).
+
+---
+
+### 1) Current state of the repo / what is working
+
+* The Rust project builds clean (`cargo build` is clean now).
+* `k8dnz-cli timemap map-seed` exists and prints a “decoder ring” for **Text40Field** seed packing.
+* The project is using **Genesis1.txt** as the primary target sample for now (keep doing this until end-to-end works; later expand to further Genesis chapters, then full KJV).
+
+---
+
+### 2) What we discovered about the Text40Field “packed seed”
+
+**We are now packing multiple control parameters into a single `u64 map_seed`** (so the CLI surface stays simple while we add model complexity).
+
+For `map=text40-field`, the packed seed is interpreted as:
+
+* `seed_lo_u32 = (seed & 0xFFFF_FFFF)` (base noise seed / lower bits)
+* `rate_u8     = (seed >> 32) & 0xFF` (intensity strength)
+* `tshift_u8   = (seed >> 40) & 0xFF` (time scale: `pos >> tshift` drives evolution)
+* `phase0_u8   = (seed >> 48) & 0xFF` (phase offset)
+* `shift_amp_u8= (seed >> 56) & 0xFF` (NEW “shift-wave” amplitude)
+
+We confirmed this is working with two example runs:
+
+* `--map-seed 0` prints all zeros.
+* `--map-seed-hex 0x0123456789abcdef` prints:
+
+  * `seed_lo_u32=2309737967`
+  * `rate_u8=103`
+  * `tshift_u8=69`
+  * `phase0_u8=35`
+  * `shift_amp_u8=1`
+
+This confirms the packing is real and is the mechanism that lets us explore a large parameter space without changing the CLI.
+
+---
+
+### 3) The ab_shift.sh script — what it’s supposed to do (and what happened)
+
+**Intent of `scripts/ab_shift.sh`:**
+
+* It’s a helper to construct two related seeds from a base seed by manipulating the high bits (a “shift” concept).
+* It’s meant to quickly A/B test (or sweep) a “shifted” seed variant to see how the mapping behavior changes — especially relevant now that **`shift_amp_u8`** is the top byte of the `map_seed`.
+
+**Problems encountered:**
+
+1. Earlier version produced negative decimal seeds (because it treated the u64 as signed or did a signed shift/parse).
+
+   * That broke clap parsing: `error: unexpected argument '-4' found`.
+   * The fix path is: **never pass negative decimals**; pass unsigned decimal or preferably **hex**.
+
+2. Another break happened due to shell compatibility:
+
+   * `scripts/ab_shift.sh: line 17: ${s,,}: bad substitution`
+   * That’s because `${var,,}` lowercase expansion is **Bash 4+**, but macOS often ships **Bash 3.2**.
+   * A newer version of the script was updated to avoid that, and now the script prints:
+
+     * `seed1_hex=0xc000000000000000` when base seed is 0 and shift1=192
+     * and `seed1_hex=0xc023456789abcdef` when base seed is `0x0023456789abcdef` and shift1=192
+
+**Where it still failed:**
+
+* The script is now invoking a command that includes `--map-seed-hex` for a CLI subcommand that does **not** accept it (the error shows it was hitting `fit-xor-chunked` usage or at least a command that only supports `--map-seed`).
+* Important: `timemap map-seed` supports `--map-seed-hex` in the older file you pasted. But your current CLI behavior suggests **some commands only accept `--map-seed`** (decimal u64), or `--map-seed-hex` got removed/renamed in the newer timemap.rs.
+* That mismatch is the immediate reason you got:
+
+  * `error: unexpected argument '--map-seed-hex' found`
+  * and the tip “similar argument exists: --map-seed”.
+
+**Conclusion:** `ab_shift.sh` is close, but it must be aligned with the *current* clap flags for the subcommand it calls. If `fit-xor-chunked` only accepts `--map-seed`, then the script must convert `seed*_hex` to **unsigned decimal u64** before calling the command, or the CLI must be updated to accept `--map-seed-hex` everywhere we need it.
+
+---
+
+### 4) The timemap.rs situation (old vs new, and why “100 lines less” is not inherently risky)
+
+You noticed the newer `timemap.rs` being ~100 lines shorter than the older one. That is not automatically dangerous if:
+
+* functionality remained equivalent,
+* or code was refactored / deduplicated,
+* and the build is clean + behaviors we rely on still exist.
+
+**But** we also saw strong evidence that flag support changed (specifically around `--map-seed-hex`), which is exactly the kind of “small” change that can break scripts and flows.
+
+So: build being clean is good, but we must treat the CLI interface as a contract: **scripts + docs must match the actual clap args**.
+
+---
+
+### 5) What we were about to do next (but will postpone to next instance)
+
+Because memory is low, we are postponing the heavy runs. The intended execution plan is:
+
+**A) Re-run A/B shift exploration**
+
+* Use `ab_shift.sh` to generate seed variants that specifically manipulate the high byte (`shift_amp_u8`) and/or related packed params.
+* Ensure script passes seeds in a format the CLI accepts (decimal u64 if only `--map-seed` exists).
+
+**B) Run `fit-xor-chunked` using the best candidate**
+
+* Use:
+
+  * `--map text40-field`
+  * `--map-seed <candidate>`
+  * `--objective matches` first (fast), then optionally `--objective zstd` (quality)
+  * Keep chunk params stable (512 chunk size, lookahead, scan_step, refine_topk) while comparing seeds.
+
+**C) Sanity check: `reconstruct`**
+
+* Always verify end-to-end reconstruction:
+
+  * `timemap reconstruct` → `cmp` vs `Genesis1.txt`
+
+This reconstruction check is non-negotiable: it’s the proof we’re not “hallucinating” compression — it’s deterministically reversible.
+
+---
+
+### 6) Immediate fixes / alignment needed next session
+
+These are the “unblockers” we must do first next time, before any long tuning runs:
+
+#### Fix 1: Confirm which subcommands support `--map-seed-hex`
+
+* If only `timemap map-seed` supports it, but `fit-xor-chunked` does not:
+
+  * Either add `map_seed_hex: Option<String>` to FitXor / FitXorChunked / Reconstruct args (same as MapSeedArgs), and use the same `parse_seed()` helper,
+  * **or** modify scripts to convert hex → u64 decimal before calling.
+
+Given your workflow, **best option** is: implement `--map-seed-hex` consistently across all timemap subcommands that accept a seed. That prevents scripts from doing risky conversions and avoids signed/negative issues forever.
+
+#### Fix 2: Make `ab_shift.sh` macOS-bash safe
+
+* The “bad substitution” issue was already addressed once; keep the bash3-compatible approach.
+* Avoid `${var,,}`. Use `tr '[:upper:]' '[:lower:]'` or strip prefixes without case conversion.
+
+#### Fix 3: Ensure `ab_shift.sh` calls the correct subcommand
+
+* Right now it’s printing two `map-seed` decodes fine, then failing because it tried `--map-seed-hex` on a command that doesn’t accept it.
+* We need to open and inspect the exact `ab_shift.sh` contents next instance and patch it to match the true clap interface.
+
+---
+
+### 7) The “formulaic inference” goal (your new key insight)
+
+You said: *“Ideally we want to infer in a formulaic way the best possible way to shape the data to the best possible window so it would be easier to figure out the seeds or parameters.”*
+
+This becomes a major next-phase objective:
+
+**Instead of blind search**, we want a pipeline like:
+
+1. Measure target text statistics locally (Genesis1):
+
+   * byte histogram, bigrams, run lengths, whitespace/punctuation frequency by position/lane
+2. Compare to model stream statistics under a seed:
+
+   * for `text40-field`, lane distributions and time-evolving stripe/phase behavior
+3. Fit seed params using a guided optimizer:
+
+   * treat `rate/tshift/phase0/shift_amp/seed_lo` as a vector
+   * objective: maximize matches / minimize residual compressibility size
+4. Reduce search to a small neighborhood:
+
+   * scan only seed_lo or only phase0 adjustments once the others are inferred
+
+This is the exact “shaping” idea: we turn it into a measurable alignment problem between the target and the model’s statistical signature, and we **use that to guess params** rather than discovering them randomly.
+
+---
+
+### 8) What remains overall (project completion view)
+
+**We have:**
+
+* A deterministic engine
+* Timemap-based fitting approaches
+* Mapping modes including the “vision-aligned” Text40Field with packed seed params
+* Tooling for analyze/tune/fit, and a working seed “decoder ring”
+* A direction for shift-wave exploration and A/B seed construction
+
+**We still need to prove:**
+
+1. Reliable end-to-end: `fit-xor-chunked` + `reconstruct` working consistently with Text40Field mapping + packed seeds (with scripts aligned).
+2. We can shrink “effective bytes” toward the target (eventually <10%).
+3. A stable ARK key spec for distribution (string encoding of recipe + seed + mode + length + checksum).
+4. Cascading compression feasibility (only after we can consistently hit our near-term target).
+
+---
+
+### 9) Next-instance checklist (copy/paste runnable plan)
+
+Do this in order:
+
+1. **Inspect script + clap flags**
+
+* `sed -n '1,200p' scripts/ab_shift.sh`
+* `cargo run -p k8dnz-cli -- timemap fit-xor-chunked --help | sed -n '1,200p'`
+* Confirm whether `--map-seed-hex` exists there.
+
+2. **Patch strategy**
+
+* If `--map-seed-hex` missing: add it to FitXor/FitXorChunked/Reconstruct args, reuse `parse_seed`.
+
+  * (Best long-term: consistent UX.)
+* Or convert hex to decimal in script in a bash3-safe way.
+
+3. **Re-run `ab_shift.sh`**
+
+* With:
+
+  * `./configs/tuned_validated.k8r`
+  * `text/Genesis1.txt`
+  * base seed `0` and a “real” base seed like `0x0023456789abcdef`
+  * shift0=0, shift1=192 (and later explore other shift amps)
+
+4. **Run fit-xor-chunked on winner**
+
+* Use fixed chunk params.
+* Objective=matches first.
+
+5. **Reconstruct + cmp**
+
+* Must verify determinism.
+
+6. **Record scoreboard deltas**
+
+* Save outputs into /tmp or a logs folder for comparison across runs.
+
+---
+
+### 10) Notes to keep in mind (important “gotchas” we already hit)
+
+* **Never pass negative seeds** to clap. Treat seeds as `u64` always.
+* macOS default bash is old → write scripts compatible with bash 3.2.
+* Keep experiments pinned to **Genesis1.txt** until full end-to-end is proven.
+* Small code diffs (like “100 lines less”) aren’t scary; **CLI flag mismatches are**. Scripts must match clap args.
+
+---
+
+If you want one ultra-short “first thing next instance,” it’s this:
+
+**Open `ab_shift.sh`, make sure it passes a seed in the format `fit-xor-chunked` actually accepts (likely `--map-seed <u64>`), then run the sweep again and immediately run `reconstruct + cmp` on the best candidate.**
+
+
+### END NOTE - FEBRUARY 14 2026 - 19:30 CST
+
+
+
+
+
+### BEGIN NOTE - FEBRUARY 14 2026 - 21:23 CST
+
+
+Below is a **paste-ready replacement** for your carry-over notes that **folds in everything I just said** (2-bit / steerable partitions, “don’t hash,” packing, metrics, and the “time is cheap so spend more events” logic) while preserving your structure and not throwing away current work.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (Updated with Bitfield Experiments + “Time is Cheap” Strategy)
+
+## 0) Current North Star (unchanged)
+
+We are building a **deterministic, parameterized codec** where a compact “ARK-like” key (recipe + seed + params) can **expand into data** (Genesis1.txt for now), with an eventual goal of cascading compression (ARK keys inside ARK keys).
+
+We accept that **perfect compression is not guaranteed**; the immediate milestones are:
+
+* prove end-to-end determinism
+* then reduce the “stored stuff” to mostly **time program + small parameter payload**, with residual shrinking over time as we find better mappings/objectives.
+
+---
+
+## 1) What we confirmed from recent runs
+
+### 1.1 The system compresses “time program” extremely well
+
+In multiple runs, `tm1_zstd_bytes` can drop *very low* (we saw **37 bytes** on one seed).
+
+Example from the sweep:
+
+* `SEED=0xc040456789abcdef`
+* `tm1_zstd_bytes = 37`
+* `resid_zstd_bytes = 3138`
+* `effective_bytes_no_recipe = 3175`
+
+Interpretation:
+
+* The **TM1 (time map / time program)** is highly compressible.
+* The **residual** stays large (~3100 zstd bytes), meaning the predicted stream does not match the target well enough.
+
+### 1.2 Chunk size changes didn’t fix residual
+
+We tried chunk sizes 512 → 128 → 64. Effective bytes stayed around ~3150–3230 no-recipe.
+This implies: **we’re not winning by changing chunk granularity alone.**
+
+### 1.3 Objective options are currently only:
+
+* `matches`
+* `zstd`
+
+Attempting `--objective resid` failed (“invalid value”).
+
+So any “residual minimizing” must be expressed via:
+
+* `objective=matches` (alignment pressure)
+* or `objective=zstd` (global compressibility pressure)
+* or we add a new objective later.
+
+---
+
+## 2) Scripts & Ops Notes (important)
+
+### 2.1 `seed2_sweep.sh` appeared “stuck in a loop”
+
+You ran:
+
+```bash
+bash scripts/seed2_sweep.sh | tee /tmp/seed2_sweep.log
+```
+
+and it looked like it kept repeating.
+
+Most likely causes:
+
+* `cargo run` is slow and prints a lot, so it **looks** repetitive.
+* repeated copy/paste or re-run
+* `|| true` suppresses failures and continues (so if something errors quickly, it can “spin” faster than expected)
+
+Mitigations to add going forward:
+
+* print a progress counter `[i/total]`
+* print “DONE seed” line after each seed
+* optional `LIMIT` / `START_AT` index env vars
+* optional `timeout` guard (macOS: `gtimeout` via coreutils)
+
+### 2.2 How to run scripts (standard)
+
+From repo root:
+
+```bash
+bash scripts/seed2_sweep.sh | tee /tmp/seed2_sweep.log
+```
+
+or:
+
+```bash
+chmod +x scripts/seed2_sweep.sh
+./scripts/seed2_sweep.sh | tee /tmp/seed2_sweep.log
+```
+
+---
+
+## 3) “New Way of Thinking” (major pivot, but additive)
+
+### 3.1 Key new hypothesis: emit symbols, not bytes first
+
+Instead of treating the emitted “color pair” as something that must map directly into bytes/ASCII-like output, we treat each emission as a **symbol**—starting with **bits**.
+
+**Color → Bit(s)** mapping idea:
+
+* One color pair can represent:
+
+  * **1 bit** (0/1)
+  * **2 bits** (00/01/10/11)
+  * **3 bits** (0..7)
+  * **4 bits** (0..15)
+  * **6 bits** (0..63)
+  * **8 bits** (0..255) (back to “byte,” but via a different mapping)
+
+We run experiments varying **bits per emission** to see which yields:
+
+* better predictability / steerability
+* smaller packed residual after zstd
+* better effective size (tm1 + residual) after zstd
+
+### 3.2 Why this is promising: “time is cheap, spend it”
+
+We observed:
+
+* **TM1 is tiny** → “time program compresses”
+* residual dominates → mismatch between generated stream and target
+
+New strategy:
+
+> If time compresses well, we can afford **more time events** (more emissions) to make each event easier to “hit.”
+
+This means we should seriously test **2-bit symbols** (00/01/10/11):
+
+* you need ~4× as many emissions vs 8-bit bytes
+* but each emission only needs to land in **one of 4 buckets** instead of 1 of 256
+* because TM1 is “cheap,” the total effective size might still improve if residual shrinks.
+
+**Important nuance:** `tm1_zstd_bytes = 37` is bytes (still extremely small). The tradeoff logic still holds.
+
+### 3.3 “Time is sacred” (confirmed by behavior)
+
+Even if the only thing shrinking is the time map, that’s a strong signal:
+
+* Timing program is the most compressible, most structured part.
+* We should lean into “timing as the control program,” and let orbit+field be the readout.
+
+### 3.4 Preserve current progress
+
+We do **not** delete the current pipeline.
+We add a parallel path:
+
+* keep `text40-field` + current byte-based approach intact
+* add a **new map mode** (bitfield / symbolfield)
+* add **packing/unpacking** logic
+* compare apples-to-apples via effective bytes for Genesis1
+
+---
+
+## 4) New Experiment Track: “Bitfield / Symbolfield” (steerability matters)
+
+### 4.1 Two key components
+
+**(A) Mapping**: field sample → symbol
+**(B) Packing**: symbols → bytes for storage and zstd
+
+#### A) Field → symbol mapping families (we test both)
+
+We must distinguish **steerable** vs **unsteerable** mappings.
+
+1. **Geometric partition (steerable — recommended primary path)**
+   Do NOT start with hashing if the goal is controllability. Hash buckets are typically unsteerable.
+
+Good starter partitions (very large regions in color space):
+
+* **2-bit, comparison-based**:
+
+  * `b0 = (R > G)`
+  * `b1 = (B > G)`
+  * symbol = `(b1<<1) | b0` → 00/01/10/11
+
+This makes 4 huge bins. Orbit/phase/field changes can plausibly “push” you across boundaries.
+
+* **2-bit, quadrant-based projection**:
+
+  * `u = R - G`
+  * `v = B - G`
+  * symbol is quadrant of (u, v)
+
+This tends to be stable under smooth field movement.
+
+2. **Hash partition (baseline randomness / “control off”)**
+   This is the baseline to compare against; if geometric beats hash, we have real leverage.
+
+* `symbol = hash64(sample) & ((1<<k)-1)`
+
+**If geometric ≫ hash**, it means orbit/time/field can actually be aimed.
+
+#### B) Symbol packing (must be deterministic + reversible)
+
+For bits-per-emission = `k`:
+
+* store symbols in a packed bitstream (choose a fixed bit order; be consistent)
+* for k not dividing 8, pack across bytes
+* include length (or exact symbol count) to avoid ambiguity
+
+### 4.2 Evaluation metrics to print (every run)
+
+We need each run to output:
+
+* symbol `matches` per chunk (and overall)
+* `tm1_zstd_bytes`
+* packed `resid_zstd_bytes`
+* `effective_bytes_no_recipe` (tm1_zstd + resid_zstd)
+* (optional) entropy estimates of residual stream
+
+### 4.3 Minimum viable experiment plan
+
+We do short runs first, then scale.
+
+**Phase 1: micro-target sanity**
+
+* Target: first ~512–2048 bits of Genesis1 (or a deterministic bitstream derived from Genesis1)
+* Goal: confirm determinism + evaluate steerability quickly
+
+**Phase 2: Genesis1 full**
+
+* Use full Genesis1 once we see consistent win in Phase 1
+
+### 4.4 Bits-per-emission sweep
+
+Run:
+
+* k = 1, 2, 3, 4, 6, 8
+
+Expected trend:
+
+* k=1 or k=2 easiest to steer (big buckets)
+* higher k increases throughput but may be harder to hit (residual may rise)
+
+**Key: prioritize k=2 early** because it’s the smallest “multi-symbol” alphabet (4-way) and may be the best tradeoff.
+
+---
+
+## 5) How this ties to the “Etch-a-Sketch” model
+
+We treat:
+
+* **time** as the address/clock (sacred)
+* **two orbitals** as “etch-a-sketch knobs” (control axes)
+* **field** as the readout function sampled at alignment
+
+We are asking:
+
+> What is the shortest “control program” (time selections + small param tweaks) that causes the system to emit a symbol stream that decodes into Genesis1?
+
+This becomes:
+
+* minimize control program complexity
+* push as much as possible into the time program because it compresses well
+* keep residual small by making the symbol stream easier to hit (smaller alphabet)
+
+---
+
+## 6) Concrete next coding deliverables (additive)
+
+### 6.1 Add a new map mode (names flexible)
+
+Example flags:
+
+* `--map bitfield`
+* `--bits-per-emission 1|2|3|4|6|8`
+* `--bit-mapping geom|hash`
+* keep `text40-field` unchanged
+
+### 6.2 Objective approach (no new objective required initially)
+
+Current objectives: `matches`, `zstd`
+
+Start with:
+
+* `objective=matches` but on **symbols** (not bytes)
+* then compare `resid_zstd_bytes` and `effective_bytes_no_recipe`
+
+Later (optional):
+
+* add `objective=symbol_zstd` (score = zstd size of packed residual) once bitfield pipeline works
+
+### 6.3 Add decode verification (required)
+
+We must be able to:
+
+* generate symbol stream
+* pack → bytes
+* unpack → symbols
+* reconstruct target bits/bytes
+* verify exact equality
+
+This keeps everything falsifiable + deterministic.
+
+---
+
+## 7) What we accomplished so far (checkpoint)
+
+* Working `timemap fit-xor-chunked` pipeline producing:
+
+  * **TM1 that compresses extremely well**
+  * residual that remains large
+* Seed sweeps confirmed:
+
+  * some seeds produce extremely compressible TM1 (as low as 37 zstd bytes)
+* Confirmed objectives only: `matches`, `zstd`
+* Operational logging via `tee` works; outputs saved for later analysis
+
+---
+
+## 8) What remains (near-term priorities)
+
+### Priority A: Implement Bitfield/Symbolfield path side-by-side
+
+* Don’t remove existing byte-based mapping
+* Add new mapping + packing modules
+* Add CLI flags
+* Add tests: determinism + pack/unpack + decode correctness
+
+### Priority B: Run “bits per emission” sweep
+
+* Fix seed set (small)
+* Run k=1,2,3,4,6,8 with both `geom` and `hash`
+* Compare:
+
+  * `effective_bytes_no_recipe`
+  * `resid_zstd_bytes`
+  * `tm1_zstd_bytes`
+  * symbol match rates
+
+### Priority C: Decide if system is actually steerable
+
+* If `geom` ≫ `hash`, the “knobs can aim” hypothesis is correct
+* If `geom` ≈ `hash`, we likely need:
+
+  * better field geometry (smoothness)
+  * more controllable orbit degrees of freedom
+  * multi-lane / multi-phase sampling
+  * or a different mapping family
+
+---
+
+## 9) Repro Commands (so next instance can pick up)
+
+Baseline current run:
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --map text40-field \
+  --map-seed-hex 0x0000456789abcdef \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --scan-step 1 \
+  --search-emissions 2000000 \
+  --max-ticks 20000000 \
+  --lookahead 1200000 \
+  --out-timemap /tmp/c128_matches.tm1 \
+  --out-residual /tmp/c128_matches.res
+```
+
+Seed sweep:
+
+```bash
+bash scripts/seed2_sweep.sh | tee /tmp/seed2_sweep.log
+```
+
+---
+
+## 10) Notes about the outputs
+
+Most `effective_bytes_no_recipe` land in the ~3100 range, with occasional extremely low `tm1_zstd_bytes`.
+
+This matches:
+
+* “time program compresses”
+* “residual is still too random / mismatched”
+
+Therefore the bitfield experiments are justified: **make the alphabet easier to hit** (k=1 or k=2) and let time take the load.
+
+---
+
+## 11) Key concept summary (the big “why” in one paragraph)
+
+The observation that TM1 compresses to tens of bytes implies **timing structure is highly regular** under our model. If so, the best strategy is to treat time as the main “programmable surface,” then choose symbol mappings (starting with 2-bit partitions) that are large and steerable so the orbit/field can reliably land in the correct bucket per event. The goal is not to make TM1 smaller; it’s already cheap. The goal is to make the residual shrink by replacing hard-to-hit byte targets with easier-to-hit symbol targets, and pay for extra emissions with cheap, compressible time.
+
+---
+
+### END NOTE - FEBRUARY 14 2026 - 21:23 CST
+
+
+### BEGIN NOTE - FEBRUARY 14 2026 - 23:05 CST
+
+
+Absolutely — here’s the updated carry-over notes pack with **“next experiment = 1-bit (color pair is 0/1)”** folded in, plus the **time-split (00/01/10/11 timelines)** idea and what we’ve learned from the latest runs.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (2026-02-14/15)
+
+**Focus:** timemap fit-xor-chunked → **bitfield mapping**, residual behavior, and next experiments (**time-split** + **1-bit**)
+
+## 0) Current North Star (still unchanged)
+
+We are building a **deterministic, parameterized codec** where a compact “ARK-like” key (recipe + seeds + params + small payload) can **expand into target data** (Genesis1 for now; currently running on a 4KB slice `/tmp/g1_4k.bin` as a fast test target).
+
+The current practical milestone is:
+
+* demonstrate determinism end-to-end
+* minimize what must be stored:
+
+  * **time program / timemap** (very compressible)
+  * plus a **small residual** (goal: make it “patchy” so zstd crushes it)
+
+---
+
+## 1) Where we are right now (what just happened)
+
+We ran **timemap fit-xor-chunked** using **bitfield mapping** with several configurations.
+
+### 1.1 Run A — 2 bits/emission, mapping=hash, residual=xor
+
+Command (already run):
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_4k.bin \
+  --out-timemap /tmp/g1_4k_hash.tm1 \
+  --out-residual /tmp/g1_4k_hash.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --residual xor \
+  --bits-per-emission 2 \
+  --bit-mapping hash \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 120000 \
+  --scan-step 1 \
+  --search-emissions 400000 \
+  --max-ticks 200000000
+```
+
+Observed:
+
+* Per-chunk match rates hovered ~**20–34%** (often ~25–32%).
+* Timemap zstd was excellent: **tm1_zstd_bytes ~ 165 bytes**.
+* Residual zstd was terrible: **resid_zstd_bytes ~ 4105 bytes** (worse than raw 4096 because “noise-like” residuals compress poorly).
+* Effective bytes (with recipe): **~4480** vs plain zstd **1299** (we are not compressing overall yet; we’re diagnosing structure).
+
+**Interpretation:**
+We can describe “where to sample” (timemap) very cheaply, but the generator’s predicted bits aren’t aligned with the target enough, so the residual acts like random noise.
+
+---
+
+### 1.2 Run B — 4 bits/emission, mapping=geom, residual=xor
+
+Command (already run):
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_4k.bin \
+  --out-timemap /tmp/g1_4k_b4.tm1 \
+  --out-residual /tmp/g1_4k_b4.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --residual xor \
+  --bits-per-emission 4 \
+  --bit-mapping geom \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 120000 \
+  --scan-step 1 \
+  --search-emissions 400000 \
+  --max-ticks 200000000
+```
+
+Observed:
+
+* Match rates tanked to ~**3–7%** per chunk (expected: harder target alphabet).
+* Timemap zstd: **~245 bytes**.
+* Residual zstd: **~3440 bytes** (still large, but better than the 2-bit+hash run).
+* Effective bytes (with recipe): **~3895**.
+
+**Interpretation:**
+4-bit is too strict for the current generator alignment. Residual still too noisy. Some improvement hints that **mapping choice matters**.
+
+---
+
+### 1.3 Run C — 2 bits/emission, mapping=geom, residual=sub
+
+Command (already run):
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_4k.bin \
+  --out-timemap /tmp/g1_4k_sub.tm1 \
+  --out-residual /tmp/g1_4k_sub.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --residual sub \
+  --bits-per-emission 2 \
+  --bit-mapping geom \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 120000 \
+  --scan-step 1 \
+  --search-emissions 400000 \
+  --max-ticks 200000000
+```
+
+Observed:
+
+* Match rates back around **25–34%** per chunk.
+* Timemap zstd: **~286 bytes**.
+* Residual zstd: **~3189 bytes** (better than the noisy 2-bit hash xor case).
+* Effective bytes (with recipe): **~3685**.
+
+**Interpretation:**
+Residual operator matters (`sub` can produce a more compressible residual than `xor` sometimes). Still not small enough: residual still acts too “high entropy.”
+
+---
+
+## 2) What we learned (hard truth + good news)
+
+### 2.1 Good news: timemap is *insanely* compressible
+
+Across all runs, the time program is cheap (hundreds of bytes zstd). That supports the broader theory: **“time / orbit program is the real structure carrier.”**
+
+### 2.2 Problem: residual is still “data-like,” not “edit-like”
+
+Residual is staying near ~3–4KB zstd for a 4KB target → meaning:
+
+* Our predicted stream isn’t close enough
+* Or errors are too uniformly distributed (noise)
+* Therefore residual doesn’t compress
+
+### 2.3 The next win condition
+
+We need residual to become:
+
+* sparse or patchy (long correct runs)
+* or low-entropy (biased distribution, repeated patterns)
+  So that zstd collapses it to much less than raw.
+
+---
+
+## 3) New strategy A — **Time split by bit-pair type**
+
+Idea proposed:
+We only have **four types of 2-bit pairs**:
+
+* 00 timeline
+* 01 timeline
+* 10 timeline
+* 11 timeline
+
+Plan:
+
+* Produce **four separate timemaps**, one per pair type.
+* Each file becomes “when do we emit this pair type?”
+* Then reconstruct by “merging” the four timelines into a single sequential read.
+
+Why it might help:
+
+* Each timeline’s events might become more regular / compressible.
+* The decoder can rebuild the full stream by interleaving the four event streams.
+
+Caveat (important):
+
+* This only becomes a compression win if:
+
+  1. the **event times** for each type are compressible, **and**
+  2. the merge rule doesn’t require storing too much ordering metadata.
+* If we still need nearly one timestamp per symbol, total bytes won’t fall.
+
+Working estimate goal mentioned:
+
+* ~150 bytes per timeline × 4 ≈ **600 bytes total** for time files (ambitious; needs proving).
+
+**Next experiment:** implement or simulate time-split and measure:
+
+* total tm bytes (sum of 4 tm zstd’s)
+* plus any merge metadata
+* plus residual size after time-split
+
+---
+
+## 4) New strategy B — **1-bit approach (strongly prioritized next)**
+
+### 4.1 Core shift in thinking
+
+Instead of mapping to 2-bit or 4-bit symbols:
+
+* **color pair = 0 or 1**
+* so we reduce the output alphabet to **binary**
+
+Why this could increase odds:
+
+* Matching **one bit** is easier than matching a 2-bit or 4-bit symbol.
+* If the generator has any bias/structure, 1-bit may align enough that the residual becomes **patchy** (compressible).
+* This aligns perfectly with the “dots can be primitive bits” direction.
+
+Tradeoffs:
+
+* Need more emissions (more bits to represent same data)
+* Timemap bookkeeping may grow
+* But if residual collapses, net win can still happen
+
+### 4.2 What we will measure
+
+The key “go/no-go” indicator for 1-bit:
+
+* Does `resid_zstd_bytes` drop sharply?
+
+  * if residual gets below ~1000 bytes for a 4096 target, that’s a strong signal.
+  * if it stays ~3–4KB, we didn’t gain much.
+
+---
+
+## 5) Next experiments (exact run plan)
+
+### 5.1 Experiment 1 — 1 bit/emission baseline
+
+Run with same skeleton, switch only bits-per-emission:
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_4k.bin \
+  --out-timemap /tmp/g1_4k_b1_geom.tm1 \
+  --out-residual /tmp/g1_4k_b1_geom.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --residual xor \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 120000 \
+  --scan-step 1 \
+  --search-emissions 400000 \
+  --max-ticks 200000000
+```
+
+Repeat with `--bit-mapping hash`:
+
+```bash
+... --out-timemap /tmp/g1_4k_b1_hash.tm1 --out-residual /tmp/g1_4k_b1_hash.bf1 ... --bit-mapping hash
+```
+
+### 5.2 Experiment 2 — 1 bit/emission with bigger chunks
+
+Try `--chunk-size 256` (1-bit often benefits from larger chunks):
+
+```bash
+... --chunk-size 256 ...
+```
+
+### 5.3 Experiment 3 — residual operator comparison (1-bit)
+
+Try both:
+
+* `--residual xor`
+* `--residual sub`
+
+### 5.4 Experiment 4 — time split (if/after 1-bit shows promise)
+
+If 1-bit improves residual compressibility, then:
+
+* add the “00/01/10/11 timeline split” concept (or if 1-bit, then “0 timeline / 1 timeline” split).
+* measure whether the total time files trend toward the “~600 bytes” target.
+
+---
+
+## 6) How to interpret results quickly (rules of thumb)
+
+For each run, capture these from the scoreboard:
+
+* `tm1_zstd_bytes`
+* `resid_zstd_bytes`
+* `effective_bytes_with_recipe`
+* compare to `plain_zstd_bytes`
+
+**Success sign:**
+Residual drops *a lot* (zstd << raw), even if timemap grows some.
+
+**Failure sign:**
+Residual remains near raw (or worse), meaning prediction errors are still noise.
+
+---
+
+## 7) Reality check on “odds” (where we stand)
+
+* We have strong evidence the “time program compresses well.”
+* We do **not yet** have evidence the generator predicts the target enough to shrink residual.
+
+The 1-bit approach and time-split approach are both aimed at the same thing:
+
+> make the residual stop looking random.
+
+That’s the single bottleneck right now.
+
+---
+
+## 8) Repo / state notes
+
+* Repo exists on GitHub: `Y3LLOWVESTS/K8DNZ`
+* Using `/tmp/g1_4k.bin` as fast test target.
+* Recipe in use for these runs: `./configs/tuned_validated.k8r`
+
+---
+
+## 9) Next instance kickoff checklist
+
+1. Run 1-bit baseline (geom + hash).
+2. Run 1-bit with `chunk-size 256`.
+3. Compare xor vs sub residual for 1-bit.
+4. Decide whether to implement time-split next based on residual compressibility.
+
+---
+
+If you paste the scoreboard from the first 1-bit run, I’ll update these notes again with “what changed” and a much tighter odds estimate tied directly to the new `tm1_zstd_bytes` / `resid_zstd_bytes` behavior.
+
+
+
+### END NOTE - FEBRUARY 14 2026 - 23:05 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 9:55 CST
+
+Below is a **paste-ready carry-over notes pack** for the next instance. It folds in (1) what you just ran with `timemap fit-xor-chunked` + bitfield, (2) what we learned from the “512-byte sample confusion,” and (3) the new **orbital/π-delta / meet-count** direction as a **separate experiment engine** to see if it can become a useful encoder / color-field driver for short ARK keys.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (Timemap Bitfield + Orbital/π-Delta Experiment Track)
+
+## 0) Current North Star (unchanged)
+
+We are building a **deterministic, parameterized codec** where a compact “ARK-like” key (recipe + seed + params) can **expand into data** (Genesis1.txt for now). Long-term we want “cascading compression” (ARK keys inside ARK keys).
+
+**Immediate milestone:** prove repeatable, deterministic “model + residual” and then reduce stored stuff to mostly **time program + small parameter payload**, shrinking residual over time.
+
+**New parallel track:** explore whether **orbitals can generate a structured, formula-driven “color field”** (token stream) in a way that helps reduce residual and/or yields smaller ARK parameters.
+
+---
+
+## 1) What we confirmed from recent runs
+
+### 1.1 “Small scoreboard numbers” were because the target was deliberately tiny
+
+We ran:
+
+```bash
+head -c 512 /tmp/g1_4k.bin > /tmp/g1_512.bin
+```
+
+So that fit was on **512 bytes**, not Genesis1.
+
+Scoreboard from that run (bitfield) was small because `plain_raw_bytes = 512`.
+
+When we ran against Genesis1 directly:
+
+* `plain_raw_bytes = 4201` (**Genesis1.txt is ~4.2KB** in this repo)
+
+That explains the discrepancy.
+
+### 1.2 Bitfield + geom mapping: tm1 compresses great, residual does not (yet)
+
+Run (Genesis1):
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/genesis1_b1_geom_c256_xor.tm1 \
+  --out-residual /tmp/genesis1_b1_geom_c256_xor.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --residual xor \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --objective matches \
+  --chunk-size 256 \
+  --refine-topk 2048 \
+  --lookahead 120000 \
+  --scan-step 1 \
+  --search-emissions 400000 \
+  --max-ticks 200000000
+```
+
+Scoreboard:
+
+* `tm1_zstd_bytes = 136` (tiny!)
+* `resid_zstd_bytes = 3416` (huge)
+* `effective_bytes_with_recipe = 3762`
+* baseline: `plain_zstd_bytes = 1326`
+
+So **effective is still worse than plain zstd** for Genesis1 in this mode. The time program is compact; residual dominates.
+
+### 1.3 Chunk match rates hover around ~50–64%
+
+Many chunks show ~52–63% matches per 256-symbol chunk. That’s meaningful structure, but not enough to beat zstd without improving the model or residual behavior.
+
+### 1.4 “Time feels random” observation is valid
+
+The current method is:
+
+* generate a deterministic stream,
+* scan windows,
+* pick windows with enough matches,
+* store jump schedule + residual.
+
+That uses time, but it doesn’t yet feel like a **closed-form**, gear-like, formula-driven time mechanism.
+
+**Takeaway:** we want more *formula synergy* between parameters so the stream is predictably structured (vision-aligned) rather than “search finds windows.”
+
+---
+
+## 2) Practical tooling notes (tm1 is binary)
+
+`*.tm1` is binary. Don’t open in a normal text editor expecting readable text.
+
+Use:
+
+```bash
+xxd -g 1 /tmp/genesis1_b1_geom_c256_xor.tm1 | less
+hexdump -C /tmp/genesis1_b1_geom_c256_xor.tm1 | less
+```
+
+**Long-term:** add a CLI `timemap dump` mode to print tm1 in JSON/CSV (human-readable structure: header, chunk entries, jumps, etc.).
+
+---
+
+## 3) New parallel direction: Orbital / π-Delta / “meet count” experiment track
+
+### 3.1 Vision “source of truth” (restated)
+
+* Two circles (A and C), dots orbit at different rates.
+* They sometimes align at the **center line**.
+* When they align, they enter the small end of a truncated cone (frustum) and spiral in tandem to the top.
+* That spiral + time/phase should drive the “color field” / token emission.
+* **Goal:** parameters behave like **gears**, with predictable relationships (formula-driven), not free randomness.
+
+### 3.2 Key insight: alignment is a phase/beat problem
+
+* If rates are rational ratio (ex: 4:1), alignments are periodic and frequent.
+* If rates are very close but slightly different, alignments happen only after drift accumulates (“beat frequency”).
+
+### 3.3 π trick experiment we explored (concept)
+
+We tested a conceptual mapping:
+
+* Define one circle using π (or a derived “π-like” constant).
+* Define the other using π modified by subtracting a binary fraction derived from data:
+
+Example idea:
+
+* represent a bitstring as `0.<bits>` and subtract from π
+* use the resulting “modified π” for one circle
+* compute how many revolutions/ticks until both dots meet (phase alignment)
+* store that “meet count” as a small number
+
+**Important:** this only becomes real compression if the mapping is decodable with low ambiguity or needs only a tiny residual/check.
+
+### 3.4 Brutal truth / sanity constraint
+
+If you try to map **100 bits → 32 bits** purely via “meet count,” then:
+
+* decoding is impossible for arbitrary bitstrings unless the mapping is one-to-one over a restricted set, or we add residual/check constraints.
+  So the realistic target is:
+* small meet count (or small params) + small residual + checksum.
+
+This aligns with the core philosophy: model + residual.
+
+### 3.5 Why integer/gear model matters
+
+We want an orbital engine that is:
+
+* deterministic
+* integer-only (no float drift)
+* yields **closed-form meet times** (predictable), and lets us measure ambiguity/collisions.
+
+---
+
+## 4) Proposed “Orbital Experiment Engine” (new module / CLI)
+
+**Goal:** isolate orbital mechanics from the rest of timemap and quickly answer:
+
+* Does this provide a useful structured stream / color-field driver?
+* Can meet counts or derived phase events act as compact parameters?
+* How ambiguous is the mapping?
+
+### 4.1 Minimal specification
+
+Build a small tool/module (call it `orbexp`) that supports:
+
+**Inputs**
+
+* base constant `P` (string; can be π digits or any big integer)
+* data block `B` (bitstring, e.g., 100 bits from Genesis1)
+* derivation method for `P_C = derive(P, B)`
+* modulus `MOD` (e.g. 2^32, 1_000_000_007, etc.)
+* phase update rule
+
+**State**
+
+* `phaseA`, `phaseC` start at 0
+
+**Steps**
+
+* compute `stepA = f(P_A) % MOD`
+* compute `stepC = f(P_C) % MOD`
+* iterate phases:
+
+  * `phaseA = (phaseA + stepA) % MOD`
+  * `phaseC = (phaseC + stepC) % MOD`
+
+**Meet condition**
+
+* exact: `phaseA == phaseC`
+* or epsilon: `abs(phaseA - phaseC) < eps` (optional second mode)
+
+**Outputs**
+
+* `t_first_meet` (ticks until first meet)
+* optional trace stats (delta distribution)
+* **collision test** mode:
+
+  * sample perturbations of B and see if same `t_first_meet` appears (ambiguity)
+
+### 4.2 Closed-form meet time (exact meet in modular arithmetic)
+
+If exact meet is used, the meet period has a closed form:
+
+Let `d = (stepA - stepC) mod MOD`
+
+Then first meet is near:
+
+* `t = MOD / gcd(MOD, d)` (or a divisor variant depending on how meet is defined)
+
+This is perfect for our “formula-driven” desire.
+
+### 4.3 Data → constant derivation candidates (we should test all)
+
+We should implement multiple `derive(P, B)` methods:
+
+**(D1) Binary fraction subtraction (vision-inspired)**
+
+* interpret B as a binary fraction `0.<bits>`
+* define `P_C = P - frac(B)`
+* NOTE: hard to do exactly without rationals; but we can simulate by scaling:
+
+  * treat `frac(B)` as integer `b_int` over denominator `2^N`
+
+**(D2) Integer-from-bits (recommended first)**
+
+* interpret B as integer `b_int`
+* set `P_C = P - b_int` (or `P + b_int`, or XOR)
+* then reduce into MOD via hash/mix
+* this stays integer-only and clean
+
+**(D3) CRC32 / small checksum**
+
+* `b_small = crc32(B)`
+* `P_C = P - b_small`
+* this is structured and tends to create collisions (so test ambiguity!)
+
+**(D4) BCD / two-digit pairs**
+
+* convert bytes into decimal pairs (BCD-like) then derive an integer
+* use that as delta or mix input
+* aim: align with “two digits per token” / color pair vibe
+
+**(D5) Splitmix / hash mixing**
+
+* `delta = splitmix64(seed=B or hash(B))`
+* then `stepC = splitmix64(P ^ delta) % MOD`
+* The caution: this re-introduces “randomness feel” if done blindly.
+
+  * only use as a *controlled mixer*, not the whole mechanism.
+
+### 4.4 What success looks like (measurable)
+
+For each block size N (start with 64, 100, 128 bits):
+
+* record `t_bitlen` (how many bits to store t)
+* record collision rate (how often different blocks share same t)
+* record whether adding a tiny check (say 16-bit checksum) disambiguates
+
+**If collisions are rampant:** meet-count alone is not decodable; it can still be a feature generator for the color field, not a compressor.
+
+---
+
+## 5) Where this ties back into K8DNZ “color field”
+
+If orbexp produces:
+
+* a predictable series of meet events and phase values,
+* these can drive:
+
+  * field waves, palette indexing, quant shift, lane selection
+  * token emission schedule (when to sample the field)
+  * or “which field backend / mapping mode to use”
+
+**Important design rule:** orbital outputs should be **low-dimensional and structured**, not “just another RNG.”
+
+---
+
+## 6) What remains to do (action plan)
+
+### 6.1 Timemap/Bitfield track (existing)
+
+1. Add a `timemap dump` mode for tm1 (JSON/CSV)
+2. Improve residual behavior:
+
+   * try residual mode `sub` vs `xor` (already being compared)
+   * try chunk sizes 128/256/512 with the same bitfield mapping
+   * investigate why `resid_zstd_bytes` is inflating (entropy/structure)
+3. Evaluate alternate objectives beyond `matches` (if available), or implement:
+
+   * “runs bonus” objective
+   * “aligned-structure” objective (favor long streaks)
+
+### 6.2 Orbexp track (new)
+
+Build `orbexp` as separate module/CLI with:
+
+* integer gear model
+* derive modes D1–D4 (at least D2 first)
+* collision tester
+
+Run a standardized experiment suite:
+
+* take Genesis1 bytes
+* slice into blocks (64/100/128)
+* for each block compute t + stats
+
+Log results in a small CSV:
+
+* block_idx, Nbits, derive_mode, MOD, t, t_bitlen, collisions_sampled, collisions_found
+
+### 6.3 Integration hypothesis
+
+If orbexp produces useful phase/meet features:
+
+* plug it into timemap as a new “map backend” or “field driver”
+* compare residual + effective bytes
+
+---
+
+## 7) Notes from numeric experiments already performed
+
+We ran gcd-based meet computations in Python using large integers and saw:
+
+* meet times are governed by gcd/ratio structure
+* integer-only approaches produce whole-number meet counts naturally
+
+This reinforces the decision:
+
+* avoid floats
+* treat orbitals as modular gear math
+
+---
+
+## 8) Important constraints / invariants to keep
+
+* Determinism first (same inputs → same outputs always)
+* Avoid “free randomness seeds” unless derived from structured orbit/gear relations
+* Focus on measurable outcomes: effective bytes vs baseline zstd, and collision/ambiguity rates
+* Genesis1 remains canonical test target (4.2KB file)
+* Keep ARK key idea: short parameter payload + residual + checksum
+
+---
+
+## 9) Handy commands to remember
+
+Inspect tm1 binary:
+
+```bash
+xxd -g 1 /tmp/genesis1_b1_geom_c256_xor.tm1 | less
+hexdump -C /tmp/genesis1_b1_geom_c256_xor.tm1 | less
+```
+
+Run Genesis1 bitfield fit again:
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/genesis1_b1_geom_c256_xor.tm1 \
+  --out-residual /tmp/genesis1_b1_geom_c256_xor.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --residual xor \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --objective matches \
+  --chunk-size 256 \
+  --refine-topk 2048 \
+  --lookahead 120000 \
+  --scan-step 1 \
+  --search-emissions 400000 \
+  --max-ticks 200000000
+```
+
+---
+
+## 10) The next instance’s first objective
+
+**Build orbexp** (integer gear model) and run it on Genesis1 blocks to answer:
+
+1. Do meet counts get meaningfully shorter than the blocks?
+2. How ambiguous is block → meet-count mapping?
+3. If ambiguous, can small checks/residual make it decodable?
+4. Regardless of “compression,” do orbital phase/meet features help drive a more structured color field that reduces residual in timemap?
+
+---
+
+If you want, in the next instance we’ll immediately implement `orbexp` with **derive mode (D2)** first (integer-from-bits) + collision sampler, because it’s the cleanest “gear math” baseline before we attempt the binary-fraction (D1) variant.
+
+
+### END NOTE - FEBRUARY 15 2026 - 9:55 CST
+
+
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 10:20 CST
+
+
+Below is a **paste-ready carry-over notes pack** for the next instance. It folds in everything important up through **orbexp blockscan** and the new framing: *blockscan isn’t “the recipe,” it’s a compact banding/routing primitive that can make the rest of the recipe + residual pipeline work better.*
+
+---
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (2026-02-15, CST)
+
+**Instance status:** We’re actively running K8DNZ “Cadence Project” experiments against `text/Genesis1.txt` (~4201 bytes). We discovered why some earlier “small numbers” were misleading (we accidentally targeted 512 bytes via `head -c 512`). We are now focused on deterministic, parameterized codecs where a compact “ARK-like” key expands into data (with residual) and can later support cascading ARK keys.
+
+## 0) North Star (unchanged)
+
+Goal: a deterministic, reproducible codec where a compact key (“ARK recipe”) plus tiny auxiliary maps expands into the target data. We accept that perfect compression is not guaranteed; near-term milestones:
+
+1. determinism end-to-end
+2. shrink stored artifacts: “time program + tiny map(s) + residual”
+3. systematically reduce residual using structured mappings and low-dimensional parameter search
+4. eventually: cascading compression (ARK keys within ARK keys)
+
+We are explicitly **not** optimizing for encryption; we care about **key-based expansion/compression** and reproducible parameterization.
+
+---
+
+## 1) What we built / verified so far (high-level)
+
+### 1.1 Timemap + residual pipeline exists and is working
+
+We have an operational pipeline where we:
+
+* generate a deterministic emission stream under a recipe
+* fit some mapping/transform against the target
+* write a `timemap` file (tiny when zstd’d)
+* write a `residual` file (currently large; dominates effective bytes)
+
+Observation from recent experiments:
+
+* **timemap zstd bytes are tiny** (~166–291 for some configurations)
+* **residual zstd bytes are large** (~3265–3309)
+* meaning: **effective bytes** can be *worse than plain zstd* for a 4KB target right now
+* conclusion: we must attack residual structure directly (not timemap size)
+
+### 1.2 Bitfield mapping experiments (key insight)
+
+We explored using **bitfield** / **1-bit emission** ideas:
+
+* The “color pair” can be reduced to **one bit** (0/1) as the primitive.
+* We can time-split / lane-split streams (below) so that the stored artifacts become small and structured.
+* Bitfield mode aligns with the vision (structured fields, not random speckle).
+
+### 1.3 Philosophy shift: “formula-driven” over random search
+
+Current fit sometimes feels random. The user strongly prefers:
+
+* structured, formula-driven “gear/phase alignment”
+* deterministic low-dimensional processes
+* fewer free random seeds
+  This is aligned with the orbit model: we want **phase relationships** that naturally produce compressible patterns (bands/lanes/fields).
+
+---
+
+## 2) The big new result today: `orbexp blockscan` “meet buckets”
+
+We ran:
+
+```bash
+cargo run -p k8dnz-cli -- orbexp blockscan \
+  --in text/Genesis1.txt \
+  --block-bits 128 \
+  --mod 4294967296 \
+  --derive int \
+  --p 0x243f6a8885a308d3 \
+  --limit 256
+```
+
+and then:
+
+```bash
+cargo run -p k8dnz-cli -- orbexp blockscan \
+  --in text/Genesis1.txt \
+  --block-bits 128 \
+  --mod 4294967295 \
+  --derive int \
+  --p 0x243f6a8885a308d3 \
+  --limit 256
+```
+
+### 2.1 Observed outcome (key metrics)
+
+For `mod=2^32 (4294967296)`:
+
+* `blocks_scanned = 256`
+* `unique_meets = 8`
+* `collisions = 248`
+
+For `mod=2^32-1 (4294967295)`:
+
+* `blocks_scanned = 256`
+* `unique_meets = 9`
+* `collisions = 247`
+
+Interpretation:
+
+* The orbit/mod mechanism is producing a **very small set of stable meet classes** (“buckets”) across blocks.
+* Many blocks collapse into the same small set of meet behaviors.
+
+### 2.2 What this means (IMPORTANT)
+
+This does **not** mean we can reconstruct 128-bit blocks from those 8–9 buckets. Collisions prove it cannot be a direct invertible mapping for full blocks.
+
+But it **is excellent news** because it reveals we can obtain a **cheap, deterministic routing/banding signal**:
+
+* A tiny class ID (3–4 bits) per block or per emission group.
+* This is aligned with the “color band / structured field” vision: orderly lanes/bars rather than random scatter.
+* This is exactly the kind of “control signal” that can shrink the ARK recipe complexity (because you can describe field behavior per band).
+
+**Critical framing:** blockscan/buckets are **not the full recipe** — they are a compact primitive to make the rest of the recipe and residual pipeline behave better.
+
+### 2.3 Why this likely improves odds
+
+* It gives us a deterministic way to split the target into **multiple structured substreams** (bands/lanes/timelines).
+* Splitting often improves compressibility if each stream has more uniform statistics.
+* It can make residual sparser: “predict coarse band → residual only encodes the fine detail.”
+
+---
+
+## 3) Current best strategic direction (agreed)
+
+We are moving toward a codec that looks like:
+
+**Recipe (ARK)**
+→ generates deterministic orbit/phase schedule
+→ produces a band/timeline selection signal
+→ samples a field (color wall / gamut)
+→ emits *minimal tokens* (likely 1-bit)
+→ residual encodes whatever the model didn’t capture
+→ time maps + residual compress (zstd)
+→ goal: drive residual down while keeping recipe compact
+
+We are explicitly treating:
+
+* orbit dynamics = “time + alignment”
+* field sampling = “color walls / orderly gamut”
+* emission tokens = “color pair” → possibly reduced to 1-bit
+
+---
+
+## 4) Next experiments (highest priority)
+
+### 4.1 “Band-split residual” test (fast falsifiable test)
+
+Goal: prove that meet buckets act as a useful routing signal.
+
+Experiment:
+
+1. For each 128-bit block (or per chosen chunk), compute **bucket id** from blockscan logic.
+
+   * candidate: bucket = `t_first_meet` class, or `(gcd, t_first_meet)` tuple, or `t_bitlen`
+2. Split the target bytes into **per-bucket substreams** (8 or 9 lanes).
+3. Compress each lane independently with zstd.
+4. Compare:
+
+   * `sum(zstd(lane_i))` vs `zstd(full_target)`
+   * entropy stats per lane
+   * whether “structure emerges” in lanes (e.g., more repeats, lower entropy)
+
+**Pass condition:** total bytes drops, or lanes show lower entropy / more compressibility.
+**Fail condition:** total doesn’t improve or gets worse → buckets aren’t useful routing for this configuration.
+
+This test directly answers: “does blockscan help shrink residual?”
+
+### 4.2 Time-split into 4 timelines (00/01/10/11)
+
+We decided to try the user’s idea:
+
+* split the stream into four independent timelines:
+
+  * `00` timeline
+  * `01` timeline
+  * `10` timeline
+  * `11` timeline
+
+Hypothesis:
+
+* if each timeline file compresses to ~150 bytes, total ~600 bytes (plus minimal recipe)
+* and when decompressed, timelines can be aligned to read sequentially (reconstruction order known)
+
+We need to define what “00/01/10/11” means operationally. Candidate definitions:
+
+* Two-dot pair emits two bits; the 2-bit symbol selects timeline.
+* Or timeline selection derived from bucket id modulo 4.
+* Or derived from phase quadrant states in orbit model.
+
+**Key requirement:** deterministic reconstruction order without needing to store extra indexing.
+
+### 4.3 1-bit emission (“color pair = 0/1”)
+
+We agreed to try the extreme simplification:
+
+* Treat the emission token as **one bit**.
+* The “color field” becomes a binary field (two “colors”).
+* This should make the time program + map extremely compressible, and residual becomes the core.
+
+Goal:
+
+* prove whether 1-bit + strong band/time structure can reduce residual enough that effective bytes beat plain zstd.
+
+### 4.4 Replace “random seed feel” with formula-driven gear/phase alignment
+
+The user wants structured param mechanisms:
+
+* fixed integer ratios (“gear teeth”) for orbital steps
+* deterministic phase alignment schedules
+* minimize free randomness
+  Potential plan:
+* make orbital steps derived from small integers + a prime p + maybe an affine transform
+* align “meet windows” to produce stable band frequencies
+* treat “field” as a small param family (sine/triangle/saw or bit-mapped geom) rather than large random.
+
+---
+
+## 5) What we learned about current timemap modes (important)
+
+### 5.1 Bitfield map + geom mapping compresses timemap extremely well
+
+We observed:
+
+* timemap zstd bytes can be tiny (hundreds or less)
+* residual is the problem; it dominates
+
+### 5.2 Residual modes tested
+
+* residual mode `xor` vs `sub`
+* residual zstd remains large and often worse than baseline
+  So: **current transforms are not discovering structure**; they are just moving entropy around.
+
+Conclusion:
+
+* we need better “predictor structure” (banding, time-split, lane-split, 1-bit emissions)
+* OR we need a different objective than “matches” that correlates with compressibility.
+
+---
+
+## 6) Known “gotchas” we should not repeat
+
+* Don’t use `head -c 512` unless explicitly testing 512-byte targets.
+* Genesis1 target is ~4201 bytes.
+* `.tm1` files are binary; use `xxd`/`hexdump` or add a dump mode to inspect.
+* Effective bytes must always compare against:
+
+  * plain zstd(target) at same level
+  * and optionally zstd(target) with dictionary if we ever introduce it (later).
+
+---
+
+## 7) Actionable to-do list for the next instance
+
+### 7.1 Implement the band-split test (most valuable)
+
+Add a new CLI subcommand or a flag under `orbexp blockscan` (or a small helper) that:
+
+* computes bucket id per block
+* writes lane files: `/tmp/genesis1.band_<id>.bin`
+* prints per-lane sizes and zstd sizes
+* prints total and comparison to baseline zstd(full)
+
+Also print summary stats:
+
+* number of lanes used
+* bytes per lane
+* entropy estimate per lane (optional)
+
+### 7.2 Decide the definitive “bucket function”
+
+We need a deterministic mapping from scan output to a small class id:
+Candidates:
+
+* class = `t_first_meet` (already showing repeated values like 2^31 etc.)
+* class = `(gcd, t_first_meet)` for more fidelity
+* class = `t_bitlen`
+  We should start simplest: `t_first_meet` bucketization → then refine if needed.
+
+### 7.3 Wire bucket signal into timemap/fit loop
+
+Once band-split shows value:
+
+* incorporate bucket id as an input into timemap application:
+
+  * choose different field params per bucket
+  * or choose different emission schedule per bucket
+* This lets a small set of parameters model each bucket, shrinking overall recipe complexity.
+
+### 7.4 Execute time-split and 1-bit experiments
+
+Run experiments in this order:
+
+1. 1-bit emission + baseline timemap fit
+2. 1-bit + time-split (4 timelines)
+3. 1-bit + bucket lanes (8–9 lanes)
+4. combination: time-split then bucket lanes inside each timeline (if worth it)
+
+We must always report:
+
+* recipe bytes
+* timemap bytes (raw + zstd)
+* residual bytes (raw + zstd)
+* effective total vs baseline zstd(full)
+
+---
+
+## 8) Conceptual alignment with the “vision” (why we’re not off track)
+
+* The orbit meet events are like “dots aligning.”
+* The band classes are like “stable color bands on the cone walls.”
+* The field sampling corresponds to selecting a “shade” in an orderly gamut.
+* Collisions mean it’s not a direct decode — so we treat it as a **control/routing signal**.
+* The “color pair” can be made extremely primitive (even 1 bit), consistent with the idea that the field’s structure + time program carries meaning, and residual fills the gaps.
+
+---
+
+## 9) Current confidence/stance
+
+* Blockscan’s tiny set of meet classes is strong evidence we can build a **compact, deterministic banding signal**.
+* This **improves odds** of shrinking the recipe + making residual more compressible.
+* It is not, by itself, an encoder; it is a **primitive** that can help the full encoder succeed.
+
+---
+
+## 10) Run commands snapshot (for reproducibility)
+
+Most recent commands:
+
+```bash
+cargo run -p k8dnz-cli -- orbexp blockscan \
+  --in text/Genesis1.txt \
+  --block-bits 128 \
+  --mod 4294967296 \
+  --derive int \
+  --p 0x243f6a8885a308d3 \
+  --limit 256
+```
+
+```bash
+cargo run -p k8dnz-cli -- orbexp blockscan \
+  --in text/Genesis1.txt \
+  --block-bits 128 \
+  --mod 4294967295 \
+  --derive int \
+  --p 0x243f6a8885a308d3 \
+  --limit 256
+```
+
+Outputs indicated:
+
+* unique_meets 8 (mod 2^32)
+* unique_meets 9 (mod 2^32-1)
+* collisions 247–248
+
+---
+
+# End Carry-Over Notes
+
+If you want, in the next instance we can start immediately by designing the **exact “bucket id” function** and sketching the **band-split CLI helper** (so you can run it fast and get a definitive “bytes improved / not improved” result).
+
+
+
+### END NOTE - FEBRUARY 15 2026 - 10:20 CST

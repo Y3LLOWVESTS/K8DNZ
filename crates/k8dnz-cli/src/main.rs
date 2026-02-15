@@ -1,4 +1,4 @@
-// src/main.rs
+// crates/k8dnz-cli/src/main.rs
 
 use clap::{Parser, Subcommand};
 
@@ -39,8 +39,14 @@ pub enum Commands {
     /// Timing map tools (TM1)
     Timemap(cmd::timemap::TimemapArgs),
 
+    /// Recipe tools (.k8r)
+    Recipe(cmd::recipe::RecipeArgs),
+
     /// ARK string tools (ARK1S)
     ArkKey(cmd::arkkey::ArkKeyArgs),
+
+    /// Orbital experiment engine (closed-form gear math)
+    Orbexp(cmd::orbexp::OrbExpArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -55,6 +61,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Analyze(args) => cmd::analyze::run(args),
         Commands::Tune(args) => cmd::tune::run(args),
         Commands::Timemap(args) => cmd::timemap::run(args),
+        Commands::Recipe(args) => cmd::recipe::run(args),
         Commands::ArkKey(args) => cmd::arkkey::run(args),
+        Commands::Orbexp(args) => cmd::orbexp::run(args),
     }
 }

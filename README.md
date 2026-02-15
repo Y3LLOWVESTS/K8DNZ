@@ -1,7 +1,8 @@
 
+
 # K8DNZ / The Cadence Project (Rust)
 
-**Status: Experimental, but we now have a proven “time-indexed reconstruction” pipeline.**
+**Status: Experimental, but we now have a proven “time-indexed reconstruction” pipeline — and a new deterministic banding primitive (`orbexp blockscan`) that may unlock residual reduction.**
 
 K8DNZ is a deterministic codec prototype inspired by a simple but powerful mechanism:
 
@@ -71,6 +72,30 @@ This is currently a lever for future residual reduction.
 
 ---
 
+## New milestone: `orbexp blockscan` proves deterministic “banding buckets”
+
+We added an experiment that treats fixed-size blocks as inputs to a deterministic “meet-time” scan:
+
+- `orbexp blockscan` splits the input into blocks (e.g., 128-bit),
+- derives orbit steps deterministically from each block,
+- computes a *first meet time* (`t_first_meet`) under a modulus,
+- and histograms the meet classes.
+
+Key observation so far (Genesis1, 128-bit blocks, scanning first 256 blocks):
+
+- Under `mod = 2^32` we saw **~8 unique meet classes**
+- Under `mod = 2^32 - 1` we saw **~9 unique meet classes**
+- with heavy collisions
+
+Interpretation:
+
+- This is **not** invertible decoding (collisions prove we can’t recover full blocks from the bucket).
+- But it is a powerful new primitive: a tiny, deterministic **routing / band ID** per block.
+
+This matches the “color walls / bands on the frustum” vision: the generator can produce an orderly, low-alphabet control signal that can be used to split data into lanes/timelines and model each lane with different parameters.
+
+---
+
 ## What we’re building (end product)
 
 The end product is a **deterministic expansion key system**:
@@ -80,7 +105,7 @@ The end product is a **deterministic expansion key system**:
 This has two related goals:
 
 1) **Deterministic expansion** (already real): a short key can generate large reproducible streams.
-2) **Compression-by-model** (now actively underway): for structured data (e.g., text), fit a cadence recipe + mapping + timing map so that the target can be reconstructed with a **small, compressible residual**.
+2) **Compression-by-model** (actively underway): for structured data (e.g., text), fit a cadence recipe + mapping + timing map so that the target can be reconstructed with a **small, compressible residual**.
 
 We are currently validating the system end-to-end using **Genesis1.txt** as the canonical sample.
 We scale to larger text only after the pipeline is proven on Genesis.
@@ -104,13 +129,13 @@ Then we clamp + quantize deterministically to emit tokens.
 ### Quant shift as a distribution knob
 A key design knob is `quant.shift`—it moves bin boundaries without altering cadence timing.
 
-**Important update:** we observed that certain “tuned” recipes can become *degenerate* (regen produces all-zero tokens/bytes), while validated configs produce healthy entropy. This is now a tracked issue: **recipe tuning must never produce a degenerate stream**.
+Important update: we observed that certain “tuned” recipes can become *degenerate* (regen produces all-zero tokens/bytes), while validated configs produce healthy entropy. This is now a tracked issue: **recipe tuning must never produce a degenerate stream**.
 
 ### Two output layers
 - **PairToken layer**: compact and stable for token pipelines; packable to 1 byte per emission.
 - **RGBPair layer**: 6 bytes per emission; can be palette-mapped or field-driven, and is now fully supported by TM1 via flattened indexing.
 
-### The “Double Helix” viewpoint (where the project direction crystallized)
+### The “Double Helix” viewpoint
 A successful reconstruction can be thought of as two interlocking strands:
 
 - **Strand 1 (Time / Index / Curve):** the TM1 timing map – which positions matter
@@ -124,7 +149,7 @@ The major remaining goal is to make these strands **small** (especially the resi
 ## Repo layout (high level)
 
 - `crates/k8dnz-core/` — deterministic cadence engine, field model, recipe, token types
-- `crates/k8dnz-cli/`  — simulator, encoder/decoder, timemap tools, inspect/analyze tools
+- `crates/k8dnz-cli/`  — simulator, encoder/decoder, timemap tools, inspect/analyze tools, experiments (`orbexp`)
 - `text/Genesis1.txt`  — canonical sample input used for experiments/tests
 
 ---
@@ -210,9 +235,7 @@ RGBPair fitting uses flattened indices: `pos = emission*6 + lane`.
 
 ```bash
 cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target /tmp/gen256.bin --out-timemap /tmp/gen256_rgb.tm1 --out-residual /tmp/gen256_rgb.resid --mode rgbpair --search-emissions 2000000 --max-ticks 80000000 --start-emission 0
-
 cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/gen256_rgb.tm1 --residual /tmp/gen256_rgb.resid --out /tmp/gen256_rgb.out --mode rgbpair --max-ticks 80000000
-
 cmp /tmp/gen256.bin /tmp/gen256_rgb.out && echo OK
 ```
 
@@ -220,11 +243,27 @@ cmp /tmp/gen256.bin /tmp/gen256_rgb.out && echo OK
 
 ```bash
 cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target /tmp/gen256.bin --out-timemap /tmp/gen256_rgb_mapped.tm1 --out-residual /tmp/gen256_rgb_mapped.resid --mode rgbpair --map splitmix64 --map-seed 1 --search-emissions 2000000 --max-ticks 80000000 --start-emission 0
-
 cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/gen256_rgb_mapped.tm1 --residual /tmp/gen256_rgb_mapped.resid --out /tmp/gen256_rgb_mapped.out --mode rgbpair --map splitmix64 --map-seed 1 --max-ticks 80000000
-
 cmp /tmp/gen256.bin /tmp/gen256_rgb_mapped.out && echo OK
 ```
+
+---
+
+## Orbital experiments (`orbexp`)
+
+### Blockscan: derive meet buckets (banding primitive)
+
+```bash
+cargo run -p k8dnz-cli -- orbexp blockscan \
+  --in text/Genesis1.txt \
+  --block-bits 128 \
+  --mod 4294967296 \
+  --derive int \
+  --p 0x243f6a8885a308d3 \
+  --limit 256
+```
+
+We are actively building the next step: a `bandsplit` helper that uses a bucket id to split bytes into lanes and compares compression of lanes vs whole-file zstd.
 
 ---
 
@@ -255,8 +294,6 @@ We expect to support a compact **string key** that can reproduce outputs without
 
 ### Option 1: URL-safe ARK string (human-copyable)
 
-A structured key that carries just enough to regenerate:
-
 ```
 ARK1:
 A=<packed orbit A + seed>
@@ -269,29 +306,15 @@ H=<checksum>
 
 ### Option 2: “short form” key (minimal)
 
-A compact “recipe-id + overrides” style:
-
 ```
 ARK1:<recipe_id_hex>:<mode>:<length>:<crc>
 ```
 
 ### Option 3: Packed + Base32/Base64url (ultra-compact)
 
-Binary-packed fields + checksum, encoded as a short string:
-
 ```
 ARK1_<base64url(packed_bytes)>
 ```
-
-Packing candidates:
-
-* version
-* seed(s)
-* orbit params (fixed-point)
-* clamp/quant/shift
-* mapping mode + mapping seed
-* mode + length
-* checksum/CRC
 
 ### Option 4: “Russian doll pages” (cascading composition)
 
@@ -300,7 +323,7 @@ Pages are first-class outputs:
 * output is “page chunks” that can be chained
 * pages can themselves contain ARK strings (cascading composition)
 
-**Note:** cascading compression will likely be built last.
+Note: cascading compression will likely be built last.
 
 ---
 
@@ -322,15 +345,30 @@ This property enables:
 
 ### Near-term (now)
 
-* **Fix recipe tuning degeneracy:** ensure any tuned recipe generates a non-degenerate stream (no “all zeros” regen)
-* **Residual-first optimization:** update `fit-xor` objective from “max matches” to “min zstd(residual)” (true compression objective)
+* Fix recipe tuning degeneracy: ensure any tuned recipe generates a non-degenerate stream (no “all zeros” regen)
+* Residual-first optimization: update `fit-xor` objective from “max matches” to “min zstd(residual)” (true compression objective)
 * Add more mapping families beyond SplitMix64 (affine byte map, permute-256 table from seed, lane-aware mapping for rgbpair)
-* Add a “scoreboard” report:
+* Add a scoreboard report:
 
   * recipe bytes
   * timemap bytes (and compressed timemap bytes)
   * residual zstd bytes
   * total effective bytes
+
+### Next experiment set (active)
+
+* Band-split residual test:
+
+  * compute blockscan bucket id per block
+  * split data into per-bucket lanes
+  * compare `sum(zstd(lanes))` vs `zstd(full)`
+* Time-split into 4 timelines:
+
+  * 00 / 01 / 10 / 11 as independent substreams (definition derived deterministically from orbit/bucket state)
+* 1-bit emission direction:
+
+  * “color pair = 0/1” as the primitive token
+  * aim: maximize structure in the timing/banding program so residual shrinks
 
 ### Mid-term
 
@@ -348,7 +386,9 @@ This property enables:
 
 ## License
 
-MIT or Apache-2.0 
+MIT OR Apache-2.0
 
 ```
-```
+
+---
+

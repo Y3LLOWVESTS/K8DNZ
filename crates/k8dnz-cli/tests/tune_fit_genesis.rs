@@ -31,6 +31,31 @@ fn run_ok(cmd: &mut Command) {
     );
 }
 
+fn entropy_bits_256(h: &[u64; 256], total: u64) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+    let mut ent = 0.0;
+    for &c in h.iter() {
+        if c == 0 {
+            continue;
+        }
+        let p = (c as f64) / (total as f64);
+        ent -= p * p.log2();
+    }
+    ent
+}
+
+fn byte_health(bytes: &[u8]) -> (usize, f64) {
+    let mut h = [0u64; 256];
+    for &b in bytes {
+        h[b as usize] += 1;
+    }
+    let distinct = h.iter().filter(|&&c| c > 0).count();
+    let ent = entropy_bits_256(&h, bytes.len() as u64);
+    (distinct, ent)
+}
+
 #[test]
 fn tune_fit_is_deterministic_and_decodes_losslessly_for_genesis1() {
     let input = repo_path("text/Genesis1.txt");
@@ -95,10 +120,41 @@ fn tune_fit_is_deterministic_and_decodes_losslessly_for_genesis1() {
     let got = fs::read(&decoded).expect("read decoded");
     assert_eq!(orig, got, "decoded bytes differ from original after tune fit");
 
+    // NEW: Keystream health check
+    // If the tuned recipe produces a dead stream (e.g., all 0x00), fail the test.
+    let regen_out = tmp_path("tune_fit_keystream", "bin");
+    let mut regen = Command::new(env!("CARGO_BIN_EXE_k8dnz-cli"));
+    regen.args([
+        "regen",
+        "--recipe",
+        recipe1.to_str().unwrap(),
+        "--out",
+        "bin",
+        "--emissions",
+        "4096",
+        "--max-ticks",
+        "20000000",
+        "--output",
+        regen_out.to_str().unwrap(),
+    ]);
+    run_ok(&mut regen);
+
+    let ks = fs::read(&regen_out).expect("read regenerated keystream bytes");
+    assert_eq!(ks.len(), 4096, "unexpected regen output length");
+    let (distinct, ent) = byte_health(&ks);
+
+    assert!(
+        distinct > 2 && ent > 0.50,
+        "dead/near-dead keystream: distinct={}/256 entropy_bits={:.4}",
+        distinct,
+        ent
+    );
+
     // Cleanup (best-effort)
     let _ = fs::remove_file(&recipe1);
     let _ = fs::remove_file(&recipe2);
     let _ = fs::remove_file(&ark1);
     let _ = fs::remove_file(&ark2);
     let _ = fs::remove_file(&decoded);
+    let _ = fs::remove_file(&regen_out);
 }
