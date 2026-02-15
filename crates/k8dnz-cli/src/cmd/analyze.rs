@@ -61,7 +61,11 @@ pub fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
     let topn = args.top.min(rows.len());
     eprintln!("--- top {} bytes ---", topn);
     for (i, (b, c)) in rows.iter().take(topn).enumerate() {
-        let pct = if n == 0 { 0.0 } else { (*c as f64) * 100.0 / (n as f64) };
+        let pct = if n == 0 {
+            0.0
+        } else {
+            (*c as f64) * 100.0 / (n as f64)
+        };
         eprintln!(
             "#{:>2} byte=0x{:02X} ({:>3}) count={} ({:.3}%)",
             i + 1,

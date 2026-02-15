@@ -2,8 +2,8 @@
 
 use crate::fixed::turn32::Turn32;
 use crate::recipe::recipe::{
-    Alphabet, FieldClampParams, FieldParams, FieldWave, FreeOrbitParams, KeystreamMix, LockstepParams, PayloadKind,
-    QuantParams, Recipe, ResetMode,
+    Alphabet, FieldClampParams, FieldParams, FieldWave, FreeOrbitParams, KeystreamMix,
+    LockstepParams, PayloadKind, QuantParams, Recipe, ResetMode,
 };
 
 #[inline]
@@ -64,11 +64,41 @@ pub fn default_recipe() -> Recipe {
 
         field: FieldParams {
             waves: vec![
-                FieldWave { k_phi: 2, k_t: 3, k_time: 1,  phase: 0x1357_9BDF, amp:  3200 },
-                FieldWave { k_phi: 3, k_t: 5, k_time: 2,  phase: 0x2468_ACED, amp:  2600 },
-                FieldWave { k_phi: 4, k_t: 2, k_time: 3,  phase: 0x0BAD_F00D, amp: -2100 },
-                FieldWave { k_phi: 1, k_t: 1, k_time: 13, phase: 0xC001_D00D, amp:   900 },
-                FieldWave { k_phi: 6, k_t: 7, k_time: 5,  phase: 0xA5A5_5A5A, amp: -1700 },
+                FieldWave {
+                    k_phi: 2,
+                    k_t: 3,
+                    k_time: 1,
+                    phase: 0x1357_9BDF,
+                    amp: 3200,
+                },
+                FieldWave {
+                    k_phi: 3,
+                    k_t: 5,
+                    k_time: 2,
+                    phase: 0x2468_ACED,
+                    amp: 2600,
+                },
+                FieldWave {
+                    k_phi: 4,
+                    k_t: 2,
+                    k_time: 3,
+                    phase: 0x0BAD_F00D,
+                    amp: -2100,
+                },
+                FieldWave {
+                    k_phi: 1,
+                    k_t: 1,
+                    k_time: 13,
+                    phase: 0xC001_D00D,
+                    amp: 900,
+                },
+                FieldWave {
+                    k_phi: 6,
+                    k_t: 7,
+                    k_time: 5,
+                    phase: 0xA5A5_5A5A,
+                    amp: -1700,
+                },
             ],
         },
 

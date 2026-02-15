@@ -1,5 +1,5 @@
-use k8dnz_core::{Engine, recipe::defaults::default_recipe};
 use k8dnz_core::fixed::turn32::Turn32;
+use k8dnz_core::{recipe::defaults::default_recipe, Engine};
 
 #[test]
 fn free_orbit_speeds_differ() {

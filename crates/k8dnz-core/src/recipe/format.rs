@@ -106,12 +106,21 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
     let t_step = read_u32(bytes, &mut i)?;
 
     // Back-compat defaults
-    let mut field_clamp = FieldClampParams { min: -100_000_000, max: 100_000_000 };
-    let mut quant = QuantParams { min: -100_000_000, max: 100_000_000, shift: 0 };
+    let mut field_clamp = FieldClampParams {
+        min: -100_000_000,
+        max: 100_000_000,
+    };
+    let mut quant = QuantParams {
+        min: -100_000_000,
+        max: 100_000_000,
+        shift: 0,
+    };
 
     if version >= 3 {
         if bytes.len() < i + 16 {
-            return Err(K8Error::RecipeFormat("unexpected eof reading field_clamp".into()));
+            return Err(K8Error::RecipeFormat(
+                "unexpected eof reading field_clamp".into(),
+            ));
         }
         field_clamp.min = read_i64(bytes, &mut i)?;
         field_clamp.max = read_i64(bytes, &mut i)?;
@@ -128,7 +137,9 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
     // v4+ quant shift
     if version >= 4 {
         if bytes.len() < i + 8 {
-            return Err(K8Error::RecipeFormat("unexpected eof reading qshift".into()));
+            return Err(K8Error::RecipeFormat(
+                "unexpected eof reading qshift".into(),
+            ));
         }
         quant.shift = read_i64(bytes, &mut i)?;
     } else {
@@ -143,7 +154,13 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
         let k_time = read_u32(bytes, &mut i)?;
         let phase = read_u32(bytes, &mut i)?;
         let amp = read_i32(bytes, &mut i)?;
-        waves.push(FieldWave { k_phi, k_t, k_time, phase, amp });
+        waves.push(FieldWave {
+            k_phi,
+            k_t,
+            k_time,
+            phase,
+            amp,
+        });
     }
 
     // Verify crc32
@@ -171,7 +188,13 @@ pub fn decode(bytes: &[u8]) -> Result<Recipe> {
         reset_mode,
         keystream_mix,
         payload_kind,
-        free: FreeOrbitParams { phi_a0, phi_c0, v_a, v_c, epsilon },
+        free: FreeOrbitParams {
+            phi_a0,
+            phi_c0,
+            v_a,
+            v_c,
+            epsilon,
+        },
         lock: LockstepParams { v_l, delta, t_step },
         field: FieldParams { waves },
         field_clamp,
@@ -193,7 +216,9 @@ pub fn recipe_id_hex(r: &Recipe) -> String {
 
 pub fn recipe_id_16_from_encoded(encoded: &[u8]) -> Result<[u8; 16]> {
     if encoded.len() < 16 {
-        return Err(K8Error::RecipeFormat("encoded recipe too small for id".into()));
+        return Err(K8Error::RecipeFormat(
+            "encoded recipe too small for id".into(),
+        ));
     }
     let mut out = [0u8; 16];
     out.copy_from_slice(&encoded[encoded.len() - 16..]);

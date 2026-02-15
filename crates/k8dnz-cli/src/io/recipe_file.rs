@@ -1,4 +1,4 @@
-use k8dnz_core::recipe::{format, defaults};
+use k8dnz_core::recipe::{defaults, format};
 use k8dnz_core::Recipe;
 
 pub fn load_k8r(path: &str) -> anyhow::Result<Recipe> {

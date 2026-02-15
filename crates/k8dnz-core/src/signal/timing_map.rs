@@ -17,7 +17,9 @@ impl TimingMap {
 
     pub fn stride(len: u64, start: u64, step: u64) -> Result<Self> {
         if step == 0 {
-            return Err(K8Error::Validation("timemap stride step must be > 0".into()));
+            return Err(K8Error::Validation(
+                "timemap stride step must be > 0".into(),
+            ));
         }
         let mut v = Vec::with_capacity(len as usize);
         let mut x = start;
@@ -46,7 +48,11 @@ impl TimingMap {
 
         let mut prev: u64 = 0;
         for (i, &idx) in self.indices.iter().enumerate() {
-            let delta = if i == 0 { idx } else { idx.saturating_sub(prev) };
+            let delta = if i == 0 {
+                idx
+            } else {
+                idx.saturating_sub(prev)
+            };
             write_var_u64(&mut out, delta);
             prev = idx;
         }
@@ -72,7 +78,9 @@ impl TimingMap {
                     .ok_or_else(|| K8Error::Validation("timemap: u64 overflow".into()))?
             };
             if n > 0 && idx <= prev {
-                return Err(K8Error::Validation("timemap: non-increasing indices".into()));
+                return Err(K8Error::Validation(
+                    "timemap: non-increasing indices".into(),
+                ));
             }
             indices.push(idx);
             prev = idx;

@@ -6,7 +6,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(rel)
 }
 
 fn tmp_path(name: &str, ext: &str) -> PathBuf {
@@ -16,7 +18,10 @@ fn tmp_path(name: &str, ext: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     let pid = std::process::id();
-    p.push(format!("k8dnz_{}_{}_{}_{}.{}", name, pid, nanos, "tmp", ext));
+    p.push(format!(
+        "k8dnz_{}_{}_{}_{}.{}",
+        name, pid, nanos, "tmp", ext
+    ));
     p
 }
 
@@ -78,7 +83,10 @@ fn encode_decode_roundtrip_with_splitmix64_is_lossless_and_deterministic() {
     // Deterministic .ark bytes for same args
     let a = fs::read(&ark1).expect("read ark1");
     let b = fs::read(&ark2).expect("read ark2");
-    assert_eq!(a, b, "mixed encode produced different .ark bytes on identical runs");
+    assert_eq!(
+        a, b,
+        "mixed encode produced different .ark bytes on identical runs"
+    );
 
     // Decode roundtrip
     let mut dec = Command::new(env!("CARGO_BIN_EXE_k8dnz-cli"));
@@ -95,7 +103,10 @@ fn encode_decode_roundtrip_with_splitmix64_is_lossless_and_deterministic() {
 
     let orig = fs::read(&input).expect("read input");
     let got = fs::read(&decoded).expect("read decoded");
-    assert_eq!(orig, got, "decoded bytes differ from original (mix enabled)");
+    assert_eq!(
+        orig, got,
+        "decoded bytes differ from original (mix enabled)"
+    );
 
     // Directional distribution check: mixed distinct should not be worse than raw.
     let used = fs::read(&key_used).expect("read used key");

@@ -1,8 +1,7 @@
 
-
 # K8DNZ / The Cadence Project (Rust)
 
-**Status: Experimental, but we now have a proven “time-indexed reconstruction” pipeline — and a new deterministic banding primitive (`orbexp blockscan`) that may unlock residual reduction.**
+**Status: Experimental, but we now have a proven “time-indexed reconstruction” pipeline — plus a deterministic banding + tags primitive (`orbexp bandsplit`) that can generate low-alphabet “timelines” (TG1 tags). We also falsified the current conditioning-as-XOR-mask approach (it destroys fit), so the next step is new conditioning semantics where tags select mapping/field variants rather than scrambling bytes.**
 
 K8DNZ is a deterministic codec prototype inspired by a simple but powerful mechanism:
 
@@ -31,14 +30,15 @@ We now have a second, more important proof:
 
 This is implemented as:
 
-- `timemap fit-xor` → finds a window in the generated stream and produces:
+- `timemap fit-xor` / `timemap fit-xor-chunked` → finds windows in the generated stream and produces:
   - a **TM1** (time positions / indices into the stream)
-  - a **residual** (XOR patch bytes)
-- `timemap reconstruct` → regenerates the stream at those indices and XORs the residual to produce the exact target
+  - a **residual** (patch bytes; historically XOR, now also supports other residual semantics and bitfield residual payloads)
+- `timemap reconstruct` → regenerates the stream at those indices and applies the residual to produce the exact target
 
-This has been validated with `cmp ... OK` on:
-- 57 bytes (Genesis1 first line)
-- 256 bytes (first 256 bytes of Genesis1)
+This has been validated with `cmp ... OK` across:
+- small slices (first line / 57 bytes)
+- 256 bytes
+- full `text/Genesis1.txt` (~4201 bytes)
 - both `pair` and `rgbpair` modes
 
 This is the current “core win”: deterministic time indexing + small side-data makes perfect reconstruction possible.
@@ -57,42 +57,100 @@ Important indexing rule (now enforced):
 This allows TM1 to reference *exact byte positions* even in rgbpair mode.
 
 ### ✅ Optional mapping/permutation layer exists and is reversible
-We can optionally apply a mapping layer (e.g., `SplitMix64`) during `fit-xor` and `reconstruct`.
+We can optionally apply a mapping layer (e.g., `SplitMix64`) during fitting and reconstruction.
 
-This adds a new degree of freedom:
+This adds a degree of freedom:
 - it can reshuffle or transform stream bytes deterministically
-- we still reconstruct exactly as long as decode uses the same mapping parameters
+- we still reconstruct exactly as long as reconstruction uses the same mapping parameters
 
-This is currently a lever for future residual reduction.
+This remains a lever for residual reduction.
 
 ### ✅ Instrumentation exists for analysis and diagnostics
 - `analyze` prints byte histograms + entropy + zstd ratio
 - `ark-inspect --dump-ciphertext` extracts ciphertext for analysis
 - `encode --dump-keystream` dumps the keystream used for XOR
+- timemap runs print a **scoreboard** (recipe bytes, TM1 bytes/zstd, residual bytes/zstd, effective totals)
 
 ---
 
-## New milestone: `orbexp blockscan` proves deterministic “banding buckets”
+## New milestone: Bitfield timemap mapping (bitfield → lanes/timelines)
 
-We added an experiment that treats fixed-size blocks as inputs to a deterministic “meet-time” scan:
+We now support a **bitfield** mapping view for timemap fitting and reconstruction. Instead of treating the target purely as a byte stream, we can treat it as a stream of small symbols and track **which time positions emitted which symbol**.
 
-- `orbexp blockscan` splits the input into blocks (e.g., 128-bit),
-- derives orbit steps deterministically from each block,
-- computes a *first meet time* (`t_first_meet`) under a modulus,
-- and histograms the meet classes.
+This is invoked via:
 
-Key observation so far (Genesis1, 128-bit blocks, scanning first 256 blocks):
+- `--map bitfield`
+- `--bits-per-emission {8,2,1}`
+- `--bit-mapping {geom,hash}` (variants)
+- optional `--time-split` (timeline-style residual packing)
 
-- Under `mod = 2^32` we saw **~8 unique meet classes**
-- Under `mod = 2^32 - 1` we saw **~9 unique meet classes**
-- with heavy collisions
+And validated end-to-end:
+
+- `timemap fit-xor-chunked (bitfield)` produces TM1 + a bitfield residual payload
+- `timemap reconstruct (bitfield)` reproduces the original bytes exactly **as long as `--max-ticks` is at least what the fit used**
+  - we initially hit `reconstruct short` when reconstruct used a lower default tick cap
+  - adding `--max-ticks ...` to reconstruct fixed it (`reconstruct ok`)
+
+### What we learned (important)
+- **Bitfield(8)** (256 symbol lanes) reconstructs correctly, but residual is still large.
+- **Bitfield(2)** (4 symbol lanes → `00/01/10/11`) reconstructs correctly and is currently the best-performing bitfield run of this session.
+  - It also increased match rates significantly (~25–33% matches per 128–512 symbol chunk in many segments), indicating we’re capturing more structure.
+- **Bitfield(1)** is structurally interesting: match rates jump dramatically (often ~55–60% matches per 512-symbol chunk), suggesting the generator is “closer” to a 1-bit view.
+  - But it increases symbol count and requires more ticks / stream length to chain across the whole target.
+- Smaller bits-per-emission increases symbol count and generally requires **more ticks**; tick budget matters (we saw “no room to finish” at low tick limits and fixed it by increasing `--max-ticks`).
+
+### The new “timeline” idea is now concretely realized
+Bitfield(2) lanes directly correspond to 4 timelines:
+
+- `00` timeline
+- `01` timeline
+- `10` timeline
+- `11` timeline
+
+This aligns strongly with the frustum “color band” vision: low-alphabet control over where the data lives.
+
+### Lane / timeline analysis tooling
+We added:
+
+- `timemap bf-lanes` → inspects a `.bf2` residual payload and reports:
+  - lane counts / distribution (e.g., for 2-bit: 4 lanes `00/01/10/11`)
+  - per-lane bitset sizes and zstd sizes
+  - totals vs baseline packed payload zstd
+
+This is primarily an **analysis tool**: naïvely splitting lanes into separate compressed bitsets usually loses cross-lane redundancy, but the lane distribution skew is extremely informative for “timeline” strategies.
+
+---
+
+## New milestone: `orbexp bandsplit` produces deterministic lanes + TG1 tags (banding + timelines)
+
+We added orbital experiments that treat fixed-size blocks as inputs to a deterministic “meet-time” scan, then turn that into a practical primitive:
+
+- `orbexp blockscan` computes meet-time statistics per block (diagnostic / measurement).
+- `orbexp bandsplit` deterministically assigns each block to a lane/bucket and can emit:
+  - an adjacency-preserving block stream (`.data.bin`)
+  - a tag stream (`.tags.bin`) in either byte-per-tag or packed **TG1** format
+
+This yields a tiny, deterministic **routing / band ID** per block that matches the “color walls / bands on the frustum” vision: an orderly low-alphabet control signal that can define lanes/timelines (e.g., 2-bit tags → `00/01/10/11`).
+
+### Key discovery: MOD choice can be degenerate vs informative (very important)
+
+With Genesis1, 128-bit blocks, `bucket_fn=tfirst`, `bucket_mod=4`:
+
+- Under `mod = 2^32 (4294967296)`, lane assignment can become degenerate:
+  - for shifts 0..16 we observed lanes_used = 1 (all blocks map to lane 0)
+  - even at shift=29 we saw lanes_used = 3 (lane 3 unused)
+
+- Under `mod = 2^32 - 1 (4294967295)`, the same setup produces all 4 lanes with meaningful distribution, e.g.:
+  - lane0: 33 blocks
+  - lane1: 27 blocks
+  - lane2: 68 blocks
+  - lane3: 134 blocks
 
 Interpretation:
 
-- This is **not** invertible decoding (collisions prove we can’t recover full blocks from the bucket).
-- But it is a powerful new primitive: a tiny, deterministic **routing / band ID** per block.
-
-This matches the “color walls / bands on the frustum” vision: the generator can produce an orderly, low-alphabet control signal that can be used to split data into lanes/timelines and model each lane with different parameters.
+- This is not invertible decoding (collisions are expected and fine).
+- But it is a powerful deterministic primitive.
+- `mod = 2^32` can collapse lane entropy; `mod = 2^32 - 1` restores entropy and is now the default for banding experiments.
 
 ---
 
@@ -129,7 +187,7 @@ Then we clamp + quantize deterministically to emit tokens.
 ### Quant shift as a distribution knob
 A key design knob is `quant.shift`—it moves bin boundaries without altering cadence timing.
 
-Important update: we observed that certain “tuned” recipes can become *degenerate* (regen produces all-zero tokens/bytes), while validated configs produce healthy entropy. This is now a tracked issue: **recipe tuning must never produce a degenerate stream**.
+Important update: we observed that certain “tuned” recipes can become degenerate (regen produces all-zero tokens/bytes), while validated configs produce healthy entropy. This is now a tracked issue: **recipe tuning must never produce a degenerate stream**.
 
 ### Two output layers
 - **PairToken layer**: compact and stable for token pipelines; packable to 1 byte per emission.
@@ -139,7 +197,7 @@ Important update: we observed that certain “tuned” recipes can become *degen
 A successful reconstruction can be thought of as two interlocking strands:
 
 - **Strand 1 (Time / Index / Curve):** the TM1 timing map – which positions matter
-- **Strand 2 (Value / Patch):** the residual – what must be XOR’d at those positions
+- **Strand 2 (Value / Patch):** the residual – what must be applied at those positions
 
 Together, they reconstruct the target perfectly from a deterministic generator.
 The major remaining goal is to make these strands **small** (especially the residual).
@@ -249,21 +307,175 @@ cmp /tmp/gen256.bin /tmp/gen256_rgb_mapped.out && echo OK
 
 ---
 
+## Timemap pipeline (bitfield mapping)
+
+### Bitfield(2) example: 4 lanes (00/01/10/11)
+
+This treats the target as a stream of 2-bit symbols and fits time windows that maximize matches.
+
+> Note: when reconstructing, **always pass `--max-ticks` at least as large as the fit run**. We saw `reconstruct short` until we added `--max-ticks 250000000` (and later `--max-ticks 600000000`), after which reconstruction succeeded.
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_bf2.tm1 \
+  --out-residual /tmp/g1_bf2.bf2 \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 2 \
+  --bit-mapping geom \
+  --time-split \
+  --objective matches \
+  --chunk-size 512 \
+  --lookahead 1200000 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000 \
+  --zstd-level 3
+```
+
+Reconstruct + verify:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_bf2.tm1 \
+  --residual /tmp/g1_bf2.bf2 \
+  --out /tmp/g1_bf2.recon \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 2 \
+  --bit-mapping geom \
+  --residual-mode xor \
+  --max-ticks 250000000
+
+cmp -s text/Genesis1.txt /tmp/g1_bf2.recon && echo "OK: bitfield(2) reconstruct matches target" || echo "FAIL: mismatch"
+```
+
+Inspect lane distribution:
+
+```bash
+cargo run -p k8dnz-cli -- timemap bf-lanes --in /tmp/g1_bf2.bf2 --zstd-level 3
+```
+
+### Bitfield(2) + hash mapping variant
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_bf2_hash.tm1 \
+  --out-residual /tmp/g1_bf2_hash.bf2 \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 2 \
+  --bit-mapping hash \
+  --map-seed 1337 \
+  --time-split \
+  --objective matches \
+  --chunk-size 512 \
+  --lookahead 1200000 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000 \
+  --zstd-level 3
+```
+
+Reconstruct (note the explicit `--max-ticks` again):
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_bf2_hash.tm1 \
+  --residual /tmp/g1_bf2_hash.bf2 \
+  --out /tmp/g1_bf2_hash.recon \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 2 \
+  --bit-mapping hash \
+  --map-seed 1337 \
+  --residual-mode xor \
+  --max-ticks 250000000
+```
+
+### Bitfield(1) direction (next experiment)
+
+The next planned experiment is 1-bit emissions (“color pair = 0/1”) with a larger tick budget.
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_bf1.tm1 \
+  --out-residual /tmp/g1_bf1.bf2 \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --time-split \
+  --objective matches \
+  --chunk-size 512 \
+  --lookahead 1200000 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000 \
+  --zstd-level 3
+```
+
+Then:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_bf1.tm1 \
+  --residual /tmp/g1_bf1.bf2 \
+  --out /tmp/g1_bf1.recon \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --residual-mode xor \
+  --max-ticks 250000000
+```
+
+Inspect lanes:
+
+```bash
+cargo run -p k8dnz-cli -- timemap bf-lanes --in /tmp/g1_bf1.bf2 --zstd-level 3
+```
+
+---
+
 ## Orbital experiments (`orbexp`)
 
-### Blockscan: derive meet buckets (banding primitive)
+### Blockscan (diagnostic): derive meet-time stats
 
 ```bash
 cargo run -p k8dnz-cli -- orbexp blockscan \
   --in text/Genesis1.txt \
   --block-bits 128 \
   --mod 4294967296 \
-  --derive int \
-  --p 0x243f6a8885a308d3 \
   --limit 256
 ```
 
-We are actively building the next step: a `bandsplit` helper that uses a bucket id to split bytes into lanes and compares compression of lanes vs whole-file zstd.
+### Bandsplit (primitive): deterministic lanes + TG1 tags (recommended MOD)
+
+```bash
+cargo run -p k8dnz-cli -- orbexp bandsplit \
+  --in text/Genesis1.txt \
+  --out-prefix /tmp/ts_mod_m1 \
+  --block-bits 128 \
+  --mod 4294967295 \
+  --bucket-fn tfirst \
+  --bucket-shift 29 \
+  --bucket-mod 4 \
+  --emit-tags \
+  --tag-format packed \
+  --tag-bits 2
+```
+
+This emits:
+
+* `/tmp/ts_mod_m1.data.bin` (adjacency-preserving block stream)
+* `/tmp/ts_mod_m1.tags.bin` (TG1 packed tags)
 
 ---
 
@@ -297,11 +509,11 @@ We expect to support a compact **string key** that can reproduce outputs without
 ```
 ARK1:
 A=<packed orbit A + seed>
-B=<field seed + mapping params (clamp/quant/shift + mapping/permutation)>
+B=<field seed + mapping params (clamp/quant/shift + optional permutation)>
 C=<packed orbit C + seed>
-M=<mode: bytes|text|pages>
-L=<length target / pages>
-H=<checksum>
+M=<mode (bytes/text/pages)>
+L=<length target>
+H=<checksum/CRC>
 ```
 
 ### Option 2: “short form” key (minimal)
@@ -346,28 +558,35 @@ This property enables:
 ### Near-term (now)
 
 * Fix recipe tuning degeneracy: ensure any tuned recipe generates a non-degenerate stream (no “all zeros” regen)
-* Residual-first optimization: update `fit-xor` objective from “max matches” to “min zstd(residual)” (true compression objective)
+* Residual-first optimization: update timemap objective from “max matches” to “min zstd(residual)” (true compression objective)
 * Add more mapping families beyond SplitMix64 (affine byte map, permute-256 table from seed, lane-aware mapping for rgbpair)
-* Add a scoreboard report:
+* Improve scoreboard reporting:
 
   * recipe bytes
   * timemap bytes (and compressed timemap bytes)
   * residual zstd bytes
-  * total effective bytes
+  * total effective bytes vs plain zstd
 
 ### Next experiment set (active)
 
-* Band-split residual test:
+* Conditioning V2 (core engineering milestone):
 
-  * compute blockscan bucket id per block
-  * split data into per-bucket lanes
-  * compare `sum(zstd(lanes))` vs `zstd(full)`
+  * replace conditioning-as-XOR-mask (falsified) with conditioning where TG1 tags select:
+
+    * mapping/field seed variants, or
+    * mapping families, or
+    * timeline-specific scan/mapping rules
+  * success criterion: residual zstd decreases vs baseline (even 5–15% is signal)
+
 * Time-split into 4 timelines:
 
-  * 00 / 01 / 10 / 11 as independent substreams (definition derived deterministically from orbit/bucket state)
+  * 00 / 01 / 10 / 11 via 2-bit TG1 tags or via bitfield(2) lanes
+  * model each timeline with its own deterministic mapping/field variant
+  * goal: push more structure into the “program” (TM1/tags) so residual shrinks
+
 * 1-bit emission direction:
 
-  * “color pair = 0/1” as the primitive token
+  * “color pair = 0/1” as the primitive token and/or 1-bit tags
   * aim: maximize structure in the timing/banding program so residual shrinks
 
 ### Mid-term
@@ -389,6 +608,4 @@ This property enables:
 MIT OR Apache-2.0
 
 ```
-
----
-
+```

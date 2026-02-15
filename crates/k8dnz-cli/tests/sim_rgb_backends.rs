@@ -72,7 +72,10 @@ fn rgb_backend_diverges_and_resonates() {
     }
 
     assert!(any_diff, "expected dna and cone to differ at least once");
-    assert!(any_equal, "expected dna and cone to match at least once (Option A resonance)");
+    assert!(
+        any_equal,
+        "expected dna and cone to match at least once (Option A resonance)"
+    );
 
     // Option A signature: matches should occur at i % 3 == 0.
     // We allow zero off-mod3 matches; if they appear later due to parameter changes,

@@ -15,7 +15,9 @@ fn bitpack_roundtrip_all_widths() {
     for bits in 1u8..=8u8 {
         let mask: u8 = ((1u16 << bits) - 1) as u8;
 
-        for &n in &[0usize, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128, 129] {
+        for &n in &[
+            0usize, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128, 129,
+        ] {
             let mut syms = Vec::with_capacity(n);
             for _ in 0..n {
                 let r = (lcg_next(&mut seed) >> 56) as u8;

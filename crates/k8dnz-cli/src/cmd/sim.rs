@@ -100,7 +100,6 @@ pub struct SimArgs {
     pub stats: bool,
 
     // --- SIM-only overrides (do NOT mutate recipe on disk) ---
-
     /// Override quant min (i64)
     #[arg(long)]
     pub qmin: Option<i64>,
@@ -122,7 +121,6 @@ pub struct SimArgs {
     pub clamp_max: Option<i64>,
 
     // --- RGBPAIR: true field-based emission (cone/DNA law) ---
-
     /// If set, --mode rgbpair uses emission-time FIELD samples (clamped) to drive RGB law,
     /// instead of the palette16 mapping in PairToken::to_rgb_pair().
     #[arg(long)]
@@ -153,7 +151,6 @@ pub struct SimArgs {
     pub rgb_p_scale: i16,
 
     // --- QSEARCH (shift neighborhood search) ---
-
     /// Search around the current quant.shift to find a better shift by quick sampling.
     #[arg(long)]
     pub qsearch: bool,
@@ -377,13 +374,7 @@ fn write_output(
                     .iter()
                     .enumerate()
                     .map(|(i, (_t, ef))| {
-                        emit_rgbpair_from_fields(
-                            &cfg,
-                            i as u64,
-                            ef.clamped_a,
-                            ef.clamped_c,
-                            spread,
-                        )
+                        emit_rgbpair_from_fields(&cfg, i as u64, ef.clamped_a, ef.clamped_c, spread)
                     })
                     .collect()
             } else {
@@ -644,18 +635,17 @@ fn print_stats(toks: &[PairToken], fr: Option<&FieldRangeStats>, recipe: &Recipe
 
     if let Some(fr) = fr {
         if fr.saw_any {
-            eprintln!("field samples (raw):   min={} max={}", fr.raw_min, fr.raw_max);
+            eprintln!(
+                "field samples (raw):   min={} max={}",
+                fr.raw_min, fr.raw_max
+            );
             eprintln!(
                 "field samples (clamp): min={} max={}",
                 fr.clamped_min, fr.clamped_max
             );
             eprintln!(
                 "quant range (recipe):  min={} max={} shift={} (effective min={} max={})",
-                recipe.quant.min,
-                recipe.quant.max,
-                recipe.quant.shift,
-                qmin_eff,
-                qmax_eff
+                recipe.quant.min, recipe.quant.max, recipe.quant.shift, qmin_eff, qmax_eff
             );
             eprintln!(
                 "clamp range (recipe):  min={} max={}",

@@ -4,7 +4,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(rel)
 }
 
 fn tmp_path(name: &str, ext: &str) -> PathBuf {
@@ -14,7 +16,10 @@ fn tmp_path(name: &str, ext: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     let pid = std::process::id();
-    p.push(format!("k8dnz_{}_{}_{}_{}.{}", name, pid, nanos, "tmp", ext));
+    p.push(format!(
+        "k8dnz_{}_{}_{}_{}.{}",
+        name, pid, nanos, "tmp", ext
+    ));
     p
 }
 
@@ -107,7 +112,10 @@ fn genesis1_encode_is_deterministic_for_same_recipe_and_args() {
     let a = fs::read(&ark1).expect("read ark1");
     let b = fs::read(&ark2).expect("read ark2");
 
-    assert_eq!(a, b, "encode produced different .ark bytes on identical runs");
+    assert_eq!(
+        a, b,
+        "encode produced different .ark bytes on identical runs"
+    );
 
     let _ = fs::remove_file(&ark1);
     let _ = fs::remove_file(&ark2);

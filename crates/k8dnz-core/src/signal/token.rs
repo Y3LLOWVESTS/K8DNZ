@@ -79,22 +79,22 @@ impl RgbPairToken {
 /// - coupled-adder DNA model (shared drift + differential symbols)
 pub fn palette16(n: u8) -> Rgb {
     const P: [Rgb; 16] = [
-        Rgb::new(255,  60,  60), // 0 red
-        Rgb::new(255, 120,  60), // 1 red-orange
-        Rgb::new(255, 180,  60), // 2 orange
-        Rgb::new(255, 230,  60), // 3 yellow
-        Rgb::new(200, 255,  60), // 4 yellow-green
-        Rgb::new(120, 255,  60), // 5 green
-        Rgb::new( 60, 255, 120), // 6 green-cyan
-        Rgb::new( 60, 255, 200), // 7 cyan
-        Rgb::new( 60, 230, 255), // 8 cyan-sky
-        Rgb::new( 60, 180, 255), // 9 sky-blue
-        Rgb::new( 60, 120, 255), // A blue
-        Rgb::new(120,  60, 255), // B indigo
-        Rgb::new(180,  60, 255), // C purple
-        Rgb::new(230,  60, 255), // D magenta
-        Rgb::new(255,  60, 200), // E hot pink
-        Rgb::new(255,  60, 120), // F pink-red
+        Rgb::new(255, 60, 60),  // 0 red
+        Rgb::new(255, 120, 60), // 1 red-orange
+        Rgb::new(255, 180, 60), // 2 orange
+        Rgb::new(255, 230, 60), // 3 yellow
+        Rgb::new(200, 255, 60), // 4 yellow-green
+        Rgb::new(120, 255, 60), // 5 green
+        Rgb::new(60, 255, 120), // 6 green-cyan
+        Rgb::new(60, 255, 200), // 7 cyan
+        Rgb::new(60, 230, 255), // 8 cyan-sky
+        Rgb::new(60, 180, 255), // 9 sky-blue
+        Rgb::new(60, 120, 255), // A blue
+        Rgb::new(120, 60, 255), // B indigo
+        Rgb::new(180, 60, 255), // C purple
+        Rgb::new(230, 60, 255), // D magenta
+        Rgb::new(255, 60, 200), // E hot pink
+        Rgb::new(255, 60, 120), // F pink-red
     ];
 
     P[(n & 0x0F) as usize]

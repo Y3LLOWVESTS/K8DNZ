@@ -1,5 +1,5 @@
-pub mod recipe;
-pub mod format;
+pub mod ark_key;
 pub mod checksum;
 pub mod defaults;
-pub mod ark_key;
+pub mod format;
+pub mod recipe;

@@ -32,7 +32,9 @@ pub fn validate_recipe(r: &Recipe) -> Result<()> {
 
     // Field clamp sanity
     if r.field_clamp.min >= r.field_clamp.max {
-        return Err(K8Error::Validation("field_clamp.min must be < field_clamp.max".into()));
+        return Err(K8Error::Validation(
+            "field_clamp.min must be < field_clamp.max".into(),
+        ));
     }
 
     // Quant sanity

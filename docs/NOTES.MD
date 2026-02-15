@@ -9583,3 +9583,2267 @@ If you want, in the next instance we can start immediately by designing the **ex
 
 
 ### END NOTE - FEBRUARY 15 2026 - 10:20 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 11:30 CST
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (End of This Instance, 2026-02-15 CST)
+
+These notes capture **what changed in this instance vs the README**, what we **implemented**, what we **proved via runs**, and the **next experiments** to run immediately in the next instance. This is written so you can paste it into the next chat and continue without re-reading history.
+
+---
+
+## 0) Status Shift: README → Reality (the “phase change”)
+
+**README described one main story**: cadence engine emits paired tokens → build a timemap → store residual → ARK key concept.
+
+**This instance turned the repo into a dual-track experimental platform**:
+
+1. **Main Track (Cadence / Timemap)**
+   Still the original cadence stream → timemap + residual loop, but upgraded with:
+
+   * new mapping families
+   * symbol/bitfield pipeline option
+   * objective scoring improvements
+   * “conditioning” concept added (new “tags” channel)
+
+2. **Orbital Track (OrbExp / Meet-Time Lab)**
+   A new CLI surface for “pure orbit math” experiments:
+
+   * scans files by blocks
+   * computes meet-time statistics
+   * splits data deterministically into “lanes/timelines”
+   * optionally emits a **single adjacency-preserving data stream** plus **tags stream** (a control channel)
+
+This is a key project evolution: we are no longer testing only “timemap fit”; we are building the *measurement lab* that can discover structure (lane routing/tags) and feed that into the timemap system.
+
+---
+
+## 1) What We Built in Code (hard changes / new capabilities)
+
+### 1.1 `orbexp` CLI now exists with 3 real tools
+
+File: `crates/k8dnz-cli/src/cmd/orbexp.rs`
+
+Commands:
+
+* `orbexp blockscan`
+  Reads input in fixed-size bit blocks, derives orbit params per block, computes meet-time stats. Outputs CSV rows with:
+
+  * delta, step_a, step_c, d, gcd, t_first_meet, t_bitlen
+    Also prints histogram summary: blocks scanned, unique meets, collisions.
+
+* `orbexp bandsplit` (**biggest new primitive**)
+  Deterministically assigns each block to a lane/bucket based on a chosen bucket function. Writes:
+
+  * lane files: `<prefix>.band_<id>.bin`
+  * optionally adjacency-preserving streams:
+
+    * `<prefix>.data.bin` = concatenated blocks in original scan order
+    * `<prefix>.tags.bin` = tag per block (derived lane id after shift/mod)
+
+* `orbexp one`
+  Debug: compute meet-time for a single block given as hex.
+
+Core new knobs in `bandsplit`:
+
+* `--bucket-fn`: `tfirst | tbitlen | gcd-tfirst`
+* `--bucket-shift`: right shift bucket id before mod
+* `--bucket-mod`: reduce bucket id into N lanes (used for “4 timelines” experiments)
+* `--emit-tags`: emits `data.bin` + `tags.bin`
+* `--tag-format`: `byte | packed`
+* `--tag-bits`: for packed tags (1..=8)
+* `--emit-tags-packed`: forces packed
+* `--summary`: prints lane bytes/blocks totals
+
+**New packed tag format “TG1”**:
+
+* Magic: `"TG1\0"`
+* bits_per_tag u8
+* bucket_mod u16 LE
+* reserved u8
+* tag_count u64 LE
+* payload: packed tags, LSB-first per byte
+
+This makes tags compressable + scalable beyond 1 byte/tag.
+
+---
+
+### 1.2 `timemap` CLI gained new pipeline features + conditioning channel
+
+File: `crates/k8dnz-cli/src/cmd/timemap.rs`
+
+#### New/expanded map modes
+
+`MapMode` now includes:
+
+* `Text40Lane`
+* `Text40Field`
+* **`Bitfield`** (NEW): k-bit symbol stream derived from RGBPAIR emissions
+
+#### New enums
+
+* `BitMapping`: `Geom | Hash`
+
+  * `Geom` is the “vision-aligned” partitioning / steerable mapping family
+  * `Hash` is baseline/randomized mapping family
+* `FitObjective`: `Matches | Zstd`
+* `ResidualMode`: `Xor | Sub`
+* `TagFormat`: `Byte | Packed` (TG1)
+
+#### Conditioning channel (NEW)
+
+In `FitXorArgs`, `FitXorChunkedArgs`, and `ReconstructArgs` we added an optional “conditioning via tags” system:
+
+New args:
+
+* `--cond-tags <path>`: a tag stream (per output block)
+* `--cond-tag-format byte|packed`
+* `--cond-block-bytes` (default 16)
+* `--cond-seed` (and `--cond-seed-hex`)
+
+Implementation:
+
+* Reads tags from `.tags.bin` (byte) or TG1 packed tags
+* Per output byte, chooses tag for its block and computes a deterministic mask:
+
+  * `cond_mask_byte(cond_seed, tag, out_index)`
+* Applies XOR mask to the mapped byte:
+
+  * `mapped' = mapped ^ mask`
+
+**Meaning:** tags become a *control signal* that can steer mapping deterministically without storing lots of data.
+
+#### Important observation from code dump
+
+There is a visible accidental duplication in `cmd_apply`:
+
+* `let mut engine = Engine::new(recipe)?;` appears twice.
+  This is a minor cleanup item for next session (should compile? it won’t as-is unless one line is dead code in the snippet; verify and remove duplication).
+
+Also in `FitXorArgs` there is a duplicated attribute line:
+
+* `#[arg(long)] #[arg(long)] pub cond_tags: Option<String>,`
+  This should be cleaned (harmless sometimes but can break compile in strict proc-macro parsing).
+
+---
+
+## 2) What We Tested / Proved With Runs (empirical results)
+
+### 2.1 Lane splitting works; distribution is highly sensitive
+
+We ran `orbexp bandsplit` on `Genesis1.txt` with 128-bit blocks (16 bytes/block), scanning sequentially.
+
+We tested:
+
+* bucket function `tfirst`
+* `bucket_shift=29`
+* `bucket_mod=4` (force 4 lanes / “4 timelines”)
+
+We tested two MOD values:
+
+* `MOD = 2^32 = 4294967296`
+* `MOD = 2^32 - 1 = 4294967295`
+
+**Key discovery:** lane balance changed drastically between MOD choices.
+This suggests modular arithmetic is a powerful lever for deterministic routing.
+
+### 2.2 Lane splitting does not automatically compress better
+
+Measured using zstd -3:
+
+* Full-file zstd for Genesis1 was ~1329 bytes
+* Sum of zstds of lanes (mod4 split) could be worse (example seen ~1650 bytes)
+  Why:
+* per-file zstd overhead
+* loss of cross-lane redundancy
+* imbalanced lanes
+
+Conclusion:
+**lane splitting is not inherently compression.**
+Lane splitting is a *structure probe / routing strategy* that might reduce entropy inside lanes if tuned correctly.
+
+### 2.3 Tags + adjacency preservation is “cheap-ish”
+
+We emitted:
+
+* `ts.data.bin` (full concatenated blocks in scan order)
+* `ts.tags.bin` (1 byte/tag)
+
+Zstd:
+
+* `ts.data.zst` roughly matched baseline full-file zstd
+* `ts.tags.zst` added ~100 bytes overhead (small extra control channel)
+
+Conclusion:
+Tags are a manageable overhead and may pay off if they help reduce residual downstream.
+
+---
+
+## 3) Why This Matters: What We’re Actually Attacking
+
+Current pain point (from prior runs, still true):
+
+* **timemap `.tm1` zstd bytes are tiny** (excellent)
+* **residual zstd bytes are huge** (dominates effective size)
+  So the battle is: **reduce residual entropy**.
+
+This instance gives us **three attack angles**:
+
+1. **Bitfield pipeline**: reduce symbol alphabet (k bits per emission, 1..8)
+2. **Timeline/lane splitting**: route data into different deterministic streams
+3. **Orbital banding/tags**: generate a deterministic side-channel (tags) that can steer mapping/conditioning and potentially reduce residual
+
+---
+
+## 4) The “Next Experiment” Plan (what to run first next instance)
+
+### 4.1 First priority experiment: “Do tags predict lower residual?”
+
+We should stop expecting lane-splitting alone to compress. Instead:
+
+* treat tags as metadata that can help timemap mapping match target better
+
+**Experiment design (fast + falsifiable):**
+
+1. Generate tags and data from orbexp:
+
+   * Use `bucket_shift=29`, `bucket_mod=4`, `bucket_fn=tfirst`
+   * Try both MODs:
+
+     * 4294967296
+     * 4294967295
+2. Feed the `.tags.bin` into `timemap fit-xor` or `fit-xor-chunked` using:
+
+   * `--cond-tags ts.tags.bin`
+   * `--cond-tag-format byte` (or packed later)
+   * `--cond-block-bytes 16`
+   * sweep `--cond-seed` (small search)
+3. Compare scoreboard:
+
+   * plain_zstd_bytes
+   * tm1_zstd_bytes
+   * resid_zstd_bytes
+   * effective_bytes_no_recipe
+   * effective_bytes_with_recipe
+
+Success criteria:
+
+* Conditioning reduces residual zstd meaningfully (even 5–15% is a “signal”).
+* If not: tags are not correlated with mapping improvement; adjust bucket function/mod/shift.
+
+### 4.2 Second experiment: per-lane residual probing
+
+If lane tags show promise:
+
+* extract only blocks from one lane into a lane-only stream
+* run fit-xor-chunked on that lane-only target
+* measure if one lane is “easier” (lower residual) than others
+
+This will tell us if banding is discovering real structure in the text.
+
+### 4.3 Third experiment: 1-bit / 2-bit symbols + time split
+
+We agreed previously:
+
+* push toward “1-bit color pair = 0/1”
+* consider “00/01/10/11” timelines if we use 2-bit tags / 2-bit symbols
+
+But we now know: splitting alone may worsen compression unless it meaningfully reduces entropy. So we treat time split as:
+
+* a structure hypothesis to test, not a guaranteed win.
+
+---
+
+## 5) Implementation Notes / Known Issues To Fix Next Instance
+
+### 5.1 `timemap.rs` minor macro/duplication issues
+
+From the pasted snippet:
+
+* Duplicate `#[arg(long)]` on `cond_tags`
+* Duplicate `let mut engine = Engine::new(recipe)?;` in `cmd_apply`
+  These should be cleaned to avoid future compile weirdness.
+
+### 5.2 Packed tags integration is implemented on orbexp side
+
+Orbexp can write TG1 packed tags.
+Timemap can read TG1 packed tags (`read_cond_tags` + `unpack_tags`).
+
+Next: verify end-to-end by:
+
+* generating packed tags
+* passing `--cond-tag-format packed`
+* confirming tag_count matches expected number of blocks
+
+---
+
+## 6) Practical Command Cheatsheet (ready for next instance)
+
+### 6.1 Build
+
+```bash
+cargo build
+```
+
+### 6.2 Generate lane files + byte tags + adjacency-preserving data
+
+```bash
+cargo run -p k8dnz-cli -- orbexp bandsplit \
+  --in text/Genesis1.txt \
+  --out-prefix /tmp/ts_mod2p32 \
+  --block-bits 128 \
+  --mod 4294967296 \
+  --bucket-fn tfirst \
+  --bucket-shift 29 \
+  --bucket-mod 4 \
+  --emit-tags \
+  --tag-format byte
+```
+
+Alternative MOD:
+
+```bash
+cargo run -p k8dnz-cli -- orbexp bandsplit \
+  --in text/Genesis1.txt \
+  --out-prefix /tmp/ts_mod2p32m1 \
+  --block-bits 128 \
+  --mod 4294967295 \
+  --bucket-fn tfirst \
+  --bucket-shift 29 \
+  --bucket-mod 4 \
+  --emit-tags \
+  --tag-format byte
+```
+
+### 6.3 Zstd compare baseline vs lanes vs tags/data
+
+```bash
+zstd -3 -f -o /tmp/gen1.zst text/Genesis1.txt
+ls -lh /tmp/gen1.zst
+
+zstd -3 -f /tmp/ts_mod2p32.band_*.bin
+ls -lh /tmp/ts_mod2p32.band_*.bin.zst
+
+zstd -3 -f /tmp/ts_mod2p32.data.bin /tmp/ts_mod2p32.tags.bin
+ls -lh /tmp/ts_mod2p32.data.bin.zst /tmp/ts_mod2p32.tags.bin.zst
+```
+
+### 6.4 Run fit-xor with conditioning tags (byte format)
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/gen1.tm1 \
+  --out-residual /tmp/gen1.resid \
+  --mode pair \
+  --map text40-field \
+  --objective zstd \
+  --zstd-level 3 \
+  --search-emissions 2000000 \
+  --max-ticks 80000000 \
+  --cond-tags /tmp/ts_mod2p32.tags.bin \
+  --cond-tag-format byte \
+  --cond-block-bytes 16 \
+  --cond-seed 0
+```
+
+Then sweep `--cond-seed` (small range) to see if residual drops.
+
+---
+
+## 7) High-Level Takeaway (for the next instance mindset)
+
+We now have:
+
+* a **routing oracle** (orbital meet-time banding) that produces lanes + tags deterministically,
+* a **symbol/bitfield fork** inside timemap for lower-alphabet experiments,
+* a new **conditioning mechanism** that can use tags as a low-cost control signal to steer mapping and reduce residual.
+
+The next instance should focus on **one falsifiable target**:
+
+> “Do meet-time tags reduce residual zstd when used as conditioning?”
+
+If yes → we tune banding parameters (MOD, bucket_fn, shift) to maximize residual reduction.
+If no → we treat tags as diagnostic only and pivot harder to bitfield/1-bit symbol experiments.
+
+---
+
+## 8) Files Changed This Instance (for quick orientation)
+
+* `crates/k8dnz-cli/src/cmd/orbexp.rs`
+  New orbexp toolset: blockscan, bandsplit, one; TG1 packed tags; lanes+tags/data emission.
+
+* `crates/k8dnz-cli/src/cmd/timemap.rs`
+  Added `Bitfield` mode + bit mapping families; added FitObjective & ResidualMode; added tag conditioning channel; TG1 tag reader/unpacker; conditioning mask and mapping integration.
+
+---
+
+If you paste this into the next instance along with whatever new terminal output you generate (especially the fit-xor scoreboard lines), we can immediately decide whether tags/conditioning is a real signal and then lock in the best next tuning loop.
+
+
+### END NOTE - FEBRUARY 15 2026 - 11:30 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 11:45 CST
+
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (End of Instance, 2026-02-15 CST)
+
+These notes capture **what we learned from the newest runs**, what is now **proven/false**, and the **next strategy** to move toward “ARK-key expands to data” in a way that matches the vision (orbits → align → frustum field → emitted bits/pairs), while staying deterministic.
+
+---
+
+## 0) North Star (unchanged)
+
+We want a deterministic codec where a compact key (“recipe/seed/params”) can **expand into a target file** (Genesis1.txt for now) with minimal stored residual. The practical goal remains: **residual dominates**, so the project is about finding **structured mappings** that reduce residual entropy.
+
+---
+
+## 1) Current Repo Reality (what we now have)
+
+### 1.1 Two-track experimental platform is real and useful
+
+* **Timemap track**: cadence emissions → mapping → timemap (.tm1) + residual.
+* **Orbital track (`orbexp`)**: deterministic blockwise orbit analysis + deterministic lane/tag generation (including packed TG1 tags).
+
+The repo is now a **measurement + modeling lab**, not just “run timemap fit and hope.”
+
+### 1.2 TG1 packed tags are implemented end-to-end
+
+* `orbexp` can emit packed tags (`tag-format packed`, `tag-bits 1..=8`) with TG1 header.
+* `timemap` can read and unpack TG1 tags and use them as a conditioning input.
+
+So: the “control channel” concept is implemented and deterministic.
+
+---
+
+## 2) Key Discoveries (this instance’s core results)
+
+### 2.1 Orbital banding is extremely sensitive to MOD choice
+
+We discovered a concrete, repeatable “math lever”:
+
+* With `--mod 4294967296` (2^32), `bucket_fn=tfirst`, `bucket_mod=4`:
+
+  * shifts 0..16 produced **lanes_used=1** (everything lane 0).
+  * With shift=29, lanes_used=3 (lane 3 never used).
+  * Interpretation: the lane bits are **degenerate** under power-of-two modulus; low bits carry little/no information due to arithmetic structure.
+
+* With `--mod 4294967295` (2^32 − 1), `bucket_fn=tfirst`, `bucket_mod=4`, `bucket_shift=29`:
+
+  * **lanes_used=4** with a meaningful distribution:
+
+    * lane0: 33 blocks (528 bytes)
+    * lane1: 27 blocks (432 bytes)
+    * lane2: 68 blocks (1088 bytes)
+    * lane3: 134 blocks (2144 bytes)
+
+**Conclusion:** `mod=2^32` is a *degenerate baseline* for banding; `mod=2^32-1` restores entropy in lane IDs and is the preferred default for future banding experiments.
+
+### 2.2 Conditioning-as-XOR-mask is actively harmful (important falsification)
+
+We ran `timemap fit-xor` with conditioning enabled via tags:
+
+* Conditioning enabled (packed TG1 tags from the “good” mod=2^32-1 split), `cond_seed=0`:
+
+  * matches collapsed to **11/4201 (0.26%)**
+  * residual zstd exploded to **4210 bytes** (effectively incompressible)
+  * effective_bytes_no_recipe **4234** (much worse than plain zstd 1326)
+
+* Conditioning enabled, `cond_seed=1`:
+
+  * matches changed a bit (19/4201) but residual zstd stayed **4210**.
+
+* Conditioning enabled earlier (byte tags / packed tags, mod=2^32): same behavior: residual zstd stayed ~4210.
+
+This is a huge result:
+
+> The current conditioning mechanism (XOR-masking mapped bytes using tag+index) does not “steer the mapping”; it behaves like injecting pseudorandom noise, destroying fit and making residual essentially random.
+
+So: sweeping `cond_seed` does not fix it; the *conditioning semantics* must change.
+
+### 2.3 Baseline (no conditioning) is far better than conditioned runs
+
+Running the exact same `fit-xor` **without conditioning**:
+
+* matches: **472/4201 (11.2%)**
+* `resid_zstd_bytes = 3109`
+* `tm1_zstd_bytes = 25`
+* effective_bytes_no_recipe = **3134** (still worse than plain zstd 1326, but far better than the conditioned case)
+
+**Conclusion:** conditioning currently breaks what the scan/mapping is doing; the baseline system still has signal, but residual remains too large.
+
+---
+
+## 3) What We Now Believe (updated project model)
+
+### 3.1 “Lane split” is a structure probe, not guaranteed compression
+
+We now treat banding as a deterministic way to produce:
+
+* (a) **alternate timelines** (lane IDs) and
+* (b) a **control signal** (tags)
+
+But lane splitting alone can worsen compression due to:
+
+* zstd overhead per file
+* loss of cross-lane redundancy
+* imbalanced distributions
+
+So the win is not “split file into lanes and compress,” it’s:
+
+* **use lanes/tags to choose better mappings** that reduce residual.
+
+### 3.2 The control channel must control mapping choice, not XOR output bytes
+
+The current “conditioning = XOR mask” is the wrong shape.
+
+We want conditioning that is **vision-aligned**:
+
+> tags should select which “color band / field / mapping” we are sampling from, not scramble the sample.
+
+So the next step is to change conditioning from:
+
+* `mapped' = mapped ^ mask(tag, index)`
+  to something like:
+* `map_seed' = map_seed ^ f(cond_seed, tag)`
+* or “choose a permutation / mapping family based on tag”
+* or “choose which emission window / phase offset to sample based on tag”
+* or “choose among multiple sub-engines/streams based on tag”
+
+That is: **tag → choose a deterministic sub-mapping**, which is closer to “timeline selects color field.”
+
+---
+
+## 4) Hard Next Strategy (what to do next instance)
+
+### 4.1 Lock in banding defaults
+
+For all future banding experiments (unless testing degeneracy on purpose):
+
+* Use `--mod 4294967295` (2^32 − 1)
+* Use `bucket_fn=tfirst` (or compare against gcd-tfirst later)
+* Start with `bucket_shift=29`, `bucket_mod=4` for the “00/01/10/11 timelines” experiment.
+
+This is now a discovered rule: **power-of-two mod kills lane entropy**.
+
+### 4.2 Replace conditioning mechanism (core engineering task)
+
+Implement a new “conditioning v2” that does NOT XOR the mapped byte stream.
+
+Candidate V2 designs (pick one as MVP):
+
+**V2-A (minimal invasive, likely best first): tag selects map_seed**
+
+* Keep one pass, one mapping mode.
+* For each output block, derive `map_seed_effective = map_seed ^ splitmix64(cond_seed ^ (tag as u64))`
+* Use `map_seed_effective` inside mapping (Text40Field / Bitfield mapping function), so each tag chooses a deterministic “field variant.”
+
+This changes *which bytes are predicted*, instead of scrambling predicted bytes.
+
+**V2-B: tag selects among K mapping families**
+
+* For tag in 0..3, pick mapping backend variant:
+
+  * e.g. Text40Field variant A/B/C/D or Bitfield Geom/Hash variants, etc.
+* This is like selecting one of 4 “color bars” on the frustum.
+
+**V2-C: tag selects scan offset / phase**
+
+* Use tag to choose `window_start_pos` offset or emission index offset, effectively splitting scan into 4 interleaved timelines.
+* This is most vision-aligned (time lanes), but may be more invasive.
+
+MVP recommendation: **V2-A first** because it is smallest change and stays deterministic.
+
+### 4.3 After V2 conditioning exists: re-test tags
+
+Re-run:
+
+* baseline no conditioning
+* V2 conditioning with packed 2-bit tags (mod=2^32-1)
+* compare `resid_zstd_bytes` and effective bytes
+
+Success criterion:
+
+* residual zstd must drop vs 3109 baseline, even modestly (5–15% is signal).
+
+If V2 gives signal:
+
+* tune bucket_fn/shift/mod to maximize signal
+* then combine with Bitfield k=1/k=2
+
+If V2 gives no signal:
+
+* stop forcing tags into timemap and pivot to bitfield representation changes as main attack.
+
+### 4.4 Bitfield / 1-bit direction remains a major path
+
+We still believe a low-alphabet representation can help:
+
+* 1-bit (or 2-bit) symbols may be easier to predict with a deterministic time program.
+* But splitting alone is not enough; it must reduce residual entropy, not just rearrange bytes.
+
+So:
+
+* once V2 conditioning is in place, run:
+
+  * Bitfield k=1 and k=2
+  * compare residual zstd vs Text40Field baseline
+
+---
+
+## 5) What We Ran (terminal evidence to preserve)
+
+### 5.1 Orbexp banding results
+
+* `mod=4294967296`, `bucket_fn=tfirst`, `bucket_mod=4`, shifts 0..16 → lanes_used=1 (all lane 0).
+* `mod=4294967296`, shift=29 → lanes_used=3, lane 3 unused.
+* `bucket_fn` comparison at mod=2^32 (shift=29):
+
+  * tfirst and gcd-tfirst behaved identically (lanes_used=3)
+  * tbitlen collapsed to lanes_used=1
+* `mod=4294967295`, `bucket_fn=tfirst`, `shift=29`, `bucket_mod=4` → lanes_used=4 with nontrivial distribution.
+
+### 5.2 Timemap fit-xor scoreboard key lines
+
+* Baseline no conditioning:
+
+  * matches 472/4201 (11.2%)
+  * resid_zstd_bytes 3109
+  * tm1_zstd_bytes 25
+  * effective_bytes_no_recipe 3134
+
+* Conditioning with packed tags (`/tmp/ts_mod_m1.tags.bin`), cond_seed=0 or 1:
+
+  * matches ~11..19/4201 (near zero)
+  * resid_zstd_bytes 4210 (incompressible)
+  * effective_bytes_no_recipe 4234 (worse than raw)
+
+This falsifies conditioning-as-mask.
+
+---
+
+## 6) Immediate TODO Checklist for the Next Instance
+
+1. **Engineering:** implement Conditioning V2 (tag selects mapping/seed) and remove or gate the old XOR-mask conditioning.
+2. **Experiment:** regenerate tags using the proven good banding:
+
+   * `orbexp bandsplit` with `mod=4294967295`, packed 2-bit tags.
+3. **Experiment:** re-run `timemap fit-xor` baseline vs V2 conditioning and compare residual zstd.
+4. **Then:** if V2 shows signal, tune banding parameters; if not, pivot to Bitfield / 1-bit as primary representation change.
+5. **Optional tooling:** add an orbexp “bandsweep” mode that scans once and evaluates multiple shifts/mods in-memory (so we don’t rerun 32 full scans).
+
+---
+
+## 7) Handy Command Cheatsheet (known-good parameters)
+
+### 7.1 Generate balanced 4-lane tags (packed 2-bit TG1) using the “good mod”
+
+```bash
+cargo run -p k8dnz-cli -- orbexp bandsplit --in text/Genesis1.txt --out-prefix /tmp/ts_mod_m1 --block-bits 128 --mod 4294967295 --bucket-fn tfirst --bucket-shift 29 --bucket-mod 4 --emit-tags --tag-format packed --tag-bits 2
+```
+
+### 7.2 Baseline timemap fit-xor (no conditioning)
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target text/Genesis1.txt --out-timemap /tmp/gen1.tm1 --out-residual /tmp/gen1.resid --mode pair --map text40-field --objective zstd --zstd-level 3 --search-emissions 2000000 --max-ticks 80000000
+```
+
+### 7.3 Conditioning (current v1 mask) — proven bad (keep for regression proof)
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target text/Genesis1.txt --out-timemap /tmp/gen1.tm1 --out-residual /tmp/gen1.resid --mode pair --map text40-field --objective zstd --zstd-level 3 --search-emissions 2000000 --max-ticks 80000000 --cond-tags /tmp/ts_mod_m1.tags.bin --cond-tag-format packed --cond-block-bytes 16 --cond-seed 0
+```
+
+After V2 is implemented, repeat this comparison with V2 conditioning enabled.
+
+---
+
+## 8) Updated High-Level Takeaway (mindset for next instance)
+
+We made a major breakthrough in *understanding*:
+
+* The orbital banding system is real, deterministic, and has strong levers.
+* **MOD choice is a primary lever** (2^32 is degenerate; 2^32-1 is useful).
+* The current conditioning mechanism is **falsified** (it destroys fit and makes residual random).
+* Therefore, the next leap is not “more sweeps” — it’s **conditioning semantics redesign** so tags actually control which mapping/field is sampled (vision-aligned).
+
+Once conditioning is redefined as “tag selects mapping/field,” then tags become the deterministic timeline selector we want.
+
+---
+
+
+### END NOTE - FEBRUARY 15 2026 - 11:45 CST
+
+
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 12:40 CST
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (Feb 15, 2026, CST)
+
+**Scope of these notes:** everything we’ve learned up through the newest **bitfield (geom) + 2-bits/emission** runs, including chunk-size sweeps (256/512/1024/2048), the real bottleneck (residual), and what we should do next to raise odds.
+
+---
+
+## 0) North Star (unchanged, restated crisply)
+
+We are building a **deterministic, parameterized codec** where a compact “ARK-like” key (recipe + tiny payload) **expands into the target data** (currently `text/Genesis1.txt`, ~4201 bytes). The engine emits a predictable keystream (“color pairs”) based on orbit/field timing; we then align target symbols to this stream via a **timemap** and store any mismatch as a **residual**.
+
+**Current milestone order:**
+
+1. Determinism + perfect reconstruction (already achieved)
+2. Make the “program” (timemap) tiny (we are close)
+3. Make the **residual compressible/small** (this is the bottleneck)
+4. Only after (2)+(3) improve: pursue **ARK key shrink** goals (10% then 5% then 1–2%)
+
+---
+
+## 1) What we accomplished (facts we can rely on)
+
+### 1.1 End-to-end correctness is proven for bitfield mode
+
+We can reconstruct Genesis1 exactly using:
+
+* `--mode rgbpair`
+* `--map bitfield`
+* `--bit-mapping geom`
+* `--bits-per-emission 2`
+* `--residual-mode xor`
+* deterministic parameters (notably `map_seed=0` seen in logs)
+* `cmp -s text/Genesis1.txt out && echo OK` returns **OK**
+
+This is huge: the pipeline is not a toy; it’s a stable, deterministic codec loop.
+
+### 1.2 The timemap is “cheap” (highly compressible)
+
+From the latest scoreboard series:
+
+* `tm1_raw_bytes ~ 16815–16817` (raw timemap is big)
+* but `tm1_zstd_bytes` became **tiny** as chunk size increased:
+
+  * chunk=256 → `tm1_zstd_bytes = 172`
+  * chunk=512 → `tm1_zstd_bytes = 141`
+  * chunk=1024 → `tm1_zstd_bytes = 85`
+  * chunk=2048 → `tm1_zstd_bytes = 70`
+    This tells us the timemap stream has strong structure and zstd crushes it when chunking reduces boundary noise.
+
+### 1.3 Residual is the whale (dominant cost)
+
+Across the same runs:
+
+* `resid_raw_bytes = 4201` (same size as plain file)
+* `resid_zstd_bytes ~ 3256–3290` (still huge)
+  Meaning: under current mapping/residual design, residual behaves **random-ish** to zstd, so we gain almost nothing there.
+
+### 1.4 “Best so far” among chunk sweeps is currently chunk=1024
+
+Effective totals (no recipe / with recipe):
+
+* chunk=256: effective_with_recipe = **3662**
+* chunk=512: effective_with_recipe = **3641**
+* chunk=1024: effective_with_recipe = **3551**  ✅ best so far
+* chunk=2048: effective_with_recipe = **3559** (slightly worse than 1024)
+
+Interpretation:
+
+* Increasing chunk size reduces timemap zstd size,
+* but can slightly worsen residual compressibility due to less local optimality.
+  So **1024** is currently the sweet spot in this configuration.
+
+### 1.5 We confirmed the match-rate regime
+
+Per chunk, we see matches around **~24–30%** in many segments (varies by chunk and location). That’s not “terrible,” but not enough to make XOR residual sparse/compressible. It means residual still carries a lot of entropy.
+
+---
+
+## 2) Where we actually are on the “odds”
+
+### 2.1 Odds improved in the only way that matters early: we have a stable engine to iterate on
+
+We are no longer “hand-waving compression”; we have:
+
+* deterministic emission stream,
+* reproducible alignment procedure,
+* reconstructable artifacts (timemap + residual),
+* a scoreboard that lets us compare knobs.
+
+So yes: odds of continuing progress are **high**.
+
+### 2.2 But these results do NOT yet imply we can beat zstd (or reach 10% key)
+
+Current best effective (no recipe) is ~**3341 bytes** vs plain zstd **1326 bytes**.
+We are still far from beating baseline compression on this text target.
+
+Conclusion: **chunk-size tuning is not the breakthrough lever** anymore.
+Timemap is mostly solved; residual is not.
+
+---
+
+## 3) Mental model update (the “why” behind the numbers)
+
+### 3.1 We’re learning the “program vs residue” split
+
+* The **timemap** is basically the “program”: where in the keystream we read to approximate the target.
+* The **residual** is the “correction tape”: what we must store because the program isn’t predicting well.
+
+Right now:
+
+* program is cheap (70–170 bytes zstd),
+* correction tape is expensive (~3.25KB zstd).
+
+So the next phase must target “make the correction tape compressible or tiny.”
+
+### 3.2 Why XOR residual is failing (likely)
+
+XOR residual works great when the predicted bytes are already close (few bit flips, lots of zeros / low entropy). Here, even with 25% symbol matches, the non-matching regions produce XOR output that looks high-entropy. zstd cannot compress it much.
+
+So the path forward is:
+
+* either increase the match quality drastically,
+* or change residual representation so it becomes structured/compressible even when prediction isn’t great.
+
+---
+
+## 4) Immediate next experiments (highest expected value)
+
+### 4.1 Establish a “baseline matrix” we always run
+
+Keep a stable baseline so every change is comparable:
+
+**Baseline A (best so far):**
+
+* bitfield + geom + bpe=2
+* residual = xor
+* objective = zstd level 3
+* chunk-size = 1024
+* refine-topk 2048
+* search-emissions 40000
+* lookahead 1200000
+* max-ticks 200000000
+
+This is our current anchor.
+
+### 4.2 Residual mode experiments (first thing to try)
+
+Goal: find a residual transform that yields **lower resid_zstd_bytes**.
+
+Run the same baseline but vary:
+
+* `--residual-mode sub` (if supported)
+* `--residual-mode xor` (control)
+* any other supported residual modes
+
+**Why:** subtraction-style residuals often create more structured output than XOR if the predictor is “nearby” in value.
+
+**Action item for next instance:** capture `k8dnz-cli timemap --help` or the specific help for `fit-xor-chunked` showing the valid residual modes. Then we can enumerate a complete test grid without guessing.
+
+### 4.3 “Time split” / “bitplane split” experiments (big idea)
+
+You previously proposed splitting into 4 timelines (00/01/10/11). That maps extremely well to the current bitfield framing.
+
+Two closely related approaches:
+
+#### Approach 1: 2-bit lane split (4 streams)
+
+For `bits-per-emission=2`, treat the residual as two-bit symbols and split into four streams by value class (00,01,10,11) or by phase/time window. Store:
+
+* four smaller residual substreams,
+* each with its own timemap or smaller “index” descriptor.
+
+**Hypothesis:** each lane becomes less random, more compressible.
+
+#### Approach 2: Bitplane split
+
+Split residual bytes into:
+
+* low bitplane(s) vs high bitplane(s)
+* or even separate streams per bit position (0..7)
+  This is classic when you suspect structure hides in certain bits.
+
+**Why this could matter:** zstd hates uniformly mixed entropy. Separating bitplanes can expose runs/patterns.
+
+### 4.4 1-bit approach (color pair = 0/1) — still a key next step
+
+We believe **1 bit** may behave better because:
+
+* it’s easier for the model to hit the correct class,
+* and residual might become more “countable” / structured (especially if we also time-split).
+
+Next experiments:
+
+* `--bits-per-emission 1` with geom mapping
+* keep everything else similar
+* measure matches and residual zstd
+
+Important: a 1-bit stream is not “less information” in the final output because timemap+residual still reconstructs the original. The question is whether this representation makes the correction tape compress better.
+
+### 4.5 Mapping changes: don’t let “text” look like random bytes
+
+Genesis1 is ASCII text. Right now we’re treating it as bytes and hoping the keystream predicts those bytes.
+
+We should test transforms that reduce the target alphabet:
+
+* 7-bit ASCII mapping
+* “Text40” / other text-specific map modes already present in codebase (if compatible with timemap pipeline)
+* whitespace/case normalization experiments (only if reversible or if stored as small side-info)
+
+**Goal:** make the model predict a smaller, structured symbol space so residual is smaller/structured.
+
+---
+
+## 5) What NOT to spend time on (for now)
+
+### 5.1 More chunk-size sweeps beyond confirming a sweet spot
+
+We already learned the main lesson:
+
+* bigger chunks compress timemap better,
+* but don’t solve residual.
+  Keep chunk=1024 as default and revisit only after residual changes.
+
+### 5.2 Optimizing timemap raw size
+
+Raw timemap is ~16KB but zstd makes it ~70–170 bytes. It’s already “good enough” compared to the residual whale.
+
+### 5.3 Worrying about encryption / secrecy
+
+We don’t care about encryption; we care about **key-based expansion** and deterministic reconstructability.
+
+---
+
+## 6) Practical runbook for the next instance
+
+### 6.1 Baseline re-run (sanity)
+
+Run baseline A (chunk=1024) once to ensure environment matches.
+
+### 6.2 Enumerate residual modes (must-do)
+
+Run:
+
+* `cargo run -p k8dnz-cli -- timemap fit-xor-chunked --help`
+  or any command that prints valid enums for `--residual` / `--residual-mode`.
+
+Paste that into chat next instance so we can generate an exact exhaustive test matrix.
+
+### 6.3 Residual mode grid (execute once help is known)
+
+For each residual mode:
+
+* run baseline A
+* record scoreboard lines:
+
+  * `tm1_zstd_bytes`
+  * `resid_zstd_bytes`
+  * `effective_bytes_no_recipe`
+  * `effective_bytes_with_recipe`
+
+### 6.4 Bits-per-emission grid (1 vs 2)
+
+Repeat best residual mode for:
+
+* bpe=2 (current)
+* bpe=1 (next)
+
+### 6.5 Time split prototype (if no code yet)
+
+If time-split is not implemented, first create a minimal prototype path:
+
+* generate residual
+* post-process residual into 4 substreams
+* zstd each substream
+* compare total compressed size vs unsplit residual zstd
+
+Even if it’s “external splitting” at first, it tells us if the idea is worth integrating directly into the engine.
+
+---
+
+## 7) Current “state snapshot” (copy/paste friendly facts)
+
+* Target: `text/Genesis1.txt`
+* Plain bytes: 4201
+* Plain zstd level 3: 1326
+* Recipe raw bytes: 210
+* Current stream symbols: 40000 (approx; one run shows 39999 / 39923 due to search ending)
+* Typical ticks: ~155 million
+* Best (so far) effective with recipe in bf2 geom xor zstd3:
+
+  * chunk=1024 → `effective_bytes_with_recipe=3551`
+* chunk=2048 achieved best tm zstd (70 bytes) but worse overall due to residual
+
+---
+
+## 8) Open questions we need answered next instance (but no blockers)
+
+1. What exact residual modes exist in CLI? (`xor`, `sub`, etc.)
+2. Are there built-in options for:
+
+   * time split / bitplane split
+   * lane separation
+   * ASCII/text symbolization inside timemap pipeline
+3. Can we change objective to target residual compressibility more directly (e.g., a proxy metric) without lying to ourselves?
+
+---
+
+## 9) The “deep insight” to keep us aligned
+
+We are not trying to “compress with magic.”
+We are trying to discover a **small program family** (orbit + field + mapping) that predicts a structured target well enough that the correction tape becomes cheap.
+
+Right now we have proved:
+
+* the program can be stored cheaply,
+* the engine is deterministic,
+* alignment works.
+
+So the project has entered its real phase:
+
+> **Residual engineering** (representation + transforms + splitting) is the path to raising odds.
+
+---
+
+## 10) Next message checklist for you (to paste into the next instance)
+
+When you start the next session, paste:
+
+1. The output of `--help` for timemap fit/reconstruct (so we see residual modes + mapping enums).
+2. One baseline run’s scoreboard (chunk=1024, bpe=2) to confirm identical results.
+3. If you try bpe=1: paste that scoreboard too.
+
+That’s enough for us to generate a fully exhaustive, prioritized experiment plan immediately.
+
+
+### END NOTE - FEBRUARY 15 2026 - 12:40 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 14:00 CST
+
+
+Below is a paste-ready **Carry-Over Notes** pack for the next instance. It includes: what we fixed, what we verified, what the latest runs showed, what they imply, and the exact **next commands** to run (1-bit + mapping variants + time-split direction). Keep this as the “state of the world” snapshot.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (Feb 15, 2026)
+
+## 0) North Star (unchanged)
+
+Build a **deterministic, parameterized codec** where a compact “ARK-like” key (recipe + seed + params + tiny program) can **expand into target data** (currently `text/Genesis1.txt`, ~4201 bytes). We’re proving:
+
+1. determinism end-to-end
+2. the “time program” (timemap) compresses extremely well
+3. residual becomes progressively smaller as mapping improves (goal: residual collapses toward very small)
+
+We are explicitly exploring the “vision model” direction:
+
+* time → alignment → frustum field sampling → paired tokens
+  and now: **color pairs as bitfields** (2-bit / 1-bit) and **time-splitting lanes**.
+
+---
+
+## 1) What changed / fixes applied in this instance
+
+### 1.1 Module conflict fix (E0761)
+
+Error: module `timemap` found at both:
+
+* `crates/k8dnz-cli/src/cmd/timemap.rs`
+* `crates/k8dnz-cli/src/cmd/timemap/mod.rs`
+
+Fix: user renamed `timemap.rs` → `timemap_bin.rs` leaving only the `timemap/` module directory for `pub mod timemap;`. This removed ambiguity.
+
+### 1.2 `bf-lanes` wiring fix (E0061)
+
+Compile error: `cmd_bf_lanes(a)` wrong signature (function expected `(in_path: &str, zstd_level: i32)`).
+We updated **`crates/k8dnz-cli/src/cmd/timemap/bf_lanes.rs`** and verified CLI help works:
+
+* `k8dnz-cli timemap bf-lanes --help` shows `--in` and `--zstd-level`.
+
+---
+
+## 2) Deterministic smoke tests (confirmed working)
+
+### 2.1 TM1 make/inspect/apply smoke
+
+Commands run:
+
+```bash
+cargo run -p k8dnz-cli -- timemap make --out /tmp/smoke.tm1 --len 64 --start 0 --step 1
+cargo run -p k8dnz-cli -- timemap inspect --in /tmp/smoke.tm1
+
+cargo run -p k8dnz-cli -- timemap apply \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/smoke.tm1 \
+  --out /tmp/smoke.pair.bin \
+  --mode pair \
+  --max-ticks 50000000
+```
+
+Result:
+
+* `apply ok: bytes=64 ticks~246k emissions=64`
+* File sizes sane.
+
+### 2.2 End-to-end reconstruct correctness confirmed (pair + none + xor)
+
+`fit-xor-chunked` produced `/tmp/g1.tm1` + `/tmp/g1.resid`, reconstruct matched `Genesis1.txt`.
+
+Scoreboard (pair/none/xor):
+
+* `plain_zstd_bytes = 1326`
+* `tm1_zstd_bytes = 66` (very small)
+* `resid_zstd_bytes = 4068` (too big; residual is basically whole file)
+* `effective_no_recipe = 4134` (worse than plain zstd by ~2808 bytes)
+
+Conclusion: classic bytewise view still not good; residual is the enemy.
+
+---
+
+## 3) Bitfield mapping experiments (major milestone)
+
+### 3.1 Bitfield(8) worked end-to-end (rgbpair + bitfield + sub)
+
+Commands ran successfully:
+
+* `--mode rgbpair --map bitfield --bits-per-emission 8 --bit-mapping geom --residual sub`
+
+Reconstruct matched target.
+
+Scoreboard (bitfield 8):
+
+* `tm1_zstd_bytes = 136`
+* `resid_zstd_bytes = 3555`
+* `effective_no_recipe = 3691`
+
+Interpretation: bitfield mapping + sub residual is viable and improves over the earlier attempt, but residual still too large.
+
+`bf-lanes` on bf8:
+
+* `lanes=256`, per-lane bitsets compress individually fairly small, but total lane-bitset zstd is huge because splitting kills cross-lane redundancy (this is expected; `bf-lanes` is analysis, not compression).
+
+### 3.2 Bitfield(2) worked end-to-end and improved results (key win)
+
+The earlier attempt failed at 20M ticks because there wasn’t “room to finish” for chunk 0. Increasing to **80M ticks** fixed it.
+
+Run:
+
+* `--bits-per-emission 2 --bit-mapping geom --residual sub --max-ticks 80000000`
+  Reconstruct matched target.
+
+Scoreboard (bitfield 2):
+
+* `tm1_raw_bytes = 16814`, `tm1_zstd_bytes = 204` (timemap explodes raw because symbol count is huge, but still compresses well)
+* `resid_zstd_bytes = 3295`
+* `effective_no_recipe = 3499`
+* improvement vs bitfield(8): **3691 → 3499** (~192 bytes better)
+
+Chunk logs show strong match rates:
+
+* often **~24–33% matches per 128 symbols** (30–40 matches)
+  This is a qualitative shift: we’re matching structure more frequently.
+
+### 3.3 `bf-lanes` analysis for bitfield(2)
+
+`bf-lanes` output for bf2:
+
+* `symbol_count = 16804` (4 symbols per byte)
+* lane distribution:
+
+  * `00`: 24.99%
+  * `01`: 30.98%
+  * `10`: 27.20%
+  * `11`: 16.84% (rarer)
+
+Lane split totals:
+
+* baseline packed-symbol zstd: `3295`
+* total lane-bitset zstd: `6163` (worse; expected because separate bitsets lose cross-lane redundancy)
+  Takeaway: lane-splitting is for **structure discovery**; the skew (esp. rare `11`) is valuable leverage.
+
+---
+
+## 4) Key insights from this instance
+
+### 4.1 Timemap “program” is tiny under zstd
+
+Across runs, TM1 zstd bytes stay small (66, 136, 204), even when TM1 raw grows.
+This supports the “ARK key = small program + parameters” idea.
+
+### 4.2 Residual is the bottleneck, but bitfield(2) reduced it
+
+Residual zstd:
+
+* pair/none/xor: 4068
+* bitfield(8)/sub: 3555
+* **bitfield(2)/sub: 3295** (best so far in this session)
+  We want this to collapse much further.
+
+### 4.3 1-bit is the next logical step
+
+Because:
+
+* 2-bit has structure and skew.
+* 1-bit may further force regularity and reduce entropy if the mapping aligns with the “color wall” concept.
+* It also maps cleanly to the “color pair = 0/1” primitive.
+
+### 4.4 Tick budget matters (avoid the “no room to finish” failure)
+
+At 2-bit, 20M ticks was insufficient. 80M worked.
+Rule of thumb: smaller bits-per-emission → more symbols → more ticks required.
+For 1-bit, expect significantly more ticks (start with 200M).
+
+---
+
+## 5) EXACT next runs to execute in the next instance (copy/paste)
+
+### 5.1 Baseline 1-bit experiment (highest priority)
+
+Goal: see if `resid_zstd_bytes` drops below 3295 and whether tm1 stays small.
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_bf1.tm1 \
+  --out-residual /tmp/g1_bf1.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --residual sub \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 200000 \
+  --scan-step 1 \
+  --search-emissions 2000000 \
+  --max-ticks 200000000 \
+  --zstd-level 3
+```
+
+Reconstruct + verify:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_bf1.tm1 \
+  --residual /tmp/g1_bf1.bf1 \
+  --out /tmp/g1_bf1.recon \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --residual-mode sub \
+  --max-ticks 400000000
+
+cmp -s text/Genesis1.txt /tmp/g1_bf1.recon && echo "OK: bitfield(1) reconstruct matches target" || echo "FAIL: mismatch"
+```
+
+Lane analysis:
+
+```bash
+cargo run -p k8dnz-cli -- timemap bf-lanes --in /tmp/g1_bf1.bf1 --zstd-level 3
+```
+
+**If 200M fails (“no room to finish”), re-run with:**
+
+* `--max-ticks 400000000` (and keep others the same)
+
+---
+
+### 5.2 2-bit with `bit-mapping hash` (mapping variant)
+
+Goal: see if mapping changes reduce residual.
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_bf2_hash.tm1 \
+  --out-residual /tmp/g1_bf2_hash.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 2 \
+  --bit-mapping hash \
+  --residual sub \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 200000 \
+  --scan-step 1 \
+  --search-emissions 2000000 \
+  --max-ticks 80000000 \
+  --zstd-level 3
+```
+
+Then reconstruct + cmp as usual:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_bf2_hash.tm1 \
+  --residual /tmp/g1_bf2_hash.bf1 \
+  --out /tmp/g1_bf2_hash.recon \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 2 \
+  --bit-mapping hash \
+  --residual-mode sub \
+  --max-ticks 200000000
+
+cmp -s text/Genesis1.txt /tmp/g1_bf2_hash.recon && echo "OK: bitfield(2,hash) reconstruct matches target" || echo "FAIL: mismatch"
+```
+
+---
+
+## 6) Time-split / “00 01 10 11 are timelines” plan (next phase after 1-bit)
+
+We now have evidence lane splits are meaningful (skewed distribution). The plan:
+
+1. Use `bf-lanes` to measure whether **one lane becomes predictable** as we change mapping/params (ideal: one lane’s bitset zstd collapses).
+2. Then implement/try a **time-split codec** where:
+
+   * each lane is treated as its own stream (timeline)
+   * we search / align / compress per lane
+3. Ultimate target: lanes become “program-like” (small), and residual becomes tiny.
+
+Important: lane splitting **as separate zstd streams is not the final storage**; it’s an analysis step to discover structure. The final system likely needs:
+
+* shared timemap program + per-lane alignment + small residual “edits”
+
+---
+
+## 7) What to paste back after the next runs (so we can iterate fast)
+
+After each run, paste:
+
+1. the first header line printed by `fit-xor-chunked` (mode/map/bits/ticks/symbols)
+2. the **scoreboard block**
+3. `reconstruct ok` line
+4. `bf-lanes` summary: lane counts + totals (for 1-bit, 2-bit hash)
+
+That’s enough to decide the next lever: (mapping, residual mode xor vs sub, chunk size, objective tweaks, tick budget, etc.).
+
+---
+
+## 8) Current best-known numbers (as of this instance)
+
+* Baseline `plain_zstd_bytes`: **1326**
+* Best current “effective_no_recipe” from this session: **3499** (bitfield(2), geom, sub)
+* Best current residual zstd from this session: **3295** (bitfield(2), geom, sub)
+* TM1 is consistently tiny under zstd (66–204 bytes in these tests)
+
+---
+
+## 9) Strategic direction summary (why we’re on track)
+
+* We have deterministic reconstruction working in multiple modes.
+* Timemap behaves like a compressible “program,” matching the ARK-key idea.
+* Bitfield mapping increases match rate dramatically (structure captured).
+* 2-bit outperformed 8-bit; next step is 1-bit (simplest “color pair”).
+* Lane distribution skew suggests time-split is not just poetic—it’s measurable.
+
+---
+
+### Quick reminder for next instance
+
+**Start with the 1-bit run.** If it beats `resid_zstd_bytes = 3295`, we pivot hard into 1-bit + time-split experiments.
+
+---
+
+
+
+### END NOTE - FEBRUARY 15 2026 - 14:00 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 14:40 CST
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (2026-02-15, CST)
+
+**Scope:** This notes pack is designed to be pasted into the *next instance* so we can pick up immediately without re-reading history. It includes: what we ran today, what the numbers mean, what we fixed in CLI, what the current bottleneck is (residual randomness), and the next experiments that most directly increase the odds of “ARK-like key expands to data”.
+
+---
+
+## 0) North Star (still unchanged)
+
+We are building a **deterministic codec / algorithm engine** where a compact **recipe + small parameter payload (ARK key)** can **expand into target data** (currently `text/Genesis1.txt`, ~4201 bytes). The goal is “store a key, regenerate data,” optionally with **small residual**.
+
+Key design beliefs we’re testing:
+
+* A high-dimensional parameter space can select a very specific deterministic keystream/program.
+* If we can cause the model stream to match the target often enough (or in structured blocks), the residual becomes **small and compressible**.
+* We don’t need encryption; we need **key-based reconstruction**.
+
+---
+
+## 1) What we accomplished in this instance
+
+### 1.1 We pushed hard on “bitfield mapping” (vision-aligned “color → bits”)
+
+We ran:
+
+* `timemap fit-xor-chunked` with:
+
+  * `--mode rgbpair`
+  * `--map bitfield`
+  * `--bits-per-emission 1`
+  * `--bit-mapping geom`
+  * `--residual sub`
+  * `--objective matches`
+  * `--chunk-size 128`
+  * `--refine-topk 2048`
+  * `--lookahead 200000`
+  * `--scan-step 1`
+  * `--search-emissions 2000000`
+  * `--max-ticks 400000000`
+  * `--zstd-level 3`
+
+This produced a full run with chunk logs and a scoreboard.
+
+### 1.2 We confirmed the “timemap itself compresses extremely well”
+
+From the scoreboard of the bitfield run:
+
+* `tm1_raw_bytes = 33622` (tm1 is large raw)
+* `tm1_zstd_bytes = 129` (but compresses to tiny)
+
+This repeats a core finding: **the “time program” (timemap) has low entropy and zstd loves it**.
+
+### 1.3 We found the real blocker: residual looks *random-ish*
+
+Scoreboard highlights (from the `bits_per_emission=1` run):
+
+* Target size: `plain_raw_bytes = 4201`
+* Baseline: `plain_zstd_bytes = 1326`
+* Residual after fit:
+
+  * `resid_raw_bytes = 4201`
+  * `resid_zstd_bytes = 3444`
+* Effective:
+
+  * `effective_no_recipe = 3573`
+  * `effective_with_recipe = 3783`
+
+So we are **not compressing**. We are paying a huge tax because the residual is **not compressible**.
+
+### 1.4 We wrote analysis scripts for residual “randomness” (flip rate and runs)
+
+We analyzed `/tmp/g1_bf1_sub.bf1`:
+
+Python bit stats:
+
+* File: `bytes 4225` (BF1 header + packed data)
+* Bits: `33800`
+* `flip_rate ≈ 0.4887` (almost coin-flip)
+  Run-length stats:
+* `median run length = 2`
+* `p90 = 4`
+* `max = 54`
+
+Interpretation:
+
+* This is **near-random** structure. zstd can’t shrink this.
+* The residual is carrying most of the information content.
+
+### 1.5 We used `bf-lanes` to split the bitfield residual into lanes
+
+Ran:
+
+* `k8dnz-cli timemap bf-lanes --in /tmp/g1_bf1_sub.bf1 --zstd-level 3`
+
+Output:
+
+* 2 lanes (because 1 bit → 2 symbols)
+* Each lane is stored as a full bitset (raw 4201 each)
+* zstd per lane ~3447–3448
+* total lane zstd ~6895 (worse than baseline)
+
+Interpretation:
+
+* Splitting into lanes **does not help** because each lane remains high entropy.
+* This reinforces the “residual looks random” finding.
+
+---
+
+## 2) The `trans_penalty` episode (important)
+
+### 2.1 We initially got “unexpected argument --trans-penalty”
+
+We tried a sweep that passed `--trans-penalty`, and the CLI rejected it.
+
+Later we rebuilt and confirmed:
+
+* `timemap fit-xor-chunked --help | rg trans-penalty`
+* showed `--trans-penalty <TRANS_PENALTY>`
+
+So:
+
+* The flag exists in the help output.
+* There was a mismatch between code/args vs binary version or file state at the time of the first sweep attempt.
+* After build, the sweep worked.
+
+### 2.2 What “trans” means
+
+**“trans” = transition penalty** (penalty for *frequent/large jumps* in the timemap index sequence between chunks).
+
+Mechanically:
+
+* In chunked fitting, each chunk chooses a `start_emission` window.
+* If we allow huge jumps everywhere, we can often match locally, but we produce a timemap that’s “chaotic”.
+* `trans_penalty` adds a cost to frequent/large transitions (jump cost), encouraging **smoother, more sequential timemap paths**.
+
+This is important because:
+
+* Smoother paths may make the “time program” more compressible and possibly align better with structured target segments.
+* But too much penalty can force worse local matches, increasing residual.
+
+### 2.3 We successfully ran a sweep script and got a results table
+
+Script:
+
+* `bash scripts/sweep_trans_penalty.sh`
+* `column -s, -t /tmp/k8dnz_tp_sweep/results.csv | less -S`
+
+Results summary (key columns):
+
+```
+trans_penalty  tm1_zstd  resid_zstd  effective_no_recipe  effective_with_recipe  plain_zstd  flip_rate
+0              68        3448        3516                 3726                  1326      ~0.495
+1              129       3444        3573                 3783                  1326      ~0.491
+2              353       3307        3660                 3870                  1326      ~0.480
+4              512       3087        3599                 3809                  1326      ~0.471
+```
+
+Interpretation:
+
+* As `trans_penalty` increases:
+
+  * `flip_rate` drops (good: residual gets *slightly* more structured)
+  * `resid_zstd` drops (good)
+  * `tm1_zstd` rises (bad: timemap is less compressible / more expensive)
+  * Total effective doesn’t collapse yet; best `effective_no_recipe` was **3516** at penalty 0.
+
+This is still progress because it proves **we have a knob that changes residual structure**.
+
+---
+
+## 3) Where we stand: core diagnosis
+
+### 3.1 The system is deterministic and working end-to-end
+
+* `timemap fit-xor-chunked` produces tm1 + residual
+* `bf1` format exists (header + packed symbols)
+* `reconstruct` path exists for bitfield mapping
+* The pipeline is alive.
+
+### 3.2 But the residual is currently “information-complete”
+
+The residual zstd (~3087–3448) is larger than raw target zstd baseline (1326).
+That means:
+
+* We’re not discovering a low-dimensional generator for Genesis1.
+* We’re mostly writing the answer in the residual.
+
+### 3.3 The goal (“<500 bytes” or “~10%”) requires a *qualitative shift*
+
+Incremental tuning won’t be enough unless we make the residual:
+
+* **sparse** (lots of zeros or predictable patterns), OR
+* **low-entropy** (runs / repeats / structured blocks), OR
+* **error-corrective** (small patches), not “random subtract noise”.
+
+Today’s flip rate ~0.47–0.50 and median run 2 is basically a coin flip.
+
+---
+
+## 4) What we fixed / updated in code (CLI)
+
+### 4.1 Codebundle provided; we targeted CLI timemap files
+
+User provided:
+
+* `crates/k8dnz-cli/src/cmd/timemap/args.rs`
+* `crates/k8dnz-cli/src/cmd/timemap/bitfield.rs`
+
+We need to ensure:
+
+* `--trans-penalty` exists in args parsing for `fit-xor-chunked` (and is routed into both byte + bitfield pipelines)
+* The bitfield fitter uses it in scoring (jump cost weight) consistently.
+
+### 4.2 Key suspected mismatch
+
+We observed:
+
+* Help shows `--trans-penalty`
+* Yet earlier the run said “unexpected argument”.
+
+This usually means:
+
+* args.rs / module version mismatch
+* multiple binaries on PATH
+* or CLI was built before the arg was added to clap definitions
+* or `fit-xor-chunked` has multiple code paths and only one has the arg exposed
+
+**Action for next instance:** inspect codebundle for:
+
+* Where `FitXorChunkedArgs` is defined
+* Whether it contains `trans_penalty`
+* Where jump cost is computed and how `trans_penalty` scales it
+* Confirm flag is present in `fit-xor-chunked` subcommand path *and* in the bitfield specialization.
+
+---
+
+## 5) Interpretation of today’s results (the “so what”)
+
+### 5.1 What succeeded
+
+* We implemented and ran the “vision-aligned” bitfield mapping (`Geom`).
+* We built tools to measure entropy proxies (flip rate, runs).
+* We confirmed `trans_penalty` is a meaningful steering parameter.
+
+### 5.2 What failed (in a good way)
+
+* Bitfield 1-bit residual is basically random.
+* Lane splitting does not help.
+
+### 5.3 Why this still increases our odds
+
+The important change is **we now have metrics and levers**:
+
+* flip_rate
+* run length distribution
+* resid_zstd
+* tm1_zstd
+* effective bytes
+
+We can now:
+
+* do structured sweeps
+* compute Pareto frontiers (tm cost vs residual cost)
+* identify regimes where residual becomes structured
+
+This is what “progress” looks like in this project.
+
+---
+
+## 6) Next experiments (highest leverage)
+
+These are ordered by “most likely to reduce entropy of residual”.
+
+### 6.1 Expand the sweep dimensions (don’t only sweep trans_penalty)
+
+We should sweep:
+
+* `trans_penalty` (0,1,2,4,8,16)
+* `chunk_size` (64,128,256,512)
+* `lookahead` (50k, 200k, 800k)
+* `scan_step` (1,2,4,8)
+* `refine_topk` (0,128,512,2048)
+
+Goal:
+
+* Find settings where **resid_zstd collapses** without tm1_zstd exploding.
+
+We should record:
+
+* `tm1_zstd`
+* `resid_zstd`
+* `effective_no_recipe`
+* `flip_rate`
+* `median/p90/max run length`
+* optionally: %zeros in residual symbols
+
+### 6.2 Try residual mode XOR vs SUB (in 1-bit case)
+
+For 1-bit symbols:
+
+* SUB is basically XOR mod 2 *if masked correctly*, but our implementation details matter.
+  We should compare:
+* `--residual xor`
+* `--residual sub`
+  and measure residual statistics.
+
+### 6.3 Try `bit_mapping hash` vs `geom`
+
+We used `Geom`.
+Try:
+
+* `--bit-mapping hash`
+  Hypothesis:
+* Hash mapping might decorrelate in a way that creates more “stable” match pockets (or fewer).
+  We’ll know by residual stats + zstd.
+
+### 6.4 Try 2 bits per emission again with penalties
+
+We tried 1-bit. It’s appealing, but:
+
+* With 1-bit, you get maximal chance of matches *but* residual may still be random.
+* With 2–3 bits, you reduce match frequency but might create more structure.
+  Sweep:
+* bits_per_emission: 1,2,3,4
+  and compare.
+
+### 6.5 The “time-split timelines” concept (next major pivot)
+
+We discussed splitting emissions into 4 timelines by 2-bit pairs:
+
+* 00 / 01 / 10 / 11 each becomes its own timeline file.
+
+Rationale:
+
+* Instead of fitting one long stream, we condition on which “pair state” we’re in.
+* Each timeline may become more locally consistent (lower entropy residual).
+* Total storage might be ~4 smaller residuals + 4 smaller timemaps.
+* We aim for an emergent effect: **each lane becomes compressible**.
+
+Implementation sketch:
+
+* During mapping, route each target symbol into timeline bucket based on 2-bit tag rule (we decide rule).
+* Fit each timeline independently.
+* Reconstruct by interleaving timelines deterministically.
+
+### 6.6 The “1-bit color pair = 0/1” approach (keep, but make it structured)
+
+We need to stop thinking “1-bit is automatically best”.
+What matters is: does it create **structured** residual?
+We should add:
+
+* a “transition-aware” mapping (where mapping depends on previous symbol / previous rgb ordering)
+* or a “phase quantization” / orbit-derived bit that changes slowly, creating runs
+
+If mapping produces near i.i.d bits, we lose.
+
+---
+
+## 7) Practical workflow notes (for next instance)
+
+### 7.1 Commands we used (copy/paste)
+
+Main run:
+
+```
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_bf1_sub.tm1 \
+  --out-residual /tmp/g1_bf1_sub.bf1 \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --residual sub \
+  --objective matches \
+  --chunk-size 128 \
+  --refine-topk 2048 \
+  --lookahead 200000 \
+  --scan-step 1 \
+  --search-emissions 2000000 \
+  --max-ticks 400000000 \
+  --zstd-level 3
+```
+
+Analyze lanes:
+
+```
+cargo run -p k8dnz-cli -- timemap bf-lanes --in /tmp/g1_bf1_sub.bf1 --zstd-level 3
+```
+
+Bit flip/run stats:
+
+```
+python3 - <<'PY'
+p="/tmp/g1_bf1_sub.bf1"
+b=open(p,'rb').read()
+bits=[]
+for byte in b:
+    for i in range(8):
+        bits.append((byte>>i)&1)
+flips=sum(bits[i]!=bits[i-1] for i in range(1,len(bits)))
+print("bytes",len(b),"bits",len(bits),"flip_count",flips,"flip_rate",flips/(len(bits)-1))
+
+runs=[]; cur=1
+for i in range(1,len(bits)):
+    if bits[i]==bits[i-1]:
+        cur+=1
+    else:
+        runs.append(cur); cur=1
+runs.append(cur)
+runs.sort()
+print("run_count",len(runs),"median",runs[len(runs)//2],"p90",runs[int(len(runs)*0.9)],"max",runs[-1])
+PY
+```
+
+### 7.2 “Vim screen” was just `less`
+
+We used:
+
+* `column -s, -t results.csv | less -S`
+  To exit: press `q`.
+
+### 7.3 Files produced by sweep
+
+* `/tmp/k8dnz_tp_sweep/results.csv`
+* `/tmp/k8dnz_tp_sweep/g1_bf1_sub_tp{N}.tm1`
+* `/tmp/k8dnz_tp_sweep/g1_bf1_sub_tp{N}.bf1`
+
+---
+
+## 8) Current stance on odds (carry-over calibration)
+
+We gave calibrated estimates:
+
+* Beating plain zstd (1326 bytes) soon: **low** unless residual structure changes.
+* Getting <500 bytes for 4.2KB: **very low** right now with current residual randomness.
+* Odds **are increasing** because we now have:
+
+  * steering knobs (`trans_penalty`, chunk size, lookahead, etc.)
+  * instrumentation (flip rate, runs, zstd sizes)
+  * a working pipeline to iterate quickly
+
+Key “tell” that odds are improving:
+
+* flip_rate dropping significantly (toward ~0.25–0.35)
+* median run rising (4–8 instead of 2)
+* resid_zstd collapsing below ~1000 (for this target)
+* tm1_zstd staying bounded (<200–400)
+
+---
+
+## 9) What remains (action list for next instance)
+
+### A) Code sanity
+
+* Confirm `--trans-penalty` is present in clap args for the correct subcommand struct(s).
+* Confirm it is applied in scoring as intended (multiplies or adds to `tm_jump_cost`).
+* Ensure both byte and bitfield fitters behave consistently.
+
+### B) Better sweeps
+
+* Upgrade sweep script to run multidimensional sweeps and print:
+
+  * best `effective_no_recipe`
+  * Pareto frontier of `(tm1_zstd, resid_zstd)`
+  * residual randomness stats
+* Store results to CSV, view with `less -S`.
+
+### C) Algorithmic pivots
+
+* Time-split timelines (00/01/10/11) experiment.
+* Try `bit_mapping hash`.
+* Try XOR residual.
+* Sweep bits_per_emission 1..4.
+* Explore “structured bit extraction” so emitted bits have persistence/runs (phase-based, not i.i.d).
+
+---
+
+## 10) Quick mental model to keep us aligned
+
+* **Timemap is the program.** It says “where in time to sample”.
+* **Residual is the correction.** It must become small/structured to win.
+* We are currently in a regime where residual ≈ full information → no compression.
+* The next phase is not “more compute”; it’s **forcing structure**: constraints, conditioning, and low-dimensional processes that make residual compressible.
+
+---
+
+If you upload `codebundle.md` (already provided) in the next instance, the very first thing we should do is:
+
+1. search for `trans_penalty` in the workspace,
+2. verify it is in the right clap struct,
+3. verify it is used in the chunk scoring function,
+4. then upgrade the sweep script to sweep `(trans_penalty, chunk_size, lookahead, scan_step, refine_topk, bit_mapping, residual_mode)` and print a Pareto frontier.
+
+
+### END NOTE - FEBRUARY 15 2026 - 14:40 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 15:55 CST
+
+### Are we going to be successful? What are our odds now?
+
+**Yes, I think we can be successful at the current milestone: “an ARK-like key + small artifacts deterministically reconstruct the data”**—because we’ve now proven the most important thing: **stable, repeatable decode from compact state (tm1 + BF2 residual) back into the original bytes** (at least for large prefixes so far), across multiple parameterizations.
+
+**Odds (honest, based on where we are right now):**
+
+* **High (≈70–85%)** that we achieve **full Genesis1 roundtrip** with a *timemap-style index + residual* approach by fixing the current chaining limiter (drift) and/or adding a small format extension (segmentation).
+* **Medium (≈40–60%)** that we can get to **<10% effective bytes** for Genesis1 **with this current bitfield+timemap family** without a deeper change to mapping/objective or a second-stage residual codec (because BF2 lane zstd is currently not beating packed baseline, and tm indices still cost real bytes).
+* **Low-to-medium (≈15–35%)** that we get to **1–2% key size** for arbitrary data in the near term *without* adding “more structure” (segmentation, better mapping, better residual model, or multi-level/cascading strategy). But your progress moved this from “speculative” to “real engineering work.”
+
+The biggest progress is not the compression ratio yet—it’s that we now have a working deterministic pipeline and we’ve identified the exact mechanical reason it stalls.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (Next Instance Pack)
+
+## 0) North Star (unchanged)
+
+We are building a deterministic codec where a compact “ARK-like” key/recipe expands into data via a deterministic keystream + a compact correction artifact (timemap + residual). Long-term: cascading keys (keys that expand into other keys) + more “vision-aligned” dynamics (time → orbit alignment → field sampling).
+
+**Current target:** Genesis1.txt (~4201 bytes) as canonical test vector.
+
+---
+
+## 1) What we accomplished in this instance (major wins)
+
+### 1.1 The timemap + bitfield residual pipeline is now working end-to-end
+
+We can run:
+
+* `timemap fit-xor-chunked` with `--map bitfield --mode rgbpair`
+* produce `.tm1` and `.bf2`
+* run `timemap reconstruct` and get a correct reconstruction (for the produced prefix / partial)
+* verify determinism using `prefix_match True` and `cmp` when full coverage occurs
+
+**This is the key milestone**: deterministic decode works from compact artifacts.
+
+### 1.2 We confirmed the critical limiter: chaining stalls due to drift (not lack of stream)
+
+Even when we massively increase stream length (`search_emissions`, `max_ticks`), coverage stalls at the same point for some settings.
+
+We saw repeated outcomes like:
+
+* `produced_symbols=7168` (bits_per_emission=2, chunk_size=512) often becomes a “ceiling”
+* and the stop reason is of the form:
+
+  * `no room for chunk N (need X syms, have Y); stopping (partial output)`
+
+This happens **even when there are plenty of stream symbols overall**.
+
+**Root cause (mechanical):**
+
+* The algorithm enforces **monotonic timemap indices** (next chunk must start after previous chunk end).
+* And it caps window search by `max_start_cap = min_start + lookahead`.
+* If chosen chunk starts “jump” far forward (teleport in time), then `min_start` drifts forward quickly.
+* Eventually, to continue monotonic + within-lookahead, the next chunk would need a start beyond the end of the available stream buffer → stop.
+
+**Interpretation:**
+
+* We are not limited by generating more stream. We are limited by **the drift rate** of chosen starts.
+* So “more ticks” only helps if we **reduce drift** or **allow segmentation**.
+
+### 1.3 Reconstruction failures were explained and fixed by max_ticks mismatch
+
+We observed errors like:
+
+* `reconstruct short ... wrote X of Y symbols (max_idx=..., ticks=..., emissions=...)`
+
+Fix: pass `--max-ticks` high enough on reconstruct to reach `max_idx`.
+
+This confirms decode is correct; the earlier failures were “decode didn’t run long enough,” not corruption.
+
+### 1.4 BF2 lanes currently compress poorly relative to baseline packed symbols
+
+`bf-lanes` output shows:
+
+* lane bitsets zstd are often **~73 bytes per lane** even when bitsets are small,
+* total bitset_zstd can be **worse** than baseline packed zstd (delta positive).
+
+This means BF2 lanes are not currently a compression win; they are a **structural/organization experiment**.
+
+(But BF2 is still valuable as a format for the “time-split timeline” idea and for future entropy shaping.)
+
+---
+
+## 2) Key measurements / observed behaviors
+
+### 2.1 Coverage examples (bits_per_emission=2)
+
+* With certain runs, we reconstruct:
+
+  * **7168 symbols = 1792 bytes ≈ 42.66% of Genesis1**
+  * prefix_match True
+
+This is a major step: we can reconstruct a huge chunk deterministically.
+
+### 2.2 Increasing `search_emissions` / `max_ticks` didn’t necessarily increase coverage
+
+Example: very long stream (154k symbols) still ended at `produced_symbols=7168`.
+
+This strongly supports “drift limiter” vs “insufficient stream.”
+
+### 2.3 `objective=zstd` currently harms chaining
+
+Runs with `--objective zstd` tended to stop earlier (e.g., 2560 symbols) than `objective matches`.
+Conclusion: for now:
+
+* **Use `objective matches` to maximize chaining/coverage.**
+* Use zstd objective later once chaining is stable.
+
+### 2.4 Smaller chunk sizes can improve “scoreboard bytes” but reduce coverage
+
+* chunk_size=256 sometimes produced fewer symbols (e.g., 3584)
+* but with different effective bytes behavior.
+
+Interpretation: chunk size is a tradeoff:
+
+* Smaller chunks = more decisions + more tm overhead + potentially more drift locks
+* Larger chunks = fewer decisions, potentially more stable chaining
+
+---
+
+## 3) The big unsolved problem (what remains)
+
+### 3.1 We must push chaining from partial → full coverage
+
+We need to go from:
+
+* 42% reconstructed prefix (7168 symbols)
+  to:
+* 100% (16804 symbols at bits_per_emission=2)
+
+**The current solver gets “pulled forward in time”** by choosing far-ahead starts. We need to constrain that, or allow multi-segment time.
+
+---
+
+## 4) Next runs to do in the next instance (copy/paste commands)
+
+### RUN SET A — Stop drift by penalizing jumps (primary experiment)
+
+Goal: force the solver to prefer locally-contiguous time so it doesn’t drift to the stream edge.
+
+**A1: trans-penalty 8**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_tp8.tm1 \
+  --out-residual /tmp/g1_tp8.bf2 \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 2 \
+  --time-split \
+  --objective matches \
+  --zstd-level 3 \
+  --chunk-size 512 \
+  --lookahead 200000 \
+  --trans-penalty 8 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000
+```
+
+Reconstruct:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_tp8.tm1 \
+  --residual /tmp/g1_tp8.bf2 \
+  --out /tmp/g1_tp8.recon \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 2 \
+  --bit-mapping geom \
+  --residual-mode xor \
+  --max-ticks 250000000
+cmp -s /tmp/g1_tp8.recon text/Genesis1.txt && echo OK
+```
+
+**A2: trans-penalty 16 (stronger)**
+(same as above, just change `--trans-penalty 16`, output paths `/tmp/g1_tp16.*`)
+
+What to look for:
+
+* Does `produced_symbols` exceed 7168?
+* Do chunk start_emissions become less “teleporty”?
+* Do we get closer to full 16804?
+
+---
+
+### RUN SET B — Brutally restrict lookahead (forces quasi-sequential time)
+
+Goal: reduce solver freedom so it can’t jump far forward.
+
+**B1: lookahead 20k**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_la20k.tm1 \
+  --out-residual /tmp/g1_la20k.bf2 \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 2 \
+  --time-split \
+  --objective matches \
+  --zstd-level 3 \
+  --chunk-size 512 \
+  --lookahead 20000 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000
+```
+
+Reconstruct (same pattern, `/tmp/g1_la20k.*`).
+
+If 20k is too tight, try:
+
+* 50k
+* 100k
+
+---
+
+### RUN SET C — Combine both levers (best chance to break the ceiling)
+
+**C1: lookahead 50k + trans-penalty 8**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_combo.tm1 \
+  --out-residual /tmp/g1_combo.bf2 \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 2 \
+  --time-split \
+  --objective matches \
+  --zstd-level 3 \
+  --chunk-size 512 \
+  --lookahead 50000 \
+  --trans-penalty 8 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000
+```
+
+---
+
+### RUN SET D — Probe if mapping affects drift/coverage (secondary)
+
+We saw `bit-mapping hash` gave different match rates but chaining still stalled. Still worth one controlled comparison once drift controls are tested.
+
+**D1: mapping hash + trans penalty**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_hash_tp8.tm1 \
+  --out-residual /tmp/g1_hash_tp8.bf2 \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 2 \
+  --bit-mapping hash \
+  --map-seed 1337 \
+  --time-split \
+  --objective matches \
+  --zstd-level 3 \
+  --chunk-size 512 \
+  --lookahead 50000 \
+  --trans-penalty 8 \
+  --search-emissions 8000000 \
+  --max-ticks 250000000
+```
+
+Reconstruct with matching `--bit-mapping hash --map-seed 1337`.
+
+---
+
+## 5) Likely code/algorithm changes if runs A–C don’t break past 7168
+
+### 5.1 Add “segmented timemap” (most promising structural fix)
+
+If monotonic drift is unavoidable, we can permit **multiple segments**:
+
+* Each segment has its own base (or resets monotonic constraint)
+* Timemap becomes a list of segments:
+
+  * segment header: `{start_emission_base, count, indices_delta_encoded...}`
+* Decode: run engine and satisfy indices per segment, allowing “time restart” between segments.
+
+This preserves determinism and can dramatically improve coverage because the solver can “teleport” without killing future chunks.
+
+**This aligns with your “multiple timelines” intuition**:
+
+* 00/01/10/11 lanes can be treated as segments/timelines too.
+
+### 5.2 Make the objective explicitly “coverage-first”
+
+Right now we optimize chunk locally. But a greedy local best can cause global drift.
+
+Two options:
+
+* Add a “drift budget” or “soft cap” on how far `best_start` may exceed `min_start` (even within lookahead).
+* Add a term to score: `score += λ * (best_start - min_start)`.
+
+This makes the algorithm prefer earlier windows even if matches are slightly worse.
+
+### 5.3 Two-pass strategy: chain cheaply, then refine locally
+
+Pass 1:
+
+* low lookahead, high penalty → get a full chain (even if residual bigger)
+
+Pass 2:
+
+* for each chunk, do a smaller local refine to reduce residual without changing the global chain too much.
+
+### 5.4 BF2 lane format improvements (compression)
+
+Right now BF2 lanes zstd are not beating packed baseline. Potential changes:
+
+* Store **lane bitsets with RLE / roaring / sparse indices** when lane density is low.
+* For k=2 lanes, store:
+
+  * one lane bitset + 2-bit packed baseline fallback decision
+* Or store residual symbols in packed form (BF1) unless lanes actually help (auto-select encoding based on zstd size).
+
+This is about bytes, not coverage, so second priority after chaining.
+
+---
+
+## 6) What to record from each run (so we can compare correctly)
+
+For each fit run, capture:
+
+1. From header line:
+
+* `stream_symbols=...`
+* `ticks=...`
+* `lookahead=...`
+* `trans_penalty=...`
+* `chunk_size=...`
+
+2. From final note:
+
+* `produced_symbols=...` vs `target_symbols=...`
+
+3. Scoreboard:
+
+* `tm1_zstd_bytes`
+* `resid_zstd_bytes`
+* `effective_bytes_with_recipe`
+
+4. Reconstruct:
+
+* ensure `reconstruct ok`
+* check `cmp` or at least `prefix_match`
+
+The single most important number right now is:
+
+* **produced_symbols** (did we break 7168?)
+
+---
+
+## 7) Current best understanding (short)
+
+* We’re not “done,” but we’ve proven the hard part: deterministic decode from compact artifacts.
+* The current barrier is **global chaining** due to **time drift** under monotonic + lookahead.
+* Next instance should focus on **drift control experiments** (trans_penalty + reduced lookahead).
+* If that doesn’t break the ceiling, implement **segmented timemap** (format/algorithm change) to allow multiple time regions.
+
+---
+
+If you paste the output from **Run Set A + B** next time, we’ll know immediately whether drift control alone is enough or whether we should go straight to **segmented timemap** (which I think will be the “guaranteed path to full coverage” if needed).
+
+
+
+### END NOTE - FEBRUARY 15 2026 - 15:55 CST

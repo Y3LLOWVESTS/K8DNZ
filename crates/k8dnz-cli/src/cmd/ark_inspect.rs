@@ -83,14 +83,21 @@ pub fn run(args: ArkInspectArgs) -> anyhow::Result<()> {
             (plain_len as f64) / (effective as f64)
         };
 
-        let ratio_payload = if z == 0 { 0.0 } else { (plain_len as f64) / (z as f64) };
+        let ratio_payload = if z == 0 {
+            0.0
+        } else {
+            (plain_len as f64) / (z as f64)
+        };
 
         eprintln!("--- zstd scoreboard ---");
         eprintln!("zstd_level            = {}", args.zstd_level);
         eprintln!("recipe_bytes          = {}", recipe_len);
         eprintln!("payload_bytes         = {}", plain_len);
         eprintln!("payload_zstd_bytes    = {}", z);
-        eprintln!("effective_bytes       = {} (recipe + payload_zstd)", effective);
+        eprintln!(
+            "effective_bytes       = {} (recipe + payload_zstd)",
+            effective
+        );
         eprintln!("ratio_payload/zstd    = {:.4}x", ratio_payload);
         eprintln!("ratio_plain/effective = {:.4}x", ratio_eff);
     }

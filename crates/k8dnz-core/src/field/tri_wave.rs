@@ -1,6 +1,6 @@
+use crate::field::params::FieldModel;
 use crate::fixed::{turn32::Turn32, unit32::Unit32};
 use crate::recipe::recipe::FieldWave;
-use crate::field::params::FieldModel;
 
 /// Triangle wave over u32 phase space -> i32 in [-32768, 32767]
 #[inline]

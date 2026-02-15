@@ -146,7 +146,11 @@ fn keystream_impl(
     want_raw: bool,
 ) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
     let mut mixed = Vec::with_capacity(n);
-    let mut raw: Option<Vec<u8>> = if want_raw { Some(Vec::with_capacity(n)) } else { None };
+    let mut raw: Option<Vec<u8>> = if want_raw {
+        Some(Vec::with_capacity(n))
+    } else {
+        None
+    };
 
     // SplitMix64 state (only used if enabled)
     let mut sm64_state: u64 = engine.recipe.seed ^ 0x6A09_E667_F3BC_C909;

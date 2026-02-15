@@ -1,5 +1,5 @@
-use crate::fixed::turn32::Turn32;
 use crate::dynamics::state::FreeOrbitState;
+use crate::fixed::turn32::Turn32;
 
 pub fn reset_from_lockstep(phi_l: Turn32, delta: Turn32) -> FreeOrbitState {
     FreeOrbitState {

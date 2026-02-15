@@ -67,7 +67,6 @@ pub struct TuneArgs {
     pub report: Option<String>,
 
     // --- Optional overrides applied BEFORE tuning (explicit = deterministic) ---
-
     /// Override quant min (i64)
     #[arg(long)]
     pub qmin: Option<i64>,
@@ -89,7 +88,6 @@ pub struct TuneArgs {
     pub clamp_max: Option<i64>,
 
     // --- Field measurement (optional) ---
-
     /// Measure field min/max via a sampling run and print observed ranges.
     /// This does NOT change the recipe unless you also pass --set-clamp-from-field.
     #[arg(long, default_value_t = false)]
@@ -109,7 +107,6 @@ pub struct TuneArgs {
     pub set_clamp_from_field: bool,
 
     // --- Shift search / refinement ---
-
     /// Number of candidate shifts to evaluate per pass (forced odd; center is base shift).
     #[arg(long, default_value_t = 9)]
     pub candidates: usize,
@@ -141,7 +138,6 @@ pub struct TuneArgs {
     pub step_div: Option<String>,
 
     // --- Optional validation run for the final best candidate ---
-
     /// Optional validation run for the best candidate after all passes
     /// (more emissions, bigger max ticks).
     #[arg(long, default_value_t = false)]
@@ -156,7 +152,6 @@ pub struct TuneArgs {
     pub validate_max_ticks: u64,
 
     // --- Fit + residual (optional) ---
-
     /// If set, tuner will load these bytes and (optionally) rank shifts by residual compressibility.
     #[arg(long)]
     pub fit_in: Option<String>,
@@ -199,7 +194,6 @@ pub struct TuneArgs {
     pub dump_raw_model: Option<String>,
 
     // --- NEW: per-pass dumps (optional) ---
-
     /// Dump residual for the best candidate of EACH pass.
     /// Pattern supports "%d" for 1-based pass index, e.g. "/tmp/res_pass_%d.bin".
     /// Requires --fit-in.
@@ -274,7 +268,8 @@ fn clamp_shift_to_width(shift: i64, width: i64) -> i64 {
 
 /// Health check: returns true if the model keystream looks dead / near-dead.
 fn keystream_is_dead(model: &ByteSummary) -> bool {
-    model.distinct_bytes <= KEYSTREAM_DEAD_DISTINCT_MAX || model.entropy_byte <= KEYSTREAM_DEAD_ENTROPY_MAX
+    model.distinct_bytes <= KEYSTREAM_DEAD_DISTINCT_MAX
+        || model.entropy_byte <= KEYSTREAM_DEAD_ENTROPY_MAX
 }
 
 pub fn run(args: TuneArgs) -> anyhow::Result<()> {
@@ -377,18 +372,31 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
     report_lines.push(format!("keystream_mix = {:?}", recipe.keystream_mix));
     report_lines.push(format!("fit_in = {:?}", args.fit_in));
     report_lines.push(format!("fit_by_residual = {}", args.fit_by_residual));
-    report_lines.push(format!("rank_by_effective_zstd = {}", args.rank_by_effective_zstd));
+    report_lines.push(format!(
+        "rank_by_effective_zstd = {}",
+        args.rank_by_effective_zstd
+    ));
     report_lines.push(format!("zstd_level = {}", args.zstd_level));
-    report_lines.push(format!("dump_residual_pass = {:?}", args.dump_residual_pass));
+    report_lines.push(format!(
+        "dump_residual_pass = {:?}",
+        args.dump_residual_pass
+    ));
     report_lines.push(format!("dump_model_pass = {:?}", args.dump_model_pass));
-    report_lines.push(format!("dump_raw_model_pass = {:?}", args.dump_raw_model_pass));
+    report_lines.push(format!(
+        "dump_raw_model_pass = {:?}",
+        args.dump_raw_model_pass
+    ));
     report_lines.push("".to_string());
 
     eprintln!("--- tune ---");
     eprintln!("base_recipe_id = {}", base_rid);
     eprintln!("keystream_mix = {:?}", recipe.keystream_mix);
     if let Some(p) = args.fit_in.as_deref() {
-        eprintln!("fit_in = {} ({} bytes)", p, fit_bytes.as_ref().unwrap().len());
+        eprintln!(
+            "fit_in = {} ({} bytes)",
+            p,
+            fit_bytes.as_ref().unwrap().len()
+        );
     }
 
     if args.rank_by_effective_zstd {
@@ -397,7 +405,9 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
             args.zstd_level
         );
     } else if args.fit_by_residual {
-        eprintln!("ranking mode = residual proxy metrics (top16_mass/zero_rate/entropy/distinct/peak)");
+        eprintln!(
+            "ranking mode = residual proxy metrics (top16_mass/zero_rate/entropy/distinct/peak)"
+        );
     } else {
         eprintln!("ranking mode = token metrics (entropy/distinct/peak_nibble)");
     }
@@ -504,7 +514,9 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
     report_lines.push("".to_string());
 
     // Per-pass report.
-    for (pass_idx, (div_opt, rows_token_opt, rows_resid_opt)) in per_pass_rankings.iter().enumerate() {
+    for (pass_idx, (div_opt, rows_token_opt, rows_resid_opt)) in
+        per_pass_rankings.iter().enumerate()
+    {
         report_lines.push(format!("--- pass {} ---", pass_idx + 1));
         if let Some(div) = div_opt {
             report_lines.push(format!("step_div = {}", div));
@@ -530,7 +542,10 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
 
         if let Some(rows) = rows_resid_opt.as_ref() {
             if args.rank_by_effective_zstd {
-                report_lines.push(format!("ranking = effective_zstd (zstd_level={})", args.zstd_level));
+                report_lines.push(format!(
+                    "ranking = effective_zstd (zstd_level={})",
+                    args.zstd_level
+                ));
             } else {
                 report_lines.push("ranking = residual_metrics".to_string());
             }
@@ -588,8 +603,9 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
 
     // Optional: dump residual/model even without writing ark (requires fit_in)
     if let Some(plain) = fit_bytes.as_deref() {
-        let want_any_dump =
-            args.dump_residual.is_some() || args.dump_model.is_some() || args.dump_raw_model.is_some();
+        let want_any_dump = args.dump_residual.is_some()
+            || args.dump_model.is_some()
+            || args.dump_raw_model.is_some();
         if want_any_dump && args.out_ark.is_none() {
             let mut r = best_recipe.clone();
             r.payload_kind = PayloadKind::ResidualXor;
@@ -599,7 +615,10 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
             let (model_used, raw_opt) = if want_raw {
                 ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.per_max_ticks)?
             } else {
-                (ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?, Vec::new())
+                (
+                    ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?,
+                    Vec::new(),
+                )
             };
 
             let mut residual = plain.to_vec();
@@ -637,7 +656,10 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
         let (model_used, raw_opt) = if want_raw {
             ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.per_max_ticks)?
         } else {
-            (ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?, Vec::new())
+            (
+                ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?,
+                Vec::new(),
+            )
         };
 
         // Final guard: refuse to write ark if model keystream is dead.
@@ -738,7 +760,9 @@ pub fn run(args: TuneArgs) -> anyhow::Result<()> {
 }
 
 fn zstd_compress_len(bytes: &[u8], level: i32) -> usize {
-    zstd::encode_all(bytes, level).map(|v| v.len()).unwrap_or(usize::MAX)
+    zstd::encode_all(bytes, level)
+        .map(|v| v.len())
+        .unwrap_or(usize::MAX)
 }
 
 fn expand_pass_pattern(pat: &str, pass_1based: usize) -> String {
@@ -772,7 +796,10 @@ fn maybe_dump_best_of_pass(
     let (model_used, raw_opt) = if want_raw {
         ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.per_max_ticks)?
     } else {
-        (ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?, Vec::new())
+        (
+            ark::keystream_bytes(&mut engine, plain.len(), args.per_max_ticks)?,
+            Vec::new(),
+        )
     };
 
     let mut residual = plain.to_vec();
@@ -890,7 +917,13 @@ fn tune_shift_multipass(
                 best_resid_m,
                 rows_token_opt,
                 rows_resid_opt,
-            ) = tune_shift_once(args, current_recipe.clone(), Some(div), Some(step), fit_plain)?;
+            ) = tune_shift_once(
+                args,
+                current_recipe.clone(),
+                Some(div),
+                Some(step),
+                fit_plain,
+            )?;
 
             per_pass_rows.push((Some(div), rows_token_opt, rows_resid_opt));
 
@@ -1256,7 +1289,14 @@ fn tune_shift_once(
         let mut best_recipe = base_recipe.clone();
         best_recipe.quant.shift = best_shift;
 
-        Ok((best_recipe, best_shift, None, Some(best_m), None, Some(rows)))
+        Ok((
+            best_recipe,
+            best_shift,
+            None,
+            Some(best_m),
+            None,
+            Some(rows),
+        ))
     } else {
         let mut rows: Vec<(i64, Metrics, String)> = Vec::with_capacity(n);
 
@@ -1328,7 +1368,14 @@ fn tune_shift_once(
         let mut best_recipe = base_recipe.clone();
         best_recipe.quant.shift = best_shift;
 
-        Ok((best_recipe, best_shift, Some(best_m), None, Some(rows), None))
+        Ok((
+            best_recipe,
+            best_shift,
+            Some(best_m),
+            None,
+            Some(rows),
+            None,
+        ))
     }
 }
 
@@ -1399,9 +1446,21 @@ fn byte_summary(bytes: &[u8]) -> ByteSummary {
         distinct_bytes: distinct,
         peak,
         entropy_byte: entropy,
-        zero_rate: if total_f == 0.0 { 0.0 } else { (zeros as f64) / total_f },
-        printable_rate: if total_f == 0.0 { 0.0 } else { (printable as f64) / total_f },
-        top16_mass: if total_f == 0.0 { 0.0 } else { (top16_sum as f64) / total_f },
+        zero_rate: if total_f == 0.0 {
+            0.0
+        } else {
+            (zeros as f64) / total_f
+        },
+        printable_rate: if total_f == 0.0 {
+            0.0
+        } else {
+            (printable as f64) / total_f
+        },
+        top16_mass: if total_f == 0.0 {
+            0.0
+        } else {
+            (top16_sum as f64) / total_f
+        },
     }
 }
 

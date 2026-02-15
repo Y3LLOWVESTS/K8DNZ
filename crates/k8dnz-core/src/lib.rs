@@ -3,11 +3,11 @@
 pub mod error;
 pub mod validate;
 
-pub mod fixed;
 pub mod dynamics;
 pub mod field;
-pub mod signal;
+pub mod fixed;
 pub mod recipe;
+pub mod signal;
 pub mod stats;
 
 // NEW
@@ -15,4 +15,4 @@ pub mod orbexp;
 
 pub use crate::dynamics::engine::Engine;
 pub use crate::recipe::recipe::Recipe;
-pub use crate::signal::token::{PairToken, PackedByte};
+pub use crate::signal::token::{PackedByte, PairToken};

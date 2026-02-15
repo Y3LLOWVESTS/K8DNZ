@@ -1,8 +1,8 @@
 // crates/k8dnz-cli/src/cmd/encode.rs
 
 use clap::{Args, ValueEnum};
-use k8dnz_core::{Engine, Recipe};
 use k8dnz_core::recipe::recipe::{KeystreamMix, PayloadKind};
+use k8dnz_core::{Engine, Recipe};
 
 use crate::io::{ark, recipe_file};
 
@@ -138,7 +138,10 @@ pub fn run(args: EncodeArgs) -> anyhow::Result<()> {
         let (used, raw) = ark::keystream_bytes_with_raw(&mut engine, plain.len(), args.max_ticks)?;
         (used, Some(raw))
     } else {
-        (ark::keystream_bytes(&mut engine, plain.len(), args.max_ticks)?, None)
+        (
+            ark::keystream_bytes(&mut engine, plain.len(), args.max_ticks)?,
+            None,
+        )
     };
 
     if let Some(path) = args.dump_keystream.as_deref() {

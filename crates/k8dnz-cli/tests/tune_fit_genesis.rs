@@ -6,7 +6,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(rel)
 }
 
 fn tmp_path(name: &str, ext: &str) -> PathBuf {
@@ -118,7 +120,10 @@ fn tune_fit_is_deterministic_and_decodes_losslessly_for_genesis1() {
 
     let orig = fs::read(&input).expect("read input");
     let got = fs::read(&decoded).expect("read decoded");
-    assert_eq!(orig, got, "decoded bytes differ from original after tune fit");
+    assert_eq!(
+        orig, got,
+        "decoded bytes differ from original after tune fit"
+    );
 
     // NEW: Keystream health check
     // If the tuned recipe produces a dead stream (e.g., all 0x00), fail the test.

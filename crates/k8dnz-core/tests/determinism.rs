@@ -1,4 +1,4 @@
-use k8dnz_core::{Engine, recipe::defaults::default_recipe};
+use k8dnz_core::{recipe::defaults::default_recipe, Engine};
 
 #[test]
 fn deterministic_stream() {

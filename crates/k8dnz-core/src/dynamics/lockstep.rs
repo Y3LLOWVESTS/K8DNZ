@@ -1,9 +1,12 @@
-use crate::fixed::{turn32::Turn32, unit32::Unit32};
 use crate::dynamics::state::LockstepState;
+use crate::fixed::{turn32::Turn32, unit32::Unit32};
 use crate::recipe::recipe::LockstepParams;
 
 pub fn enter(phi_l: Turn32) -> LockstepState {
-    LockstepState { phi_l, t: Unit32::MIN }
+    LockstepState {
+        phi_l,
+        t: Unit32::MIN,
+    }
 }
 
 pub fn tick(s: LockstepState, p: &LockstepParams) -> LockstepState {

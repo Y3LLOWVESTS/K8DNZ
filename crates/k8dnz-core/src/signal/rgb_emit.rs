@@ -196,6 +196,9 @@ mod tests {
                 break;
             }
         }
-        assert!(any_diff, "expected Cone and DNA to differ for some emission_idx");
+        assert!(
+            any_diff,
+            "expected Cone and DNA to differ for some emission_idx"
+        );
     }
 }

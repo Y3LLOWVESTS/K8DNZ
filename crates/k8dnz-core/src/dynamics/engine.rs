@@ -3,14 +3,12 @@
 use crate::error::Result;
 use crate::validate::validate_recipe;
 
-use crate::fixed::unit32::Unit32;
 use crate::dynamics::{
-    free_orbit,
-    lockstep,
-    reset,
+    free_orbit, lockstep, reset,
     state::{FreeOrbitState, Mode},
 };
 use crate::field::{params::FieldModel, tri_wave};
+use crate::fixed::unit32::Unit32;
 use crate::recipe::recipe::{Alphabet, Recipe, ResetMode};
 use crate::signal::{quantize, sample::FieldSample, token::PairToken};
 use crate::stats::counters::Counters;
@@ -67,7 +65,10 @@ impl Engine {
         // Field clamp is now driven by recipe (v3+).
         let field = FieldModel::new(recipe.field.clone(), recipe.field_clamp.into());
 
-        let start = FreeOrbitState { phi_a: recipe.free.phi_a0, phi_c: recipe.free.phi_c0 };
+        let start = FreeOrbitState {
+            phi_a: recipe.free.phi_a0,
+            phi_c: recipe.free.phi_c0,
+        };
         Ok(Self {
             recipe,
             mode: Mode::FreeOrbit(start),
@@ -101,7 +102,10 @@ impl Engine {
                     self.stats.alignments += 1;
                     let phi_l = s_next.phi_a; // deterministic, simple
                     let lock = lockstep::enter(phi_l);
-                    self.mode = Mode::Lockstep { pre_lock: s_next, lock };
+                    self.mode = Mode::Lockstep {
+                        pre_lock: s_next,
+                        lock,
+                    };
                     None
                 } else {
                     self.mode = Mode::FreeOrbit(s_next);
@@ -148,7 +152,9 @@ impl Engine {
                     // Reset behavior
                     let next_free = match self.recipe.reset_mode {
                         ResetMode::HoldAandC => pre_lock, // MVP default
-                        ResetMode::FromLockstep => reset::reset_from_lockstep(lock_next.phi_l, self.recipe.lock.delta),
+                        ResetMode::FromLockstep => {
+                            reset::reset_from_lockstep(lock_next.phi_l, self.recipe.lock.delta)
+                        }
                     };
 
                     self.mode = Mode::FreeOrbit(next_free);
@@ -163,7 +169,10 @@ impl Engine {
                         },
                     ))
                 } else {
-                    self.mode = Mode::Lockstep { pre_lock, lock: lock_next };
+                    self.mode = Mode::Lockstep {
+                        pre_lock,
+                        lock: lock_next,
+                    };
                     None
                 }
             }
@@ -207,7 +216,10 @@ impl Engine {
                         self.stats.alignments += 1;
                         let phi_l = s_next.phi_a;
                         let lock = lockstep::enter(phi_l);
-                        self.mode = Mode::Lockstep { pre_lock: s_next, lock };
+                        self.mode = Mode::Lockstep {
+                            pre_lock: s_next,
+                            lock,
+                        };
                     } else {
                         self.mode = Mode::FreeOrbit(s_next);
                     }
@@ -251,12 +263,17 @@ impl Engine {
 
                         let next_free = match self.recipe.reset_mode {
                             ResetMode::HoldAandC => pre_lock,
-                            ResetMode::FromLockstep => reset::reset_from_lockstep(lock_next.phi_l, self.recipe.lock.delta),
+                            ResetMode::FromLockstep => {
+                                reset::reset_from_lockstep(lock_next.phi_l, self.recipe.lock.delta)
+                            }
                         };
 
                         self.mode = Mode::FreeOrbit(next_free);
                     } else {
-                        self.mode = Mode::Lockstep { pre_lock, lock: lock_next };
+                        self.mode = Mode::Lockstep {
+                            pre_lock,
+                            lock: lock_next,
+                        };
                     }
                 }
             }

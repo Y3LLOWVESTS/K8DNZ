@@ -110,12 +110,12 @@ pub struct RgbRecipe {
 impl Default for RgbRecipe {
     fn default() -> Self {
         Self {
-            backend: 1,  // CoupledAdder by default (DNA)
-            alt_mode: 1, // Parity alternation on by default
+            backend: 1,            // CoupledAdder by default (DNA)
+            alt_mode: 1,           // Parity alternation on by default
             base_a: [255, 0, 0],   // red
             base_c: [0, 255, 255], // cyan
-            g_step: 2,  // gentle ramp
-            p_scale: 2, // small modulation
+            g_step: 2,             // gentle ramp
+            p_scale: 2,            // small modulation
         }
     }
 }

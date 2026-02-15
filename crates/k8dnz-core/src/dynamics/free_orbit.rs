@@ -1,5 +1,5 @@
-use crate::fixed::{math::turn32_dist, turn32::Turn32};
 use crate::dynamics::state::FreeOrbitState;
+use crate::fixed::{math::turn32_dist, turn32::Turn32};
 use crate::recipe::recipe::FreeOrbitParams;
 
 /// Tick free orbit (A forward, C backward).

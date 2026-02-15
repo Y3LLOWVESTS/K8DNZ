@@ -54,15 +54,16 @@ fn tuned_k8r_loads_and_produces_tuned_stream() {
     let root = workspace_root_from_core_manifest();
     let path = find_tuned_recipe_path(&root);
 
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let bytes =
+        std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
     let recipe = k8dnz_core::recipe::format::decode(&bytes)
         .unwrap_or_else(|e| panic!("failed to decode {}: {e}", path.display()));
 
     // 2) Assert the tuning knob is present and correct
     assert_eq!(
-        recipe.quant.shift, 7_141_012,
+        recipe.quant.shift,
+        7_141_012,
         "unexpected quant.shift in {}",
         path.display()
     );

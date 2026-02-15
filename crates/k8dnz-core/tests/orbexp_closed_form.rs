@@ -34,7 +34,9 @@ fn orbexp_closed_form_matches_simulation_small() {
 
         // For validation, look for first positive meet.
         // We simulate starting at t=0 equality; after 1..t should return at exactly t.
-        let sim = simulate_first_meet(params, r.t_first_meet + 5).unwrap().unwrap();
+        let sim = simulate_first_meet(params, r.t_first_meet + 5)
+            .unwrap()
+            .unwrap();
         assert_eq!(sim, 0);
 
         // Check that after t_first_meet steps we are back in equality (positive meet).

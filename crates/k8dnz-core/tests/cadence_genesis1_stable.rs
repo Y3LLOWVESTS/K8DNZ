@@ -22,7 +22,10 @@ fn cadence_ticks_for_genesis1_is_stable_default_tuned() {
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", genesis_path.display()));
 
     let emissions = bytes.len() as u64;
-    assert_eq!(emissions, 4201, "Genesis1.txt size changed; update this test intentionally");
+    assert_eq!(
+        emissions, 4201,
+        "Genesis1.txt size changed; update this test intentionally"
+    );
 
     let r = default_recipe(); // default tuned
     let mut e = Engine::new(r).expect("engine init failed");
