@@ -19,25 +19,25 @@ We are currently using **law-driven indexing + low-pass threshold bit extraction
 
 **Law-driven index selection (contiguous TM1 window)**
 
-\[
-\mathrm{TM1}[i] = s + i,\qquad i = 0,1,\ldots,N-1
-\]
+$$
+\mathrm{TM1}[i] = s + i,\quad i = 0,1,\ldots,N-1
+$$
 
-where \(s\) (the chosen start) is produced deterministically by the selected law (`jump-walk` or `closed-form`) over the legal window length \(W\).
+where $s$ (the chosen start) is produced deterministically by the selected law (`jump-walk` or `closed-form`) over the legal window length $W$.
 
 **Low-pass threshold bit extraction**
 
-\[
-\hat{x}[t] = \mathbf{1}\!\left(\mathrm{LP}\!\left(I(t);\tau,\mathrm{smooth\_shift}\right) \ge \theta\right)
-\]
+$$
+\hat{x}[t] = \mathbb{1}\!\left(\mathrm{LP}\!\left(I(t);\tau,\mathrm{smooth\_shift}\right) \ge \theta\right)
+$$
 
 (`lowpass-thresh` smooths a deterministic intensity signal from the generator and thresholds it into 0/1.)
 
 **Residual (XOR)**
 
-\[
+$$
 r[i] = x[i] \oplus \hat{x}\!\left(\mathrm{TM1}[i]\right)
-\]
+$$
 
 > Important: match% is not the only metric; we care about **residual compressibility**. Low-pass helps even when match% is moderate because it makes the residual less noise-like.
 
