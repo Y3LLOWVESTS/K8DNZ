@@ -13,28 +13,34 @@ We have a new, concrete “vision-aligned” path that is showing real signal:
 - ✅ We reached **57.31% matches** on a 1024-byte target (bitfield(1), rgbpair, lowpass-thresh, closed-form law).
 - ✅ On a 512-byte target, we got **effective_no_recipe = 303 vs plain_zstd = 272** (**only +31 bytes** overhead), meaning we are **closing in on plain zstd** while still using a deterministic “program + patch” architecture.
 
-### Current formula (math string)
+### Current formula (math)
 
 We are currently using **law-driven indexing + low-pass threshold bit extraction + XOR residual**.
 
-**Law-driven index selection (TM1)**
+**Law-driven index selection (contiguous TM1 window)**
+
 \[
-\mathrm{TM1}[i] = s + i \quad\text{for } i=0..N-1
+\mathrm{TM1}[i] = s + i,\qquad i = 0,1,\ldots,N-1
 \]
-where \(s\) (the chosen start) is produced deterministically by the selected law (`jump-walk` or `closed-form`) over the legal window \(W\).
+
+where \(s\) (the chosen start) is produced deterministically by the selected law (`jump-walk` or `closed-form`) over the legal window length \(W\).
 
 **Low-pass threshold bit extraction**
+
 \[
-\hat{x}[t] = \mathbf{1}\{\,\mathrm{LP}(I(t);\tau,\text{smooth\_shift}) > \theta\,\}
+\hat{x}[t] = \mathbf{1}\!\left(\mathrm{LP}\!\left(I(t);\tau,\mathrm{smooth\_shift}\right) \ge \theta\right)
 \]
+
 (`lowpass-thresh` smooths a deterministic intensity signal from the generator and thresholds it into 0/1.)
 
-**Residual (xor)**
+**Residual (XOR)**
+
 \[
-r[i] = x[i] \oplus \hat{x}[\mathrm{TM1}[i]]
+r[i] = x[i] \oplus \hat{x}\!\left(\mathrm{TM1}[i]\right)
 \]
 
-> Important: match% is not the only metric; we care about **residual compressibility**. Low-pass helps even when match% is moderate, because it makes the residual less noise-like.
+> Important: match% is not the only metric; we care about **residual compressibility**. Low-pass helps even when match% is moderate because it makes the residual less noise-like.
+
 
 ### New way to run (current best path)
 
