@@ -4,6 +4,7 @@ pub mod args;
 mod bf_lanes;
 mod bitfield;
 mod byte_pipeline;
+mod gen_law; // NEW
 mod mapping;
 mod residual;
 mod tags;
@@ -35,6 +36,7 @@ pub fn run(args: TimemapArgs) -> anyhow::Result<()> {
                 byte_pipeline::cmd_reconstruct(a)
             }
         }
+        GenLaw(a) => gen_law::cmd_gen_law(a),
         BfLanes(a) => bf_lanes::cmd_bf_lanes(a),
     }
 }

@@ -35,10 +35,6 @@ pub fn zstd_compress_len(bytes: &[u8], level: i32) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-pub fn zstd_compress(bytes: &[u8], level: i32) -> anyhow::Result<Vec<u8>> {
-    Ok(zstd::encode_all(bytes, level)?)
-}
-
 pub fn zstd_decompress(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(zstd::decode_all(bytes)?)
 }

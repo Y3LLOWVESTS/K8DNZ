@@ -11847,3 +11847,2399 @@ If you paste the output from **Run Set A + B** next time, we’ll know immediate
 
 
 ### END NOTE - FEBRUARY 15 2026 - 15:55 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 16:47 CST
+
+Below is a **God-tier “final sprint” analysis + a comprehensive carry-over notes pack** you can paste into the next instance and immediately continue.
+
+---
+
+# Final Sprint Reality Check (What today proved)
+
+We are **past the “hard determinism milestone.”** The system is now a real codec:
+
+* **Full Genesis1.txt roundtrip works** (4201 bytes, exact `cmp` match) using **timemap + residual**.
+* The previous “7168 symbol ceiling” was **not a stream shortage**; it was **time drift** under monotone + lookahead.
+* Adding **drift control** (notably `--trans-penalty 8/16`) solved chaining and enabled full coverage at b=2.
+
+So: the pipeline is correct and deterministic. The remaining battle is **entropy shaping** (getting residual small/compressible).
+
+---
+
+# What the latest runs mean (compressed summary)
+
+## 1) Coverage / chaining is solved
+
+With `lookahead=200000`, `trans_penalty=8`, `objective=matches`, we can fit+reconstruct full Genesis1. This is now repeatable.
+
+## 2) Residual representation: BF1 packed is the winner
+
+* BF2 lanes (“time-split / lanes”) explodes because the per-lane bitsets look random to zstd.
+* BF1 packed is **~3 KB better** effective bytes than lanes.
+
+## 3) Residual mode: SUB beats XOR (small but real)
+
+* `sub` improved effective bytes vs `xor` in the packed baseline.
+
+## 4) Hash mapping makes residual *more random*
+
+Your hash mapping run (`bit_mapping=hash map_seed=1337`) produced residual zstd bytes ≈ raw bytes (4201→4210), i.e. it **destroys compressibility**. That’s a strong signal: we must not randomize mapping if we care about residual entropy.
+
+## 5) “Bigger alphabet” alone did **not** help yet (b=8, b=4)
+
+You tested byte-aligned widths:
+
+### b=8 (Geom+sub+packed)
+
+* `tm1_zstd_bytes = 59` (tiny!)
+* `resid_zstd_bytes = 3575`
+* `effective_with_recipe = 3844`
+
+### b=4 (Geom+sub+packed)
+
+* `tm1_zstd_bytes = 104`
+* `resid_zstd_bytes = 3544`
+* `effective_with_recipe = 3858`
+
+Compare to best b=2 packed+sub:
+
+* `effective_with_recipe = 3665`
+* `resid_zstd_bytes = 3319`
+
+So b=8/b=4 did **not** reduce residual entropy; it slightly worsened overall effective bytes, even though TM1 got smaller. That means the generator+mapping is still not predicting text structure; the residual is still doing heavy lifting.
+
+## 6) b=6 failed for a valid reason (format/bitlength mismatch)
+
+`bits_per_emission=6` fails because the current validation expects exact byte length, but 6-bit packing needs padding:
+
+* It computed it needs **4202 bytes** to hold 5602 6-bit symbols, but the input is **4201 bytes**.
+  This is not a modeling failure; it’s a **container/format limitation**.
+
+---
+
+# The “Most Intelligent” Strategy Going Forward
+
+We stop chasing minor knobs and do the **two high-ROI moves** that can actually close the gap to plain zstd:
+
+## Move 1 (Engineering): Add bit-length + padding support so non-byte-aligned bits_per_emission is legal
+
+This unlocks **5/6/7-bit** alphabets, which are the sweet spot for text (32/64/128 symbol sets).
+
+### Minimal design:
+
+* In BF1 (or TM header), store `target_bits` (or just `target_bytes` + `target_bits_mod8`).
+* Allow packed symbol payload to include up to 7 pad bits.
+* During reconstruct, after applying residual, truncate output to exactly `target_bytes`.
+
+This turns the b=6 validation error into a supported mode and enables real “alphabet engineering.”
+
+## Move 2 (Modeling): Switch from “rgbpair + Geom” to a **text-aware emission/mapping**
+
+Right now we’re using a generator stream that is not aligned to ASCII/English structure, and residual is essentially correcting a pseudo-random stream.
+
+We need the generator to naturally produce something closer to text so residual becomes **sparse / structured**, and zstd can compress it hard.
+
+The best candidates (based on what already exists in the project) are the **text mapping modes** you already have elsewhere (Ascii7/Text40/Text40Weighted/Text40Lane, etc.). The key is to route the timemap fitter’s target symbols into an alphabet that matches text.
+
+### Practical approach:
+
+* Keep the core “vision” engine (orbit alignment → lockstep → field sample).
+* Change what we emit / how we interpret emissions for fitting:
+
+  * from “rgbpair bits” toward “text alphabet symbols”
+* Keep timemap as the “where in time we sample,” but make sampled tokens closer to the target domain.
+
+## Move 3 (Algorithmic): Two-pass strategy (coverage-first → residual-minimize)
+
+Now that drift is solved, we can do:
+
+1. Pass 1: `objective=matches` to get a stable full chain and a baseline timemap.
+2. Pass 2: **local refinement** that is constrained not to drift global indices, optimizing residual compressibility.
+
+This prevents “greedy local perfect match” from producing globally random residual patterns.
+
+## Move 4 (Codec): Improve residual compression beyond “zstd on packed bytes”
+
+Even with better modeling, we’ll want residual formats that exploit structure:
+
+* RLE / sparse representation when residual is mostly zeros
+* varint indices of mismatches for low-error regimes
+* lane bitsets only when sparse, not as default
+* automatic selection: store whichever residual encoding yields smallest zstd size (packed vs sparse vs rle)
+
+---
+
+# Where we are right now on the “finish line”
+
+**Finish line A (codec correctness):** achieved.
+**Finish line B (beats plain zstd):** not yet; residual still too entropic.
+
+Current best (so far):
+
+* b=2, Geom, packed BF1, residual=sub, objective=matches, lookahead=200k, trans_penalty=8
+* `effective_with_recipe ≈ 3665` vs plain zstd `1326`
+
+So we need **big structural gains**, not more micro-tuning.
+
+---
+
+# Carry-Over Notes Pack (Paste into Next Instance)
+
+## K8DNZ / Cadence Project — Carry-Over Notes (2026-02-15)
+
+### 0) North Star
+
+Deterministic codec: an ARK-like “recipe + compact artifacts” deterministically reconstructs the original data. Long-term: compress more of the data into the recipe/key by making the generator predictive and the residual compressible.
+
+Canonical test vector: `text/Genesis1.txt` (4201 bytes).
+
+### 1) Major milestone achieved: full Genesis1 deterministic roundtrip
+
+We successfully fit timemap + residual and reconstruct Genesis1 exactly (`cmp OK`).
+This is a huge milestone: the pipeline is real.
+
+### 2) The “7168 symbols ceiling” root cause + fix
+
+Root cause: monotone timemap indices + `max_start_cap = min_start + lookahead` caused “time drift.” Chaining would “teleport forward” and eventually hit:
+`no room for chunk ... stopping (partial output)`.
+
+Fix: drift control via `--trans-penalty` and adequate `--lookahead`.
+With `lookahead=200000` and `trans_penalty=8/16`, chaining reaches full coverage reliably.
+
+### 3) Residual format results (critical)
+
+BF2 “lanes / time-split” is currently terrible for bytes:
+
+* residual lanes zstd ≈ raw, often expands
+* effective bytes huge
+
+BF1 packed residual is much better:
+
+* Example (b=2, geom, packed, residual=sub):
+
+  * `tm1_zstd_bytes ~ 134`
+  * `resid_zstd_bytes ~ 3319`
+  * `effective_with_recipe ~ 3665`
+
+Residual mode:
+
+* `sub` beats `xor` slightly:
+
+  * xor packed effective_with_recipe ≈ 3705
+  * sub packed effective_with_recipe ≈ 3665
+
+Hash mapping:
+
+* `bit_mapping=hash` makes residual essentially random:
+
+  * residual zstd ≈ raw (4201→4210)
+  * effective_with_recipe ≈ 4559 (worse)
+    Conclusion: avoid hash mapping for compression; keep Geom.
+
+### 4) Bits-per-emission experiments (byte-aligned)
+
+b=8 (geom+sub+packed):
+
+* tm1_zstd_bytes = 59
+* resid_zstd_bytes = 3575
+* effective_with_recipe = 3844
+* reconstruct OK
+
+b=4 (geom+sub+packed):
+
+* tm1_zstd_bytes = 104
+* resid_zstd_bytes = 3544
+* effective_with_recipe = 3858
+
+So far, b=2 packed+sub remains best effective bytes (~3665).
+
+### 5) Non-byte-aligned bits-per-emission limitation discovered
+
+Attempting b=6 fails:
+`validation error: unpack_symbols short ... need 4202 bytes ... got 4201`
+Reason: 6-bit packing needs padding bits; current container expects exact byte size.
+
+This is a format limitation, not a modeling failure.
+
+### 6) Current best-known working configuration (baseline)
+
+Use this as the baseline for future comparisons:
+
+* `--map bitfield`
+* `--mode rgbpair`
+* `--bits-per-emission 2`
+* `--bitfield-residual packed`
+* `--residual sub`
+* `--objective matches`
+* `--chunk-size 512`
+* `--lookahead 200000`
+* `--trans-penalty 8`
+* `--search-emissions 8000000`
+* `--max-ticks 250000000`
+
+Baseline scoreboard:
+
+* plain_zstd_bytes = 1326
+* effective_with_recipe ≈ 3665 (best so far)
+
+### 7) Strategic diagnosis
+
+Codec correctness and determinism are solved.
+Compression ratio is blocked by residual entropy:
+
+* Residual is still too “random-like” to compress well.
+
+### 8) Final sprint plan (next instance priorities)
+
+#### Priority A: Implement bit-length + padding support (unlock b=5/6/7)
+
+Goal: allow arbitrary bits_per_emission without requiring input byte count to match packed symbol byte count.
+
+Minimal spec:
+
+* Store target length info (`target_bits` or `target_bytes` + pad bits) in BF1 header (or TM header).
+* On decode: generate symbols, apply residual, then truncate to exact target bytes.
+
+This enables:
+
+* b=6 (64-symbol alphabets) which are promising for text.
+* b=5 (32 symbols), b=7 (128 symbols).
+
+#### Priority B: Introduce text-aware emission/mapping for timemap fitting
+
+The current stream is not predictive of English.
+We should route timemap fitting through a mapping mode aligned to text structure (Ascii7/Text40/etc) so residual becomes sparse/structured.
+
+Next instance action:
+
+* Identify which mapping/mode knobs exist in timemap command to use text alphabets, or extend timemap to support them.
+
+#### Priority C: Two-pass fitting
+
+Pass 1: coverage-first (`objective=matches`, drift constrained).
+Pass 2: locked-index refinement to reduce residual compressibility without changing global chain.
+
+#### Priority D: Smarter residual encodings (auto-select)
+
+Residual container options should be chosen by “smallest compressed size”:
+
+* packed bytes (BF1)
+* sparse indices of mismatches (if residual gets sparse)
+* RLE/bitmask encodings
+* lanes only when it truly helps (sparse, not dense random)
+
+### 9) Things to record for every run
+
+Always capture scoreboard lines:
+
+* tm1_zstd_bytes
+* resid_zstd_bytes
+* effective_bytes_with_recipe
+  Also note the config: bits_per_emission, mapping, residual mode, lookahead, trans_penalty.
+
+### 10) Minor cleanup (optional)
+
+Build warnings:
+
+* unused `zstd_decompress` import in `crates/k8dnz-cli/src/cmd/timemap/bitfield.rs`
+* unused `zstd_compress` in `crates/k8dnz-cli/src/cmd/timemap/util.rs`
+  Not urgent, but cleaning reduces noise during sweeps.
+
+---
+
+# “What we do first” in the next instance
+
+1. Lock baseline: confirm b=2 packed+sub is still the best.
+2. Implement **bit-length + padding** support so b=6 becomes legal.
+3. Re-run **b=6** with Geom+sub+packed.
+4. If b=6 improves residual compressibility, sweep b=5/6/7 and pick best.
+5. In parallel, wire a **text-aware mapping** into timemap so the generator stream is less random relative to text.
+
+That’s the most direct route to crossing the “compression finish line.”
+
+---
+
+If you paste this into the next instance along with the log paths you used (`/tmp/g1_tp8_sub_packed.ALL.log`, `/tmp/g1_b8_geom_sub.ALL.log`, etc.), we can pick up immediately and start implementing the bit-length padding change as the first code sprint.
+
+
+### END NOTE - FEBRUARY 15 2026 - 16:47 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 18:55 CST
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (Feb 15, 2026, CST)
+
+**Instance goal:** preserve *exactly where we are*, what the latest runs proved, and what we run next.
+**Core constraint reminders:** determinism first, “vision-aligned” mechanics second, and we need **formula-driven structure**, not English/text hacks.
+
+---
+
+## 0) North Star (unchanged)
+
+We’re building a **deterministic recipe + small key (“ARK-like”)** that can expand into arbitrary data. The current workflow is:
+
+1. **Engine** (orbit/field) emits deterministic tokens over time.
+2. We build a **time map** (tm1 indices) selecting positions in the emission stream.
+3. We store a **residual** between predicted symbols and target symbols (xor/sub), plus a tiny recipe.
+4. We measure **effective bytes** vs baseline `plain_zstd` of the target.
+
+We accept that *perfect* compression isn’t guaranteed; we are searching for a **structured mapping/fit regime** that makes the residual **compressible**, not merely correct.
+
+---
+
+## 1) Vision anchor (must keep)
+
+The conceptual mechanism we’re implementing/approximating:
+
+* Two orbiting dots (A/C) align → enter “lockstep” along the walls of a truncated cone (frustum).
+* The frustum has **structured color fields** (ordered, not random).
+* At sampling times, the pair lands and emits a **color pair** (our RGBPAIR token).
+* That token stream is *time-sensitive*; the “tick” is sacred.
+
+**Key idea from the vision:** this is not “text mapping.” It’s a **formulaic field sampler** generating **structured outputs** as time progresses. We must keep pushing toward **low-dimensional formula parameters** that can be described compactly and yield large expansions.
+
+---
+
+## 2) What we implemented / changed in code recently (important)
+
+### 2.1 Bitfield mapping mode (MapMode::Bitfield)
+
+We added `--map bitfield` path in `timemap fit-xor-chunked` + reconstruct, where:
+
+* We treat RGBPAIR emissions as a source of **k-bit symbols**.
+* `--bits-per-emission k` (1..=8) controls symbol width.
+* `--bit-mapping geom|hash` controls how RGBPAIR → symbol.
+
+  * **Geom**: MSB interleave-ish across averaged RGB channels.
+  * **Hash**: mixing map_seed/emission/RGB bytes.
+
+### 2.2 Bitfield residual formats (BF1/BF2)
+
+* **BF1 (“packed”)**: residual symbols packed into k-bit stream (small header).
+* **BF2 (“lanes/time-split”)**: per-lane bitsets (2^k lanes), each zstd-compressed, then stored with BF2 header.
+
+### 2.3 Seed parsing improvements
+
+`--map-seed-hex` override is supported (accepts `0x...` or raw hex) via `parse_seed_hex_opt`.
+
+### 2.4 Reconstruct proven correct
+
+We successfully reconstructed:
+
+* `reconstruct ok (bitfield)` for 6-bit geom + sub residual path.
+* Output matched target by `cmp` (no mismatches printed).
+
+So correctness/determinism is solid.
+
+---
+
+## 3) Latest experimental results (what the scoreboards really mean)
+
+### 3.1 Baseline problem statement: **timemap compresses, residual does not**
+
+Across many runs:
+
+* `tm1_zstd_bytes ~ 64` (tiny — excellent)
+* `resid_zstd_bytes ~ 4,2xx` (near full file size — terrible)
+* Effective bytes end up ~4.3–4.5KB (worse than `plain_zstd ~ 1328`)
+
+**Interpretation:** the **selection program** (timemap) is cheap. The **residual is noise-like**. Our mapping/fit is not producing compressible structure.
+
+### 3.2 Objective=matches vs objective=zstd
+
+* Optimizing **matches** does not imply residual becomes compressible.
+* Objective=zstd is the real target (minimize compressed residual length), but right now it still yields near-noise residual.
+
+### 3.3 `chunk_xform addk` is currently not helping (very important)
+
+Observed:
+
+* In `objective=zstd` runs, all chunks printed `addk=0` → suggests `addk` isn’t being searched/used in zstd scoring path (or it’s always selecting 0).
+* In `objective=matches`, `addk` sometimes nonzero, but residual size didn’t improve.
+
+**Conclusion:** treat `addk` as “not yet wired into the scoring+write path correctly” or “not a useful transform yet.” Don’t spend cycles on it until we deliberately fix/validate it.
+
+### 3.4 BF2 lanes is catastrophic at higher k
+
+Example: k=6 lanes
+
+* `resid_raw_bytes` ~ 11.7KB, `resid_zstd_bytes` ~ 11.1KB (explodes)
+
+**Reason:** BF2 lane count = 2^k; at k=6 that’s 64 lanes. Bitsets aren’t sparse enough to compress well; container overhead dominates.
+
+**Conclusion:** BF2 lanes only makes sense when lanes are **very sparse** (maybe k=1 or 2) AND even then must be validated.
+
+### 3.5 “1-bit looked promising” but ran out of stream
+
+k=1, BF2 lanes, chunk-size 1024, lookahead 250k:
+
+* Matches ~45–50% (interesting)
+* But it stopped early: `no room for chunk 17 ...`
+* Produced only ~17,408 symbols of needed 33,608.
+
+**Interpretation:** not a tick limit problem — it’s **keystream length + monotonic placement**.
+When you require monotonic chunk placement and use lookahead scanning, you can run off the end of the available symbol stream. We need either:
+
+* longer stream (`search-emissions` higher), or
+* fewer chunks (bigger chunk_size), or
+* a placement regime that doesn’t “burn” stream so fast.
+
+### 3.6 Hash mapping (k=2, BF2 lanes) didn’t help
+
+k=2 hash produced slightly higher matches, but residual still huge (and BF2 overhead still bad).
+
+---
+
+## 4) What we are actually stuck on (the real puzzle)
+
+We keep sampling windows in a large keystream and selecting starts that improve either:
+
+* (a) match count, or
+* (b) zstd(residual chunk)
+
+…but the resulting residual still compresses like noise.
+
+That suggests a key missing ingredient:
+
+### **We don’t yet have a *formulaic coupling* between time selection and symbol meaning.**
+
+Right now, our “fit” is mostly:
+
+> choose a window position where predicted symbols happen to be close to target symbols.
+
+That behaves like “searching a random stream for coincidences.”
+Even if matches increase, the residual pattern still looks random, so zstd can’t compress it.
+
+**We need a mechanism where:**
+
+* the errors are not random,
+* the residual has **low-dimensional structure** (runs, bias, periodicity, lane sparsity, predictable drift),
+* and that structure is *caused* by a few parameters (the “ARK key”).
+
+This is exactly the “vision + formulas” mandate: the field should be a structured manifold, not a source of pseudorandom tokens.
+
+---
+
+## 5) The “formula-first” direction (what to explore next)
+
+### 5.1 Move from “search coincidences” to “solve for alignment”
+
+Instead of scanning a huge window and picking the best coincidence, we want to compute **where** alignment should occur.
+
+Think of emissions and target as two signals. The missing piece is likely a **phase/offset law**:
+
+* A deterministic function `pos(chunk_idx) = f(params, chunk_idx)`
+  so tm1 indices are generated from formula rather than search.
+
+Then the residual becomes:
+
+* not “whatever happens,” but the leftover after applying a known functional approximation.
+
+That is the same mental model as:
+
+* orbital phase alignment (time → phase → intersection)
+* conic helix mapping (phase → location → field value)
+
+### 5.2 Add a “coarse predictor” then store only corrections
+
+We need a middle layer:
+
+* **coarse model**: produces a prediction that’s already close to target under a few parameters
+* residual is **structured corrections** (small, compressible)
+
+In classic compression terms: we need a better “model,” not more “entropy.”
+
+In our terms: a better *field mapping / time program*.
+
+### 5.3 The “time-split” idea needs reinterpretation
+
+Time-split lanes (BF2) as implemented is “store lane bitsets.” That’s a container trick, not a modeling trick.
+
+The deeper time-split idea is:
+
+* separate the data stream into **multiple timelines** (00,01,10,11) or (bitplanes), each with its own time program,
+* so each stream is more predictable.
+
+But this only helps if each timeline becomes **sparse / compressible**.
+
+Implementation note:
+
+* BF2 lanes is a crude approximation of “bitplanes,” but it explodes at k>1 unless lane sparsity is real.
+* A better version is **bitplane residual + RLE** or **Golomb coding** or **entropy coding**, or (more K8DNZ-aligned) a **predictive formula per lane**.
+
+---
+
+## 6) Concrete next runs (what to do immediately next instance)
+
+### 6.1 Stop using BF2 lanes for k>=2 for now
+
+It’s proven explosive.
+
+### 6.2 Re-run k=1,2,3 using BF1 packed and enough stream to finish
+
+We need to:
+
+* reduce chunk count (bigger chunk_size)
+* increase stream length (`search-emissions` much higher)
+* set `trans-penalty 0` to avoid constant “8 tax” distortions while we’re exploring.
+
+**Recommended run set (copy/paste):**
+
+**Run A — k=1, packed, finishable**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_b1_packed.tm1 \
+  --out-residual /tmp/g1_b1_packed.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping geom \
+  --bitfield-residual packed \
+  --chunk-xform none \
+  --residual xor \
+  --objective zstd \
+  --chunk-size 4096 \
+  --lookahead 800000 \
+  --trans-penalty 0 \
+  --search-emissions 25000000 \
+  --max-ticks 1200000000
+```
+
+**Run B — k=2, packed**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_b2_packed.tm1 \
+  --out-residual /tmp/g1_b2_packed.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 2 \
+  --bit-mapping geom \
+  --bitfield-residual packed \
+  --chunk-xform none \
+  --residual xor \
+  --objective zstd \
+  --chunk-size 2048 \
+  --lookahead 600000 \
+  --trans-penalty 0 \
+  --search-emissions 25000000 \
+  --max-ticks 1200000000
+```
+
+**Run C — k=3, packed**
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_b3_packed.tm1 \
+  --out-residual /tmp/g1_b3_packed.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 3 \
+  --bit-mapping geom \
+  --bitfield-residual packed \
+  --chunk-xform none \
+  --residual xor \
+  --objective zstd \
+  --chunk-size 1536 \
+  --lookahead 600000 \
+  --trans-penalty 0 \
+  --search-emissions 25000000 \
+  --max-ticks 1200000000
+```
+
+Then repeat the best k with `--bit-mapping hash` (packed) for comparison.
+
+### 6.3 Validation step for each run
+
+After a “best-looking” run, always do reconstruct + cmp:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/FILE.tm1 \
+  --residual /tmp/FILE.bf \
+  --out /tmp/recon.bin \
+  --mode rgbpair \
+  --map bitfield \
+  --bits-per-emission K \
+  --bit-mapping geom \
+  --residual-mode xor \
+  --max-ticks 1200000000
+
+cmp -l /tmp/recon.bin text/Genesis1.txt | head
+```
+
+(Adjust `K`, mapping, residual-mode to match.)
+
+### 6.4 What to paste back into chat
+
+For each run paste:
+
+* the `--- scoreboard ---` block
+* and whether it completed or printed “partial output”
+* and which `k/mapping/residual/objective` you used.
+
+---
+
+## 7) Hypotheses to test (so we stop wandering)
+
+### H1: Residual remains incompressible because prediction stream is “too random”
+
+If packed k=1/2/3 still gives `resid_zstd ~ raw`, then the current mapping is effectively random vs target.
+
+**Implication:** We must build a *more structured* mapping (formulaic) rather than using stream search.
+
+### H2: The missing “puzzle piece” is a **low-dimensional alignment law**
+
+We need a computed phase mapping between:
+
+* chunk index / target position
+* and emission time
+
+instead of scanning huge lookahead windows.
+
+Candidate laws:
+
+* arithmetic progression with modular wrap
+* quadratic/spiral progression (frustum helix)
+* piecewise-linear “gear changes” (phase drift correction)
+* multi-timeline (00/01/10/11) with separate `f_i(t)` per lane
+
+### H3: “Bitfield” should be **bitplanes** (residual) + formula predictor
+
+The lanes idea is correct in spirit but wrong in representation. BF2 is a big blob format.
+We need:
+
+* predict each bitplane with a formula
+* store only sparse corrections (positions of flips)
+
+---
+
+## 8) TODO / Engineering follow-ups (later, not next run)
+
+1. **Fix/verify `addk`**:
+
+   * ensure it is actually searched/applied in zstd objective path
+   * store per-chunk k in timemap metadata so reconstruct can reproduce it
+2. Add metrics/diagnostics:
+
+   * residual histogram per chunk
+   * bitplane sparsity stats
+   * zstd size per chunk (not just proxy)
+3. Consider alternative residual coders:
+
+   * RLE / varint runs for k=1 residual
+   * sparse index list (positions of 1s) for very sparse bitplanes
+4. Consider new map modes beyond text:
+
+   * byte-level transforms (delta-of-delta, xor with rolling predictor)
+   * reversible rearrangements (lane shuffle, bit reversal, Gray code) *as parameters*
+
+---
+
+## 9) Quick mental model (keep this in front of us)
+
+Right now we have:
+
+* **tiny program** (timemap)
+* **huge noise** (residual)
+
+We need:
+
+* **tiny program** (formulaic time law + mapping law)
+* **small structured residual** (compressible, sparse, low-entropy)
+
+**The missing piece is not “more search.”**
+It’s a **better deterministic model** that makes the residual simple.
+
+---
+
+## 10) Session starting point next instance
+
+1. Run the three packed experiments (k=1/2/3) with longer stream and fewer chunks (commands above).
+2. Compare `effective_bytes_no_recipe` and `resid_zstd_bytes`.
+3. If residual still looks like noise: shift focus to **formulaic time-law** / computed alignment (next design step).
+
+---
+
+If you want the one-line “north star reminder” to paste at the top of the next session:
+
+**“We’re not trying to find coincidences in a random stream; we’re trying to discover a low-dimensional formula (time→phase→field) that makes residual sparse and compressible across arbitrary data.”**
+
+
+### END NOTE - FEBRUARY 15 2026 - 18:55 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 15 2026 - 20:05 CST
+
+([Past chat][1])([Past chat][2])([Past chat][3])([Past chat][2])
+
+### BEGIN NOTE — FEBRUARY 15, 2026 (CST) — NEXT INSTANCE CARRY-OVER PACK (FORMULA INCLUDED)
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (Feb 15, 2026, CST)
+
+**Instance goal:** preserve exactly where we are, what the latest runs proved, why the residual is still “noise,” and what we build/run next to get back to the *vision-aligned* path.
+
+**Core constraints (unchanged):**
+
+* Determinism is non-negotiable (same recipe+seed → identical output).
+* Core math is fixed-point turns (no floats).
+* We must move toward **formula-driven structure** (time→phase→field) and away from “coincidence search in a pseudorandom stream.”
+
+---
+
+## 0) North Star (unchanged)
+
+We are building a deterministic **recipe + small key (“ARK-like”)** that can expand into arbitrary data.
+
+Current workflow:
+
+1. Engine emits deterministic tokens over time (tick/emission stream).
+2. We build a **timemap** selecting emission indices.
+3. We store a **residual** (xor/sub) + tiny recipe.
+4. We score by **effective bytes** vs baseline `plain_zstd` of the target.
+
+We accept perfect compression isn’t guaranteed; the near-term win is discovering a **structured mapping/fit regime** that makes the residual compressible (runs/bias/periodicity/sparsity), not merely correct.
+
+---
+
+## 1) Vision anchor (must keep)
+
+Vision mechanism (conceptual truth we must align to):
+
+* Dots A and C free-orbit (opposite directions, different speeds).
+* When phases align within ε → enter lockstep on frustum walls.
+* Lockstep is a spiral trajectory; the frustum has ordered color fields/waves.
+* At rim times we sample field → emit a paired token (“color pair”).
+* Time is sacred: tick/emission index is the actual “address” of the field.
+
+**Interpretation:** This is a *formulaic field sampler* in time, not a text hack. The ARK key should be a compact set of parameters describing the motion + field.
+
+---
+
+## 2) What we implemented recently (code facts)
+
+### 2.1 Bitfield mapping mode (MapMode::Bitfield)
+
+Added `--map bitfield` path (fit + reconstruct) where we treat RGBPAIR emissions as source of k-bit symbols:
+
+* `--bits-per-emission k` (1..=8)
+* `--bit-mapping geom|hash`
+
+  * **Geom:** interleave-ish MSBs from averaged RGB channels.
+  * **Hash:** mixing map_seed + emission + RGB bytes.
+
+### 2.2 Bitfield residual formats
+
+* **BF1 (“packed”)**: residual symbols packed into k-bit stream (plus small header).
+* **BF2 (“lanes/time-split”)**: per-lane bitsets (2^k lanes), zstd each, store with BF2 header.
+
+  * BF2 explodes quickly for k≥2 unless lanes are extremely sparse.
+
+### 2.3 Seed parsing improvements
+
+* `--map-seed-hex` supported via `parse_seed_hex_opt` (accepts `0x...` or raw hex).
+
+### 2.4 Reconstruct correctness proven
+
+* `timemap reconstruct` matched target exactly for bitfield settings previously (cmp matched).
+* So determinism + correctness are solid.
+
+---
+
+## 3) The formula view (NEW — include this in next instance)
+
+This is the clean mathematical expression of what we’re doing today, and what variable we’re missing.
+
+### 3.1 Definitions
+
+Engine emits tokens indexed by emission count:
+
+* ( X_e = \mathrm{Engine}(R; e) \in {0,\dots,255}^6 ) (RGBPAIR bytes)
+
+Mapping projects token to k-bit symbol:
+
+* ( P_e = \phi(X_e; \text{map_seed}, \text{mapping}, k) \in {0,\dots,2^k-1} )
+
+Target bytes unpacked to k-bit symbols:
+
+* ( T_i = \mathrm{Unpack}(B; k)[i] ), ( i=0..N-1 )
+
+Timemap chooses which emissions index each target symbol uses:
+
+* ( t_i \in \mathbb{N} )
+
+Prediction:
+
+* ( \hat{T}*i = P*{t_i} )
+
+Residual (xor mode):
+
+* ( R_i = T_i \oplus \hat{T}*i = T_i \oplus P*{t_i} )
+
+Optional per-chunk addk (general k):
+
+* ( \hat{T}*i = (P*{t_i} + K_{\mathrm{chunk}(i)}) \bmod 2^k )
+  For k=1 this is a bit flip: ( \hat{T}*i = P*{t_i} \oplus K )
+
+### 3.2 What we are doing NOW (coincidence search)
+
+In “one chunk” runs we effectively set:
+
+* ( t_i = s + i ) for a single start offset (s)
+
+and choose (s) by scanning to minimize zstd(residual):
+[
+\boxed{
+s^* = \arg\min_s \mathrm{ZstdLen}\big( T \oplus P_{s+\cdot} \big)
+}
+]
+
+### 3.3 What is MISSING (the vision variable)
+
+The missing piece is **the alignment/lockstep time-law** parameter set:
+[
+\boxed{
+t_i = f(i; \Theta)
+}
+]
+where ( \Theta ) encodes low-dimensional “physics”:
+
+* orbit phase increments (A/C)
+* alignment window ε
+* lockstep spiral schedule along frustum
+* drift/gear correction / phase slip behavior
+* sampling cadence to rim emissions
+
+Then prediction becomes:
+[
+\hat{T}*i = \phi!\big(X*{f(i;\Theta)};\dots\big)
+]
+and residual:
+[
+\boxed{
+R_i = T_i \oplus \phi!\big(X_{f(i;\Theta)};\dots\big)
+}
+]
+
+**Core diagnosis:** we proved the machine is deterministic and reversible, but we’re still picking times by scan (choosing (s)), not computing them via the vision-law (f(i;\Theta)). Without that coupling, residual stays noise-like.
+
+---
+
+## 4) Latest runs (Feb 15) — what they proved
+
+Target: `text/Genesis1.txt`
+
+* `target_bytes = 4201`
+* `k=1` ⇒ `target_symbols = 33608`
+* stream: `stream_symbols = 308563` for `search-emissions=30,000,000` (emissions are sparse events; mapping yields only when token emitted)
+
+### 4.1 One-chunk, objective=zstd, chunk_xform=none
+
+Command: `/tmp/g1_b1_onechunk_fast.*` (lookahead 400k, scan-step 1)
+Results:
+
+* `start_emission = 218627`
+* `scanned_windows = 274,956`
+* `matches = 16,815 / 33,608 = 50.03%` (coin-flip)
+* `tm1_zstd_bytes = 28` (excellent)
+* `resid_zstd_bytes = 4234` (≈ raw; zstd can’t compress)
+* `effective_no_recipe = 4262` vs `plain_zstd = 1326` (much worse)
+
+**Meaning:** predictor is effectively random relative to target; residual is near white noise.
+
+### 4.2 One-chunk, objective=zstd, chunk_xform=addk
+
+Command: `/tmp/g1_b1_onechunk_addk.*`
+Results:
+
+* `addk=1` (for k=1 this is “flip the bit”)
+* `matches = 17,976 / 33,608 = 53.49%` (slightly better)
+* `resid_zstd_bytes = 3998` (still terrible but slightly improved)
+* `effective_no_recipe = 4024` (still much worse than 1326)
+
+**Meaning:** there is a mild bias (flip helps), but residual remains noise-like — we still lack the true coupling (f(i;\Theta)).
+
+### 4.3 The “hung” behavior (important)
+
+When scan-step=1 + huge lookahead, one-chunk can appear to “stall” because it is doing:
+
+* O(lookahead × chunk_len) comparisons and
+* zstd scoring per window (expensive)
+  Even if it’s working, it can look like no progress because we only print after chunk completes.
+
+**Practical fact:** the scan is computationally explosive for one massive chunk. Smaller scan-step (e.g. 64) completes; scan-step=1 can take a long time.
+
+---
+
+## 5) What we are actually stuck on (the real puzzle)
+
+**We can cheaply describe the selection program (tm1 compresses incredibly well).**
+But residual compressibility is the real failure:
+
+* residual behaves like noise → zstd can’t shrink it.
+
+This strongly suggests:
+
+* current mapping + scan is “searching coincidences,” not “modeling structure.”
+
+**We must stop optimizing coincidence matching and start building a model that causes structured prediction error**.
+
+---
+
+## 6) What remains to do (high level roadmap)
+
+### 6.1 Near-term engineering / diagnostic improvements (within current scanning approach)
+
+* Add optional periodic progress print during window scan:
+
+  * windows scanned, current best score, elapsed_ms
+* Add “cheap proxy” scoring pass, then zstd only on top-K windows:
+
+  * (We already do refine_topk on Matches, but Zstd objective currently brute zstd per window.)
+  * Build a two-stage Zstd mode:
+
+    1. compute cheap stats for residual (runs, transitions, popcount, entropy proxy)
+    2. zstd only for best candidates
+* Add residual structure diagnostics:
+
+  * transition rate for k=1 residual (count flips)
+  * run-length histogram
+  * byte histogram
+  * per-chunk zstd sizes
+
+These won’t fix the fundamental issue, but they reduce compute and tell us exactly what “noise-like” means.
+
+### 6.2 The real next milestone: implement the missing variable (f(i;\Theta))
+
+We need a **timemap generator law** replacing scan-based placement.
+
+New concept:
+
+* `timemap gen-law` (or a new MapMode variant) where:
+
+  * maintain orbit phases A/C in fixed-point turns
+  * alignment when `|phaseA - phaseC| < ε`
+  * when aligned → lockstep spiral schedule producing a burst of emission indices
+  * those indices become tm1 directly (or nearly directly)
+* Once `t_i` is computed by law:
+
+  * compute residual once (no scanning)
+  * check if residual gains compressible structure
+
+**Key hope:** even if matches are lower initially, residual might become structured (periodic bias, runs, sparse corrections). That’s how we get zstd to respond.
+
+---
+
+## 7) Concrete next experiments (do these next instance)
+
+### 7.1 Keep the “one chunk” experiment, but only in *fast scan* configurations
+
+Because chunk is huge, scan-step=1 is too costly. Use step 64/128 to validate behavior quickly.
+
+Example:
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
+  --recipe ./configs/tuned_validated.k8r \
+  --target text/Genesis1.txt \
+  --out-timemap /tmp/g1_b1_onechunk_s128.tm1 \
+  --out-residual /tmp/g1_b1_onechunk_s128.bf \
+  --map bitfield --mode rgbpair \
+  --bits-per-emission 1 --bit-mapping geom \
+  --bitfield-residual packed \
+  --chunk-xform addk \
+  --residual xor --objective zstd \
+  --chunk-size 99999999 \
+  --lookahead 400000 \
+  --scan-step 128 \
+  --trans-penalty 0 \
+  --search-emissions 30000000 \
+  --max-ticks 1200000000
+```
+
+Then reconstruct+cmp for sanity (when we keep a result):
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_b1_onechunk_s128.tm1 \
+  --residual /tmp/g1_b1_onechunk_s128.bf \
+  --out /tmp/recon.bin \
+  --mode rgbpair --map bitfield \
+  --bits-per-emission 1 --bit-mapping geom \
+  --residual-mode xor \
+  --max-ticks 1200000000
+
+cmp -l /tmp/recon.bin text/Genesis1.txt | head
+```
+
+### 7.2 Re-test k=2/k=3 with BF1 packed but **do not use BF2 lanes**
+
+BF2 is only viable if lanes are truly sparse (maybe k=1). We already saw it explode for k≥2.
+
+### 7.3 Change the question we’re asking
+
+Instead of “can we find a start offset that compresses residual,” ask:
+
+* does any configuration produce **residual structure metrics** that are non-random?
+
+  * fewer transitions
+  * longer runs
+  * biased popcount
+  * repeatable periodicities
+
+If those don’t show up, scanning is fundamentally capped.
+
+---
+
+## 8) The “missing piece” summary (put this at the top next time)
+
+Right now:
+
+* tm1 is tiny
+* residual is noise
+* matches hover around 50–53% at k=1 even after scanning
+  This is exactly what happens when:
+* predictions are not coupled to target by a low-dimensional law.
+
+**We need the missing variable:**
+[
+t_i = f(i; \Theta)
+]
+a computed alignment/lockstep law that replaces scan-based timemap selection, making the model’s error structured and compressible.
+
+---
+
+## 9) What we accomplished so far (so we don’t lose the win)
+
+* Built a deterministic, configurable engine that emits a stable token stream.
+* Built timemap fit/reconstruct loop that roundtrips exactly (determinism proven).
+* Added bitfield map mode and residual formats (BF1/BF2).
+* Verified tm1 compresses extremely well (zstd bytes tiny).
+* Empirically identified the real blocker: residual is high-entropy noise under coincidence-search.
+* Demonstrated addk can slightly increase matches and reduce residual (bias exists), but not enough.
+
+This is real progress: we now know precisely what must change (modeling law, not more scanning).
+
+---
+
+## 10) Files / artifacts in this instance
+
+* Codebundle: `/mnt/data/codebundle.md`
+* Running notes: `/mnt/data/NOTES.MD`
+* Readme: `/mnt/data/README.md`
+* Vision image: `/mnt/data/VISUAL.jpeg`
+
+---
+
+### END NOTE — FEBRUARY 15, 2026 (CST)
+
+If you want, next message I can also give a **very concrete first draft of (f(i;\Theta))** that matches the vision (fixed-point phase accumulators + ε alignment + deterministic lockstep burst schedule) so you can implement a `timemap gen-law` command without any floats or π.
+
+[1]: https://chatgpt.com/c/69924d0e-364c-8330-9ca0-fd26308db82d "K8DNZ Project Progress"
+[2]: https://chatgpt.com/c/69924254-b8c0-832a-80b3-536977d58271 "K8DNZ Project Analysis"
+[3]: https://chatgpt.com/c/6992073a-1220-8325-9997-744e595a354e "Timemap.rs Update"
+
+
+### END NOTE - FEBRUARY 15 2026 - 20:05 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 9:25 CST
+
+Below is a **paste-ready carry-over notes pack** for the next instance. It includes: (1) what we’ve proven, (2) what the logs are actually saying, (3) why we’re “stuck” right now, (4) the **new closed-form + low-pass formula** (with breakdown), and (5) a concrete next-experiment ladder (fast → slow) to test the “missing obvious” hypothesis.
+
+---
+
+# K8DNZ / The Cadence Project — Carry-Over Notes (Feb 16, 2026)
+
+## 0) North Star (unchanged)
+
+We are building a **deterministic, parameterized codec** where a compact “ARK-like” key (recipe + small param payload) can **expand into data** (Genesis1.txt is canonical test target right now).
+The working pipeline is “**program + patch**”:
+
+* **Program** = timemap / deterministic law that chooses positions in a generated stream
+* **Patch** = residual container that corrects remaining mismatches (xor/sub/etc.)
+
+Key objective right now: **make the residual small and compressible** (zstd), ultimately targeting <10% effective bytes (or better) for Genesis1, and later exploring cascading keys.
+
+---
+
+## 1) What we accomplished (hard wins)
+
+### 1.1 Determinism + reconstruction are real
+
+We successfully produced timemap + residual and then ran `timemap reconstruct`, getting:
+
+* `reconstruct ok (bitfield)` and correct output size equals target (4201 bytes)
+* `cmp` check shows reconstruction works (or at least reconstruct reports success and output is produced deterministically)
+
+This is huge: it proves the codec plumbing works end-to-end:
+
+* stream generation is deterministic
+* timemap format + residual container format roundtrip
+* reconstruction logic applies residual correctly
+
+### 1.2 “Program compresses tiny” is proven (timemap zstd is extremely small)
+
+In multiple runs:
+
+* `tm1_zstd_bytes` is tiny (e.g., **28 bytes**, **73 bytes**, etc.)
+  This is a core insight: the **program** part (timemap) can be extremely compact.
+
+### 1.3 Bitfield 1-bit mapping is running at scale
+
+We ran:
+
+* `fit-xor-chunked (bitfield)` with `bits-per-emission 1`, `bit-mapping geom`, `bitfield-residual packed`, chunking at **4096**, lookahead **120k**, scan-step **128**, refine-topk **2048**, huge tick budgets.
+* `gen-law (bitfield)` with various `law-seed` and `law-max-jump` values.
+  This means our experimental harness is working and we can iterate.
+
+---
+
+## 2) Current results (what the logs are telling us)
+
+### 2.1 1-bit match rate is ~coin flip
+
+Typical results:
+
+* matches around **47–55%** (e.g., 48.79%, 49.10%, 50.10%, 55.95% in one chunk)
+  Interpretation:
+* ~50% matches strongly suggests the predicted bitstream is behaving **random-ish** relative to the target bitstring.
+
+### 2.2 Residual size is the blocker (zstd can’t crush it)
+
+Key scoreboard numbers:
+
+* `plain_zstd_bytes ≈ 1326` (baseline for Genesis1)
+* `resid_zstd_bytes ≈ 4042` (or ~4008, ~4011, etc.)
+* `effective_bytes_with_recipe ≈ 4234–4448` (worse than baseline zstd)
+
+Interpretation:
+
+* Even though timemap compresses to almost nothing, residual dominates and is **not compressible**.
+* If residual is “noise-like” (as it will be when predictor ≈ coin flip), zstd has nothing to grab.
+
+### 2.3 “gen-law” shows resonance but not consistent improvement
+
+We tested various `law-max-jump` values and seeds:
+
+* A few parameter combos show “resonant” behavior (notably around **2048**, seed **6** appeared repeatedly in earlier exploration).
+* However, match rate and residual size do not show consistent improvement vs baseline.
+
+Interpretation:
+
+* The resonance is **real signal** (structure in modular arithmetic / windowing), but current “law” mechanism is still effectively producing a stream that doesn’t align with the target enough to make residual compressible.
+
+### 2.4 Hash vs geom bit-mapping: sometimes higher match% but worse residual compressibility
+
+Example:
+
+* `bit-mapping hash` got **50.10%** matches (slightly higher than 49.10% geom in that run),
+* but residual zstd got worse (~4210).
+  Interpretation:
+* match% alone isn’t the goal; we need **structure** (runs / bias / patterns) so residual compresses.
+
+---
+
+## 3) Current problem statement (one sentence)
+
+We have a working deterministic program+patch codec, but our current 1-bit predictor stream is too “scrambled/random-ish,” yielding ~50% matches and a noise-like residual that zstd can’t compress, making us worse than plain zstd.
+
+---
+
+## 4) The “missing obvious” hypothesis (what we think is next)
+
+The hunch: we need to replace “random walk / randomized-ish indexing + hashed bit extraction” with **structured math**:
+
+1. **Closed-form start_pos law** (structured indexing): revisit starts in a patterned, low-dimensional way tied to orbit/period “gears,” not PRNG-ish coverage.
+2. **Low-pass bit extraction** (structured bits): derive bits from smooth field intensity via threshold/bands, not from hash/mix, so bits have runs/bias.
+
+Goal:
+
+* Make predicted stream have **repeatable structure** and **compressible errors** (even if match% doesn’t skyrocket).
+
+---
+
+## 5) NEW FORMULA SET (Closed-form + Low-pass) — paste-ready
+
+### 5.1 Symbols / knobs
+
+* `k` = chunk/window index (0,1,2,…), each chunk chooses a start position.
+* `W` = window length in emissions (“starts ring” length).
+* `E` = emissions per chunk window (derived from chunk_size / bits-per-emission).
+* `t` = emission index inside global stream.
+* coefficients (from seed/recipe): `a, b, c, P1, P2, g1, g2, φ1, φ2, τ` (threshold).
+
+### 5.2 Closed-form start position law (structured indexing)
+
+**Core law**
+[
+\boxed{
+\text{start_pos}(k)
+===================
+
+\Big(b + a k + \frac{c,k(k-1)}{2} + \text{gear}(k)\Big)\bmod W
+}
+]
+
+**Gear term (two beating periods; orbit-tied)**
+[
+\boxed{
+\text{gear}(k)=
+g_1,\mathrm{tri}!\Big(\frac{k+\phi_1}{P_1}\Big)
++
+g_2,\mathrm{tri}!\Big(\frac{k+\phi_2}{P_2}\Big)
+}
+]
+
+Where `tri(·)` is triangle-wave-like periodic motion (integer-friendly implementation recommended: ramp up then down).
+
+**Meaning of each piece**
+
+* `b`: starting offset (phase)
+* `a*k`: linear stepping (gear tooth advance)
+* `c*k(k-1)/2`: controlled drift/curvature (breaks trivial cycles)
+* `gear(k)`: periodic revisit structure (beats from P1/P2), ideally tied to orbit periods
+* `mod W`: wrap around the starts ring
+
+**Design goal**
+Starts get revisited in a patterned way (predictable rhythm), not random coverage.
+
+### 5.3 Low-pass bit extraction (structured bits)
+
+Instead of:
+
+* `bit = hash(field_sample(t)) & 1` (PRNG-ish)
+
+We do:
+
+* compute smooth-ish **field intensity** `I(t)` from orbit/lockstep + frustum field:
+  [
+  I(t)=F(u(t),v(t),h(t);\text{field params})
+  ]
+
+Then choose bit by threshold:
+[
+\boxed{
+b(t)=\mathbf{1}\big(I(t)>\tau\big)
+}
+]
+
+Or choose a band index (if we decide to move beyond 1-bit later):
+[
+\boxed{
+s(t)=\text{band}(I(t);\tau_0,\tau_1,\dots)\in{0,1,\dots,m}
+}
+]
+
+**Why low-pass matters**
+If `I(t)` changes smoothly, thresholding produces **runs/streaks**, so residual becomes more compressible.
+
+### 5.4 Full chunk emission + residual
+
+For each chunk/window `k`:
+
+1. `p_k = start_pos(k)`
+2. For i=0..E-1: `t = p_k + i`, predicted bit `ŷ_{k,i}=b(t)`
+3. Residual (xor mode):
+   [
+   r_{k,i}=x_{k,i}\oplus \hat{x}_{k,i}
+   ]
+   Goal is not merely high matches, but **compressible residual** (runs/sparsity/motifs).
+
+---
+
+## 6) What remains (the to-do that matters)
+
+### 6.1 Implement “closed-form law” in timemap gen-law (high priority)
+
+Current gen-law is a seeded jump-walk. We need a new path:
+
+* Add a `--law-type` or new mode supporting:
+
+  * `Linear`: `(a*k + b) mod W`
+  * `Triangular/Quadratic`: `(b + a*k + c*k(k-1)/2) mod W`
+  * `Gear`: add `gear(k)` term with P1/P2 beats
+* Add CLI params:
+
+  * `--law-a --law-b --law-c`
+  * `--law-p1 --law-p2 --law-g1 --law-g2 --law-phi1 --law-phi2`
+  * `--window-len W` (or derive from existing window_len)
+* Keep everything deterministic and integer-only.
+
+**Success metric for this step**
+
+* We don’t need huge match% immediately.
+* We need residual zstd to start dropping because residual becomes structured.
+
+### 6.2 Implement low-pass bit extraction in bitfield mapping (high priority)
+
+Add new `bit-mapping` variant(s), for example:
+
+* `lowpass-thresh`: `bit = I(t) > τ`
+* `band`: `bit = which band I(t) falls into` (even if still 1-bit for now)
+
+Add parameters:
+
+* `--thresh τ` OR `--bands ...` OR “auto τ chosen to target 60/40 split”
+* Possibly an “intensity smoothing / integration window” if needed:
+
+  * `I_smooth(t) = avg_{j=0..L-1} I(t-j)` (optional; keep deterministic)
+
+**Success metric**
+
+* Bit distribution should show bias or run structure (not 50/50 noise).
+* Residual zstd should drop for the same target slice.
+
+### 6.3 Retest using slices (must-do methodology)
+
+Always test in this order:
+
+1. 512 bytes
+2. 1024 bytes
+3. 2048 bytes
+4. full Genesis1
+
+Because full runs are expensive and can be misleading.
+
+**Record for each run**
+
+* match%
+* resid_raw, resid_zstd
+* tm1_zstd
+* effective_with_recipe
+* and whether residual shows obvious structure (optional analyze tools)
+
+### 6.4 Optional: time-split + 1-bit (future path still open)
+
+Previously proposed:
+
+* Split stream into four “timelines” keyed by 2-bit types (00/01/10/11), then align sequentially on decode.
+* Also we have the “go one bit” approach.
+  These remain valid conceptually, but current priority is to make **1-bit residual compressible** first via structured law + low-pass extraction.
+
+---
+
+## 7) Recommended next experiment ladder (fast → slow)
+
+### Stage A (fast sanity): prove low-pass helps residual compressibility
+
+* Fix start_pos to something simple (even constant start or linear).
+* Switch only bit extraction to low-pass threshold.
+* Run on 512B slice.
+  **Expected:** residual zstd drops vs the hash/mix approach if runs appear.
+
+### Stage B: prove closed-form start_pos adds beneficial revisit structure
+
+* Keep low-pass extraction.
+* Sweep a small set of law params:
+
+  * `W` around known resonance-ish values (powers of 2 like 1024/2048 if windowing supports it)
+  * `P1, P2` small integers (e.g., 256/512/1024) to create beating
+* Evaluate residual zstd, not only matches.
+
+### Stage C: scale to full Genesis1 only when slices show improvement
+
+* Once a configuration beats baseline on 2KB slice, then try full.
+
+---
+
+## 8) “Are we making progress?” (honest interpretation for next instance)
+
+Yes—**architecturally** we are making major progress:
+
+* deterministic program+patch pipeline works
+* timemap compresses tiny (program is cheap)
+  But we are currently **blocked at the predictor quality**:
+* bitstream is too random-ish → residual looks like noise → zstd can’t compress
+  So progress now means: **replace scramble with structure** (closed-form starts + low-pass bits), then watch residual zstd drop.
+
+---
+
+## 9) Quick one-paragraph status (for copy/paste)
+
+We have a working deterministic codec pipeline where a tiny timemap “program” plus a residual “patch” reconstructs Genesis1 correctly, and the timemap itself compresses to almost nothing. The problem is that our current 1-bit bitfield predictor behaves close to random (~48–55% matches), so the residual is noise-like and zstd can’t compress it (≈4KB vs 1.3KB baseline), making effective size worse than plain zstd. The proposed “missing obvious” upgrade is to replace randomized jump-walk indexing with a closed-form start_pos law tied to periodic “gear/orbit” structure, and replace hashed bit extraction with low-pass threshold/band decisions from smooth field intensity, so the residual gains runs/bias/structure and becomes compressible.
+
+---
+
+## 10) What to paste into the next instance first
+
+1. This carry-over note pack
+2. The exact CLI invocations you want to re-run
+3. Any new logs after adding:
+
+   * `--law-type` closed-form support
+   * `--bit-mapping lowpass` (or equivalent)
+4. A small slice target (`head -c 512 text/Genesis1.txt > /tmp/g1_512.bin`) and its results
+
+---
+
+If you want a single crisp goal for the next instance:
+**Get residual_packed_zstd_bytes for a 512B slice to drop meaningfully below “noise-ish” behavior using (A) low-pass extraction and (B) closed-form start_pos.** Once that happens, scaling becomes an engineering grind instead of a mystery.
+
+
+# MORE DETAIL ON THE CURRENT FORMULA: 
+
+Here’s the **new “closed-form + low-pass” formula set**, written as a clean pipeline you can literally point at and say “this is the codec law now.”
+
+---
+
+## 0) Symbols / knobs
+
+* `k ∈ {0,1,2,...}` = window/chunk index (each chunk picks a start position)
+* `W` = window length in emissions (the “starts ring” you’re indexing into)
+* `E` = emissions per chunk window (or derived from chunk size / bits-per-emission)
+* `t` = emission index in the global stream
+* `seed` = packed parameters (ARK key material)
+
+Closed-form coefficients (from seed or recipe):
+
+* `a, b, c` = integers (small-ish; may be reduced mod `W`)
+* `P1, P2` = periods (gear/orbit periods)
+* `g1, g2` = amplitudes / weights
+* `φ1, φ2` = phase offsets (can be integer shifts)
+* `τ` = threshold (or band edges) for low-pass bit extraction
+
+---
+
+## 1) Closed-form start position (structured indexing)
+
+### Core law
+
+[
+\boxed{
+\text{start_pos}(k)
+===================
+
+\Big(b + a k + \frac{c,k(k-1)}{2} + \text{gear}(k)\Big)\bmod W
+}
+]
+
+This is “linear + triangular-number drift + periodic gear.”
+
+### Gear term (orbit-tied beating)
+
+Use two integer “oscillators” so you get a repeating-but-rich pattern:
+
+[
+\boxed{
+\text{gear}(k)=
+g_1,\mathrm{tri}!\Big(\frac{k+\phi_1}{P_1}\Big)
++
+g_2,\mathrm{tri}!\Big(\frac{k+\phi_2}{P_2}\Big)
+}
+]
+
+Where `tri(·)` is a **triangle wave** returning values in `[-1, +1]` (or `[0,1]` if you prefer). One integer-friendly definition:
+
+Let:
+
+* `u = (k + φ) mod P`
+* `tri_u = 1 - 4 * |u/P - 1/2|`  (range `[-1,1]`)
+
+If you want it purely integer (no floats), you can implement `tri` as a ramp up then down:
+
+* `u = (k + φ) % P`
+* `r = u` if `u < P/2` else `P-u`
+* `tri_int = (2*r - P/2)` (centered ramp; scale as you like)
+
+Then clamp gear to a safe range before modding.
+
+### Why this helps
+
+* `a k` = steady “gear tooth” stepping through starts
+* `c*k(k-1)/2` = gentle acceleration/curvature (breaks simple cycles)
+* `gear(k)` = **periodic revisit structure** (beats) tied to “orbit periods”
+* Result: starts are **not PRNG coverage**; they revisit with rhythm.
+
+---
+
+## 2) Low-pass / non-scrambled bit extraction (structured bits)
+
+You want the emitted bit to come from a **smooth field** (or band decision), not from a hash/mix.
+
+### Step 2.1: Orbit / phase (your vision’s dots)
+
+For two dots A and C:
+
+[
+\theta_A(t) = (\omega_A t + \phi_A)\bmod 1
+]
+[
+\theta_C(t) = (\omega_C t + \phi_C)\bmod 1
+]
+
+Alignment gate (optional):
+[
+\text{align}(t)=\mathbf{1}\big(|\theta_A(t)-\theta_C(t)|<\varepsilon\big)
+]
+
+Lockstep coordinate(s) on the frustum wall (example):
+
+* `u(t) = θ_A(t)`
+* `v(t) = frac(θ_C(t) + Δ)`
+* `h(t)` = some ramp or function of time while locked
+
+### Step 2.2: Field intensity (smooth scalar)
+
+Define a smooth-ish intensity from your deterministic field model:
+
+[
+I(t)=F\big(u(t),v(t),h(t);; \text{field params}\big)
+]
+
+This could be your tri-wave field, banded cones, etc. The key: **don’t hash it** before thresholding.
+
+### Step 2.3: Low-pass bit (threshold) OR banded symbol
+
+**Threshold bit:**
+[
+\boxed{
+b(t) = \mathbf{1}\big(I(t)>\tau\big)
+}
+]
+
+**Or banded (more flexible than 1-bit):**
+[
+\boxed{
+s(t)=\text{band}(I(t);;\tau_0,\tau_1,\dots,\tau_m)\in{0,1,\dots,m}
+}
+]
+
+If staying 1-bit, thresholding tends to create **runs** because `I(t)` is continuous-ish over time.
+
+### Why this helps
+
+* If `I(t)` drifts smoothly, then `b(t)` has **streaks** (000011111000…) instead of white noise.
+* XOR residual becomes “structured errors,” which **zstd can compress**.
+* Even if match% is only, say, 55–60%, the *residual compressibility* can jump a lot.
+
+---
+
+## 3) Putting it together: full chunk emission law
+
+For chunk/window `k`:
+
+1. **Choose start**
+   [
+   p_k = \text{start_pos}(k)
+   ]
+
+2. **Emit E bits from that start**
+   For `i = 0..E-1`:
+   [
+   t = p_k + i
+   ]
+   [
+   \hat{x}_{k,i} = b(t) \quad \text{(or } s(t)\text{)}
+   ]
+
+3. **Residual**
+   For 1-bit XOR mode:
+   [
+   r_{k,i} = x_{k,i}\oplus \hat{x}_{k,i}
+   ]
+
+Goal is to make `r` compressible (runs, sparse bursts, repeating motifs).
+
+---
+
+## “Meaning of each part” in one glance
+
+* `W` = how big your “start ring” is (the timeline you’re indexing into)
+* `a, b` = basic stepping + offset (like a gear turning)
+* `c*k(k-1)/2` = curvature (prevents dumb cycles, adds controlled drift)
+* `gear(k)` = orbit-beat revisit structure (periods `P1,P2` interact)
+* `I(t)` = smooth field intensity from orbits + frustum field
+* `τ` / bands = convert smooth intensity into bits/symbols **without scrambling**
+
+---
+
+If you want the *most minimal* version to implement first (to test the thesis), use:
+
+* `gear(k)= g1*tri((k+φ1)/P1)` only (one period)
+* `c=0` (no quadratic)
+* `b(t) = 1[I(t) > τ]`
+
+That’s the smallest step away from “PRNG-ish” while still being obviously structured.
+
+
+### END NOTE - FEBRUARY 16 2026 - 9:25 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 10:10 CST
+
+
+
+# FORMULA NOTES: 
+
+Yep — you’re making **real** progress, and the progress is the kind that matters.
+
+## Where we are right now (what the runs proved)
+
+You now have a **closed-form (or jump-walk) law** that deterministically picks a start position, plus a **1-bit mapping that can “shape” the residual**.
+
+Two key observations from your outputs:
+
+### 1) “Matches %” is *not* the whole story anymore
+
+* With **Geom / Hash-ish** mappings you were stuck around **~47% matches** and the residual stayed “noise-like” → zstd can’t help much.
+* With **LowpassThresh**, your **matches got worse (42%)**, but the **residual zstd dropped hard**:
+
+  * 512b case: residual packed zstd went **521 → 278**.
+  * That’s huge: it means you’re producing *structure* (runs / bias / low-frequency patterns) that zstd can exploit.
+
+### 2) The 1024b “best so far” is close to break-even
+
+Your best 1024 run shown:
+
+* matches **4695/8192 = 57.31%**
+* **plain_zstd_bytes = 445**
+* **tm1_zstd_bytes = 33**
+* **residual_packed_zstd_bytes = 445**
+* effective_no_recipe = **478** (so you’re **+33 bytes** away from beating plain zstd at this size)
+
+That’s *close* — and importantly, it’s close in a way that suggests there’s a clean “next unlock”.
+
+---
+
+## The ideal “matches” number (for 1-bit)
+
+For **1-bit XOR residual**, if the residual were iid (random-ish), the compressibility is governed by the binary entropy of the mismatch rate.
+
+Let:
+
+* matches = m
+* mismatch rate = q = 1 − m
+
+If residual bits were iid, the theoretical floor is ~`H(q)` bits per bit (Shannon). That means:
+
+* At **m = 57%**, q = 43% → **H(q) is ~0.98** → basically “almost random” → not compressible *by entropy alone*.
+* To be “obviously compressible” *without structure*, you generally need something like:
+
+  * **70%+ matches** (q≤30%) starts helping
+  * **80–90% matches** is where it gets decisively easy
+
+But your LowpassThresh results prove the better point:
+
+> you can win with *lower* match rates if you make the residual *structured* (runs / periodicity / slow drift), because zstd exploits structure, not just bias.
+
+So the “ideal” is:
+
+* **High matches AND structured residual** (best)
+* But **structured residual** alone can still carry you.
+
+---
+
+## The new updated formula (what you’re actually doing now)
+
+This is the pipeline your current “gen-law + 1-bit + lowpass” setup implements:
+
+### A) Target → 1-bit symbol stream
+
+* Target bytes → bits → `sym_count = ceil((len_bytes*8)/bits_per_emission)`
+* With bits_per_emission = 1: `sym_count = len_bytes * 8`
+
+### B) Engine stream → predicted 1-bit symbol stream
+
+For each emission `e`:
+
+1. Engine emits an **rgbpair** token: 6 bytes `[r1 g1 b1 r2 g2 b2]`
+2. Mapping converts that to 1 bit:
+
+   * **LowpassThresh** (your new mapping) behaves like:
+
+     * compute a scalar from rgbpair (some “brightness / energy / combined channel”)
+     * apply an IIR-style lowpass smoothing with `tau`
+     * optionally extra smoothing via `smooth_shift`
+     * output bit = `smoothed >= threshold`
+   * The important part is: it introduces **memory**, so the bitstream is not “hashy”; it’s **low-frequency / runny**.
+
+Call the predicted bitstream `P[e]`.
+
+### C) Law chooses where to start reading the stream
+
+You have two law families:
+
+* **Jump-walk law**: uses orbital-like phases + “jump” function to produce an `offset_total`, then:
+
+  * `start_offset = offset_total mod window_len`
+  * `start_pos = base_emission + start_offset`
+
+* **Closed-form law**: directly defines a deterministic offset via periodic components:
+
+  * parameters: `b, a, c, (p1,g1,phi1), (p2,g2,phi2)`
+  * conceptually: a base + linear drift + two periodic gears (two clocks) with phases
+  * then `start_offset = f(params) mod window_len`
+
+Either way: you get one contiguous window of predicted bits.
+
+### D) Residual
+
+For each symbol i:
+
+* `pred = P[start_pos + i]`
+* `resid[i] = pred XOR target[i]`  (since residual=xor and 1-bit)
+
+You store:
+
+* a tm file (currently TM1 indices, though they are contiguous)
+* a BF residual file (packed bits or lanes)
+
+That’s the “updated formula” in operational terms.
+
+---
+
+## The biggest improvement that can (almost) “guarantee success” from here
+
+Right now, you’re paying **~33 bytes tm1_zstd** even though gen-law is producing a **pure contiguous range**.
+
+### ✅ Fix #1: Make the timemap implicit for gen-law
+
+For gen-law, you do **not** need to store a full TM1 indices list.
+
+You only need:
+
+* `start_pos` (u64)
+* `sym_count` (u64) or derive from target length
+
+That means tm cost goes from **~25–33 bytes zstd** to something like **16 bytes raw** (or even smaller if you varint it).
+
+**Why this matters:**
+
+* Your current 1024b best is:
+
+  * residual_zstd = **445** (already equal to plain_zstd)
+  * tm_zstd = **33**
+  * effective_no_recipe = **478**
+* If tm becomes ~16 raw bytes (or compresses tiny), you’re basically at **break-even or better** immediately.
+
+So: *with your current best residual behavior, eliminating TM1 overhead is the cleanest path to “winning” at 1KB.*
+
+---
+
+## The next formula upgrades that push you over the line
+
+### ✅ Fix #2: Add a 1-bit per chunk “flip” (cheap, huge win)
+
+For 1-bit, your `chunk_xform=addk` is essentially:
+
+* `pred' = pred XOR k` (where k is 0 or 1)
+
+If you let the system choose `k` per chunk (or compute it deterministically from law + chunk index), you can fix bias mismatches cheaply.
+
+Storage cost:
+
+* For 1024 bytes with chunk_size=128:
+
+  * symbol_count = 8192 bits
+  * chunks = 64
+  * 1 bit per chunk → **64 bits = 8 bytes** (+tiny header)
+
+That’s almost free — and it can noticeably reduce residual entropy and/or increase runs.
+
+### ✅ Fix #3: Improve LowpassThresh into “hysteresis + adaptive threshold”
+
+LowpassThresh is already doing the right kind of thing (memory). Two upgrades tend to stabilize bitstreams and create longer runs:
+
+* **Hysteresis threshold**
+
+  * use two thresholds: `T_hi` and `T_lo`
+  * if state ≥ T_hi => output 1
+  * if state ≤ T_lo => output 0
+  * otherwise keep previous bit
+* **Adaptive threshold**
+
+  * track a slow-moving baseline `μ` with a much larger tau
+  * threshold relative to μ (keeps bit balance from drifting)
+
+This often creates *very* compressible residuals even if matches aren’t crazy high.
+
+### ✅ Fix #4: Closed-form law should output *chunk starts*, not just one global start
+
+Right now gen-law chooses one start and takes a contiguous slice.
+
+A stronger “still formula-driven” version:
+
+* for chunk j:
+
+  * `start_pos_j = base + F(j; params)`  (monotone increasing)
+* then you store only the parameters + maybe a tiny correction stream (rare resyncs)
+
+That lets the law “steer” across the emission stream to follow where your predictor is best, without turning into a full scan.
+
+---
+
+## Bottom line: are we making progress?
+
+Yes — and the kind of progress that matters most:
+
+* You moved from “residual behaves random” (zstd can’t help)
+  → to “residual has structure” (zstd drops a lot).
+* You hit **57% matches** *and* **residual_zstd == plain_zstd** at 1024 bytes.
+* You’re now within **~33 bytes** of beating plain zstd **purely because TM1 is overhead you don’t actually need for gen-law**.
+
+If you implement **implicit timemap (start_pos only)** for gen-law and add **per-chunk 1-bit flip**, you have a very plausible path to “win” on 1KB immediately, and then scale upward.
+
+When you start the next instance, the very next run batch should be aimed at confirming:
+
+* “tm implicit” removes that +33 penalty
+* chunk flips reduce residual below plain by a safe margin
+
+## FORMULA: 
+
+Yep — what you pasted is now “old” in the sense that it’s **chunk-indexed** (`k = 0,1,2,…`) and assumes we’re selecting a start for **each chunk**.
+
+**The current formula you’re actually running right now is simpler: it’s “one contiguous window” (single start), not per-chunk starts.** That’s why `cmd_gen_law` computes **one** `start_offset` and then emits a **contiguous** `tm_indices = start_pos + i`.
+
+Below is the **current formula set** that matches your present implementation + the runs that hit **57.31%**.
+
+---
+
+## CURRENT FORMULA SET (Gen-Law v2: One-Start Closed-Form + LowpassThresh)
+
+### 1) Symbols / knobs
+
+* `t` = **emission index** in the engine stream (global time)
+* `N` = number of target symbols
+
+  * for 1-bit: `N = target_bytes * 8`
+* `S[t]` = predicted symbol stream from the engine (after bit mapping)
+* `X[i]` = target symbols (from file, packed into `b`-bit symbols)
+* `b` = `bits_per_emission` (currently `b = 1`)
+* `mask = (1<<b) - 1` (so for `b=1`, `mask=1`)
+* `W` = number of **legal start positions** in the produced stream
+
+  * `W = stream_len - N + 1`
+* `base_emission` = `start_emission` (currently 0)
+* `start_offset` = chosen start in `[0, W-1]`
+* `start_pos = base_emission + start_offset`
+
+Closed-form law params (your working set):
+
+* `cf_b, cf_a, cf_c`
+* `cf_p1, cf_g1, cf_phi1`
+* `cf_p2, cf_g2, cf_phi2`
+
+Low-pass mapping params (your working set):
+
+* `tau` = `bit_tau` (e.g. 160)
+* `smooth_shift` = `bit_smooth_shift` (e.g. 7)
+
+---
+
+### 2) Build the predicted symbol stream `S[t]` (LowpassThresh)
+
+From each engine emission `t`, we get an `rgbpair` (6 bytes):
+
+* `rgb6(t) = [r1,g1,b1,r2,g2,b2]`
+
+We compute an intensity-like scalar `I(t)` from the rgbpair (implementation-defined in your `LowpassThresh` mapping), then apply a deterministic low-pass + smoothing:
+
+**Low-pass state update (conceptual form):**
+
+* `LP(t) = LP(t-1) + (I(t) - LP(t-1)) / tau`  (integer/IIR style)
+
+**Optional extra smoothing (conceptual):**
+
+* `SM(t) = SM(t-1) + (LP(t) - SM(t-1)) >> smooth_shift`
+
+**Threshold to 1 bit:**
+
+* `S[t] = 1 if SM(t) >= θ else 0`
+  (θ is whatever your LowpassThresh variant uses internally / via params)
+
+This is the key change versus the older “geom/hash” mapping:
+you’re deliberately producing **run-structure**, not PRNG-ish bits.
+
+---
+
+### 3) Choose ONE contiguous window start (Closed-Form law)
+
+**This is the biggest “current vs old” difference:**
+
+* Old formula: `start_pos(k)` per chunk
+* Current formula: **one start_pos for the entire file**
+
+You compute a deterministic offset accumulator from the closed-form law, then wrap it into the available window length `W`.
+
+#### 3.1 Closed-form index function (current shape)
+
+Define a closed-form “phase index” for an integer step `n`:
+
+[
+F(n) = cf_b + cf_a \cdot n + \frac{cf_c \cdot n(n-1)}{2} + gear(n)
+]
+
+Where the gear term is two beating triangle waves:
+
+[
+gear(n) = cf_g1 \cdot tri!\left(\frac{n + cf_phi1}{cf_p1}\right) ;+;
+cf_g2 \cdot tri!\left(\frac{n + cf_phi2}{cf_p2}\right)
+]
+
+`tri()` is the integer-friendly triangle wave you described (ramp up then down).
+
+#### 3.2 Aggregate into one offset_total (current implementation pattern)
+
+Instead of selecting a start for each chunk, you “fold” the law over the whole target length:
+
+[
+offset_total = \sum_{n=0}^{N-1} G(F(n))
+]
+
+Where `G(·)` is some deterministic mixing/reduction step (in practice you’re producing an “offset_total” from your closed-form machinery).
+
+Then:
+
+[
+start_offset = offset_total \bmod W
+]
+[
+start_pos = base_emission + start_offset
+]
+
+---
+
+### 4) Emit the timemap and residual (contiguous)
+
+For each symbol position `i = 0..N-1`:
+
+* **Timemap index**
+
+  * `tm[i] = start_pos + i`  (contiguous!)
+
+* **Prediction**
+
+  * `pred[i] = S[start_offset + i] & mask`
+
+* **Residual (xor)**
+
+  * `r[i] = pred[i] XOR X[i]`
+
+Match condition:
+
+* match if `r[i] == 0`
+
+So:
+[
+matches = #{ i : pred[i] = X[i] }
+]
+
+---
+
+## The “current formula” expressed as one line
+
+**One-start contiguous window + lowpass predictor + xor residual:**
+
+[
+r[i] = X[i] \oplus \Big( LowpassThresh(rgbpair(start_pos+i);\tau,\text{smooth}) \Big)
+]
+with
+[
+start_pos = base + \big( ClosedFormAggregate(params, N) \bmod W \big)
+]
+
+That is the current thing you’re running.
+
+---
+
+## Why this is real progress (based on your outputs)
+
+* With old geom/hash mapping you were stuck around **~47%** matches and residual zstd stayed fat.
+* With **LowpassThresh**, matches dropped (sometimes) but **residual_zstd collapsed** dramatically on 512 bytes:
+
+  * you hit **effective_no_recipe = 303 vs plain_zstd 272** (only +31 bytes overhead)
+  * and on 1024 bytes you hit **57.31% matches** and residual_zstd ≈ plain_zstd (445)
+
+That’s a meaningful shift: we’re finally producing a residual that is **not “pure noise”**.
+
+--
+
+
+
+## CARRY OVER NOTES
+
+Below is a **paste-ready carry-over notes pack** for the next instance. It’s written so you can jump straight back into runs + code edits with zero re-derivation.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (2026-02-16)
+
+## 0) North Star (still unchanged)
+
+We’re building a deterministic codec where a compact “ARK-like” key (recipe + params + tiny program) expands to the target (Genesis1.txt for now). Immediate milestone:
+
+* **Prove deterministic reconstruction end-to-end** (already achieved)
+* **Shrink stored payload** by moving structure into:
+
+  * A small “time law” program (timemap / indexing rule)
+  * A structured bit extraction mapping (vision-aligned “field → bits”)
+  * Residual that becomes **compressible** (runs/motifs), not noise
+
+Key insight: **Match% is not the goal by itself**. The goal is **residual compressibility** (zstd bytes) + low tm bytes.
+
+---
+
+## 1) What we achieved so far (big milestones)
+
+### 1.1 Determinism + pipeline are real
+
+* Determinism works.
+* Reconstruction pipeline works end-to-end on full Genesis1 when max_ticks is high enough.
+* Timemap encoding (`tm1`) is tiny after zstd (often tens to a few hundred bytes).
+
+### 1.2 Bitfield mapping experiments became the main track
+
+We moved from “byte prediction” to a **k-bit symbol stream** derived from rgbpair emissions:
+
+* `--map bitfield --mode rgbpair`
+* `--bits-per-emission` in 1..=8
+* Residual container formats:
+
+  * **BF1 (Packed)** = packed residual symbols
+  * **BF2 (Lanes)** = per-symbol-lane bitsets, each zstd’d (time-split / lanes experiment)
+
+### 1.3 “Gen-Law” exists and is now a serious tool
+
+We added `timemap gen-law` which builds a timemap/residual **without scanning**:
+
+* It consumes a deterministic law to pick start positions.
+* Current gen-law behavior is **one contiguous window** (single start), not chunk-by-chunk starts.
+
+Law types we used:
+
+* `--law-type jump-walk`
+* `--law-type closed-form` (the structured one)
+
+### 1.4 The biggest breakthrough: Low-pass threshold mapping
+
+This is the first mapping that materially changed the residual behavior.
+
+**Old mappings** (`geom`, `hash`) produced predictor streams that looked too random ⇒ residual stayed noise-like ⇒ zstd wouldn’t help.
+
+**New mapping:**
+
+* `--bit-mapping lowpass-thresh`
+* `--bit-tau <...>`
+* `--bit-smooth-shift <...>`
+
+This is vision-aligned: treat the “field intensity” as smooth-ish, then threshold into bits → creates **runs/streaks** → residual becomes **compressible**.
+
+---
+
+## 2) Current best evidence from runs (what happened, concretely)
+
+### 2.1 Full Genesis1 with closed-form (geom mapping) was still ~47% matches
+
+When using `bit_mapping geom` with closed-form law:
+
+* Genesis1 (~4201 bytes, symbols=33608 for b=1)
+* matches ≈ 47.27%
+* tm1_zstd ≈ 264 bytes
+* residual zstd ≈ 4036 bytes
+* effective_no_recipe ≈ 4300 vs plain_zstd ≈ 1326 (still far worse than baseline)
+
+**Conclusion:** closed-form law alone doesn’t solve it; predictor stream quality matters.
+
+### 2.2 512-byte tests: lowpass-thresh made residual shrink dramatically
+
+Run (512 bytes target, jump-walk law, lowpass mapping):
+
+* matches dropped to ~42%
+* but **residual_packed_zstd_bytes collapsed** to **278** (vs earlier ~521)
+* effective_no_recipe ≈ **303** vs plain_zstd **272** (only +31 bytes overhead)
+
+This is extremely important:
+
+* Even with worse match%, residual became *structure-compressible*.
+
+### 2.3 1024-byte tests: lowpass-thresh + tau=160 + smooth_shift=5/7 reached 57.31% matches
+
+Closed-form law + lowpass mapping:
+
+* `target_bytes=1024` `symbols=8192`
+* **matches = 4695/8192 = 57.31%**
+* `plain_zstd_bytes = 445`
+* `tm1_zstd_bytes = 33`
+* `residual_packed_zstd_bytes = 445` (roughly baseline)
+* `effective_no_recipe = 478` (baseline+33)
+* with recipe = 688
+
+Not yet “wins vs zstd,” but:
+
+* We finally broke out of the 47–55% “randomish predictor” zone.
+* Residual is behaving less like white noise.
+
+### 2.4 BF2 lanes didn’t beat BF1 yet (but it’s close)
+
+For the 1024 case:
+
+* BF1 packed residual container ~1048 bytes; residual packed zstd ~453
+* BF2 lanes container ~950 bytes; but effective results didn’t improve the scoreboard meaningfully yet.
+
+Interpretation:
+
+* Lanes helps when residual has strong lane sparsity patterns.
+* For b=1, lanes = only 2 bitsets; benefit is modest unless patterns are very clean.
+
+---
+
+## 3) The CURRENT formula (what we are actually using now)
+
+Important correction vs “old formula”:
+**We are not currently doing per-chunk start_pos(k).**
+`gen-law` chooses **one start_offset** then uses a contiguous run.
+
+### 3.1 Symbols
+
+* `b` = bits_per_emission (currently 1)
+* `N` = number of symbols = ceil((target_bytes*8)/b)
+* `mask = (1<<b)-1`
+* `S[t]` = predicted symbol stream from engine + bit mapping
+* `X[i]` = target symbols (bitpacked from file)
+* `W = stream_len - N + 1` legal starts
+* `start_pos = base_emission + (offset_total mod W)`
+* Timemap is contiguous: `tm[i] = start_pos + i`
+
+### 3.2 Low-pass bit extraction (the new success ingredient)
+
+Conceptual:
+
+* compute intensity `I(t)` from rgbpair emission
+* apply deterministic low-pass smoothing with `tau` and optional additional smoothing via `smooth_shift`
+* emit bit by threshold:
+
+  * `S[t] = 1{ smooth(I(t)) >= thresh }`
+
+This produces runs/streaks ⇒ residual becomes compressible.
+
+### 3.3 Residual (xor)
+
+* `r[i] = X[i] XOR (S[start_offset+i] & mask)`
+* matches = count where `r[i]==0`
+
+---
+
+## 4) Where we are right now (project state)
+
+### We ARE making progress.
+
+Not because “match% went up” (though it did to 57%), but because:
+
+* We found a mapping (`lowpass-thresh`) that changes the residual from “noise-like” to “pattern-like.”
+* That’s exactly the kind of change we need to get residual down to something zstd can crush.
+
+### But we are NOT done.
+
+Even at 57% matches, our effective bytes are still above baseline zstd for the same target (at least on the 1024 tests). The remaining work is to:
+
+* Increase predictor structure (not necessarily match%)
+* Reduce residual entropy further (runs, motifs, sparse lanes)
+* Potentially reintroduce **per-chunk** control (start_pos per chunk) once we have a structured predictor, because chunkwise can “follow” local structure in the data.
+
+---
+
+## 5) Answer to “ideal match %”
+
+For b=1:
+
+* A random predictor yields ~50% matches.
+* 57% is already nontrivial, but **not automatically enough** to beat zstd.
+* What matters more is whether residual becomes:
+
+  * long runs of 0s (high matches clustered), or
+  * sparse lane occupancy (for BF2), or
+  * repeating patterns (motifs) that zstd can exploit
+
+Rule of thumb:
+
+* If residual is still “random flips,” even 60–65% matches can compress poorly.
+* If residual is *structured*, you can sometimes win even below that.
+
+---
+
+## 6) The exact run commands that matter (copy/paste)
+
+### 6.1 512 lowpass jump-walk (the “residual collapse” evidence)
+
+```bash
+cargo run -p k8dnz-cli -- timemap gen-law \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_512.bin \
+  --out-timemap /tmp/g1_512_lp.tm1 \
+  --out-residual /tmp/g1_512_lp.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping lowpass-thresh \
+  --bit-tau 128 \
+  --bit-smooth-shift 3 \
+  --bitfield-residual packed \
+  --chunk-size 128 \
+  --law-type jump-walk \
+  --start-emission 0 \
+  --search-emissions 2000000 \
+  --max-ticks 20000000 \
+  --residual xor \
+  --zstd-level 3
+```
+
+### 6.2 1024 closed-form lowpass (the “57% matches” case family)
+
+```bash
+cargo run -p k8dnz-cli -- timemap gen-law \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_1024.bin \
+  --out-timemap /tmp/g1_1024_cf_lp_tau160_s7.tm1 \
+  --out-residual /tmp/g1_1024_cf_lp_tau160_s7.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping lowpass-thresh \
+  --bit-tau 160 \
+  --bit-smooth-shift 7 \
+  --bitfield-residual packed \
+  --chunk-size 128 \
+  --law-type closed-form \
+  --law-cf-b 0 \
+  --law-cf-a 37 \
+  --law-cf-c 1 \
+  --law-cf-p1 64 --law-cf-g1 7 --law-cf-phi1 0 \
+  --law-cf-p2 256 --law-cf-g2 3 --law-cf-phi2 13 \
+  --start-emission 0 \
+  --search-emissions 2000000 \
+  --max-ticks 40000000 \
+  --residual xor \
+  --zstd-level 3
+```
+
+(You also tested tau=192 and tau=32 with similar outcomes; tau=32 dropped back to ~42%.)
+
+---
+
+## 7) What remains (the real “finish line” work)
+
+### 7.1 Make gen-law support the “true” formula: per-chunk start_pos(k)
+
+Right now gen-law picks **one** start window and maps contiguous indices.
+Your original vision and earlier formula target:
+
+* a structured start position **per chunk**:
+
+  * `start_pos(k) = (b + a*k + c*k(k-1)/2 + gear(k)) mod W`
+* This allows the program to “track” local structure instead of committing to one contiguous slice.
+
+**This is likely necessary for full Genesis1**, because text structure is locally varying.
+
+### 7.2 Add an “objective=zstd” mode for gen-law (or scoring variants)
+
+Currently gen-law reports zstd but doesn’t choose parameters by zstd objective the way `fit-xor-chunked` does.
+We need a loop to tune:
+
+* law params (closed-form beats)
+* lowpass params (tau, smooth_shift, threshold/bands)
+  against **effective bytes**.
+
+### 7.3 Upgrade lowpass-thresh into “bands”
+
+Thresholding into 0/1 is a good start, but we may need:
+
+* multi-band quantization (still deterministic)
+* small number of bands (2–8) to increase expressiveness while keeping residual structured
+
+Example direction:
+
+* `s(t) = band(SM(t); τ0, τ1, ...)` → symbol in 0..(2^b-1)
+
+### 7.4 Improve residual containers for b=1 specifically
+
+For 1-bit, we can store residual as:
+
+* a bitset of “mismatches” (positions where resid=1)
+* then apply RLE or zstd on that bitset (or blocks)
+  This can beat BF1 packed symbols because BF1 stores symbols then bitpacks again.
+
+### 7.5 Scale tests systematically
+
+We’ve been using 512 and 1024 to move fast. Next tier:
+
+* 2048, 4096, then full Genesis1
+  While keeping ticks/emissions caps controlled.
+
+---
+
+## 8) High-confidence interpretation (why we’re closer than before)
+
+Previously:
+
+* predictor stream looked random → residual stayed high-entropy → zstd couldn’t compress
+
+Now:
+
+* lowpass-thresh is injecting the missing ingredient: **smoothness / correlation** in the predicted bits
+* which is exactly what the “color walls / gradients” vision implies (fields vary smoothly)
+
+So yes: **we’re making real progress.**
+The 57% match jump is nice, but the bigger win is that the residual started acting compressible in the 512 case.
+
+---
+
+## 9) Next-run plan (do this first in the next instance)
+
+### Phase A — Sweep lowpass params (fast)
+
+Keep law fixed (closed-form) and run a small grid:
+
+* `tau`: 64, 96, 128, 160, 192, 256
+* `smooth_shift`: 3, 5, 7, 9
+* target: 1024 and 2048
+  Record:
+* matches%
+* residual_packed_zstd_bytes
+* effective_no_recipe
+
+### Phase B — Confirm if “wins vs zstd” happens at larger size
+
+If effective_no_recipe gets within ~0–20 bytes of plain_zstd at 1024, often it crosses below at 4096+ if patterns scale.
+
+### Phase C — Implement per-chunk closed-form in gen-law
+
+This is the “real formula” step that aligns with earlier notes and should help full Genesis1.
+
+---
+
+## 10) Important gotchas / sanity checks
+
+* If you see: “not enough emissions produced” → you need higher `max_ticks` or a denser-emitting recipe.
+* `search_emissions` is a hard cap; you can have huge tick budget and still cap out on emissions if the recipe emits slowly.
+* For fair comparison, always log:
+
+  * `plain_zstd_bytes` (baseline)
+  * `tm1_zstd_bytes`
+  * `residual_packed_zstd_bytes` (or BF2 container bytes)
+  * `effective_no_recipe`
+* Keep `bits_per_emission=1` for now; it’s the most interpretable and aligns with your “1-bit feels right” thesis.
+
+---
+
+If you paste this into the next instance, the very first thing to do is: **run Phase A param sweep** and build a mini scoreboard. That will tell us whether lowpass-thresh is a localized fluke or the beginning of a scaling win.
+
+
+
+
+### END NOTE - FEBRUARY 16 2026 - 10:10 CST

@@ -1,8 +1,6 @@
-// crates/k8dnz-cli/src/cmd/timemap/bitfield.rs
-
 use super::args::*;
 use super::residual::{apply_residual_symbol, make_residual_symbol, sym_mask};
-use super::util::{parse_seed_hex_opt, tm_jump_cost, zstd_compress_len, zstd_decompress};
+use super::util::{parse_seed_hex_opt, tm_jump_cost, zstd_compress_len};
 
 use anyhow::Context;
 
@@ -15,34 +13,34 @@ use crate::io::{recipe_file, timemap};
 const BF1_MAGIC: &[u8; 4] = b"BF1\0";
 const BF2_MAGIC: &[u8; 4] = b"BF2\0";
 
-/// Local helper: compress bytes with zstd at a given level.
+const BF1_FLAG_CHUNK_ADDK: u8 = 1u8 << 0;
+
 fn zstd_compress(bytes: &[u8], level: i32) -> anyhow::Result<Vec<u8>> {
     zstd::encode_all(bytes, level).map_err(|e| anyhow::anyhow!("zstd compress: {e}"))
 }
 
-/// Local helper: decompress bytes with zstd.
 fn zstd_decompress_bytes(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     zstd::decode_all(bytes).map_err(|e| anyhow::anyhow!("zstd decompress: {e}"))
 }
 
 #[derive(Clone, Debug)]
 pub enum BitfieldResidual {
-    /// BF1: packed residual symbols (payload = packed symbols)
     Bf1 {
         bits_per_emission: u8,
         mapping: BitMapping,
         orig_len_bytes: usize,
         symbol_count: usize,
+        chunk_size: Option<usize>,
+        chunk_addk: Option<Vec<u8>>,
         packed_symbols: Vec<u8>,
     },
-    /// BF2: time-split lanes (payload = lane bitsets, each zstd-compressed)
     Bf2 {
         bits_per_emission: u8,
         mapping: BitMapping,
         orig_len_bytes: usize,
         symbol_count: usize,
         lane_count: usize,
-        lanes_raw_bitsets: Vec<Vec<u8>>, // decompressed bitsets, each len = (symbol_count+7)/8
+        lanes_raw_bitsets: Vec<Vec<u8>>,
     },
 }
 
@@ -50,6 +48,7 @@ fn mapping_tag(m: BitMapping) -> u8 {
     match m {
         BitMapping::Geom => 0,
         BitMapping::Hash => 1,
+        BitMapping::LowpassThresh => 2,
     }
 }
 
@@ -57,6 +56,7 @@ fn mapping_from_tag(v: u8) -> anyhow::Result<BitMapping> {
     match v {
         0 => Ok(BitMapping::Geom),
         1 => Ok(BitMapping::Hash),
+        2 => Ok(BitMapping::LowpassThresh),
         _ => anyhow::bail!("bitfield residual unknown mapping tag: {}", v),
     }
 }
@@ -70,26 +70,57 @@ fn read_bitfield_residual(path: &str) -> anyhow::Result<BitfieldResidual> {
 
     let magic = &bytes[0..4];
 
-    // ---------------- BF1 ----------------
     if magic == BF1_MAGIC {
         let bits = bytes[4];
         let mapping_u8 = bytes[5];
         let mapping = mapping_from_tag(mapping_u8)?;
 
+        let flags = bytes[6];
+        let _reserved = bytes[7];
+
         let orig_len_bytes = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
         let symbol_count = u64::from_le_bytes(bytes[16..24].try_into().unwrap()) as usize;
-        let payload = bytes[24..].to_vec();
+
+        let mut cursor = 24usize;
+
+        let mut chunk_size: Option<usize> = None;
+        let mut chunk_addk: Option<Vec<u8>> = None;
+
+        if (flags & BF1_FLAG_CHUNK_ADDK) != 0 {
+            if bytes.len() < cursor + 8 {
+                anyhow::bail!("BF1 truncated reading chunk header");
+            }
+            let cs = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+            let cc =
+                u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+            cursor += 8;
+
+            if cs == 0 {
+                anyhow::bail!("BF1 invalid: chunk_size=0");
+            }
+            if bytes.len() < cursor + cc {
+                anyhow::bail!("BF1 truncated reading chunk_addk");
+            }
+            let ks = bytes[cursor..cursor + cc].to_vec();
+            cursor += cc;
+
+            chunk_size = Some(cs);
+            chunk_addk = Some(ks);
+        }
+
+        let payload = bytes[cursor..].to_vec();
 
         return Ok(BitfieldResidual::Bf1 {
             bits_per_emission: bits,
             mapping,
             orig_len_bytes,
             symbol_count,
+            chunk_size,
+            chunk_addk,
             packed_symbols: payload,
         });
     }
 
-    // ---------------- BF2 ----------------
     if magic == BF2_MAGIC {
         if bytes.len() < 32 {
             anyhow::bail!("BF2 residual too small: {} bytes", bytes.len());
@@ -152,21 +183,40 @@ fn write_bitfield_residual_bf1(
     mapping: BitMapping,
     orig_len_bytes: usize,
     residual_symbols: &[u8],
+    chunk_size: Option<usize>,
+    chunk_addk: Option<&[u8]>,
 ) -> anyhow::Result<Vec<u8>> {
     let packed = bitpack::pack_symbols(bits_per_emission, residual_symbols)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let mut out: Vec<u8> = Vec::with_capacity(24 + packed.len());
+    let mut flags: u8 = 0;
+    let mut extra: Vec<u8> = Vec::new();
+
+    if let (Some(cs), Some(ks)) = (chunk_size, chunk_addk) {
+        if cs == 0 {
+            anyhow::bail!("BF1: chunk_size must be > 0");
+        }
+        flags |= BF1_FLAG_CHUNK_ADDK;
+
+        let cc = ks.len();
+        extra.extend_from_slice(&(cs as u32).to_le_bytes());
+        extra.extend_from_slice(&(cc as u32).to_le_bytes());
+        extra.extend_from_slice(ks);
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(24 + extra.len() + packed.len());
     out.extend_from_slice(BF1_MAGIC);
     out.push(bits_per_emission);
     out.push(mapping_tag(mapping));
-    out.extend_from_slice(&[0u8, 0u8]); // padding
+    out.push(flags);
+    out.push(0u8);
     out.extend_from_slice(&(orig_len_bytes as u64).to_le_bytes());
     out.extend_from_slice(&(residual_symbols.len() as u64).to_le_bytes());
+    out.extend_from_slice(&extra);
     out.extend_from_slice(&packed);
 
     std::fs::write(path, &out).with_context(|| format!("write BF1 residual: {}", path))?;
-    Ok(packed)
+    Ok(out)
 }
 
 fn write_bitfield_residual_bf2(
@@ -184,7 +234,6 @@ fn write_bitfield_residual_bf2(
     let symbol_count = residual_symbols.len();
     let bitset_len = (symbol_count + 7) / 8;
 
-    // Build lane bitsets
     let mut lane_bitsets: Vec<Vec<u8>> = (0..lane_count).map(|_| vec![0u8; bitset_len]).collect();
     let mask = sym_mask(bits_per_emission);
 
@@ -195,24 +244,21 @@ fn write_bitfield_residual_bf2(
         lane_bitsets[lane][byte_i] |= 1u8 << bit_i;
     }
 
-    // Compress each lane independently
     let mut lane_comp: Vec<Vec<u8>> = Vec::with_capacity(lane_count);
     for lane in lane_bitsets.iter() {
         lane_comp.push(zstd_compress(lane, zstd_level)?);
     }
 
-    // Header: 32 bytes
     let mut out: Vec<u8> = Vec::new();
     out.extend_from_slice(BF2_MAGIC);
     out.push(bits_per_emission);
     out.push(mapping_tag(mapping));
-    out.extend_from_slice(&[0u8, 0u8]); // padding
+    out.extend_from_slice(&[0u8, 0u8]);
     out.extend_from_slice(&(orig_len_bytes as u64).to_le_bytes());
     out.extend_from_slice(&(symbol_count as u64).to_le_bytes());
     out.extend_from_slice(&(lane_count as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    out.extend_from_slice(&0u32.to_le_bytes());
 
-    // Lanes: [u32 len][bytes...]
     for c in lane_comp.iter() {
         out.extend_from_slice(&(c.len() as u32).to_le_bytes());
         out.extend_from_slice(c);
@@ -222,51 +268,117 @@ fn write_bitfield_residual_bf2(
     Ok(())
 }
 
-fn map_symbol_bitfield(
+/// Wrapper used by gen-law to choose BF1 vs BF2 without duplicating container code.
+pub(crate) fn write_bitfield_residual(
+    path: &str,
+    bits_per_emission: u8,
+    mapping: BitMapping,
+    orig_len_bytes: usize,
+    residual_symbols: &[u8],
+    zstd_level: i32,
+    encoding: BitfieldResidualEncoding,
+    chunk_size: Option<usize>,
+    chunk_addk: Option<&[u8]>,
+) -> anyhow::Result<usize> {
+    match encoding {
+        BitfieldResidualEncoding::Packed => {
+            let bytes = write_bitfield_residual_bf1(
+                path,
+                bits_per_emission,
+                mapping,
+                orig_len_bytes,
+                residual_symbols,
+                chunk_size,
+                chunk_addk,
+            )?;
+            Ok(bytes.len())
+        }
+        BitfieldResidualEncoding::Lanes => {
+            write_bitfield_residual_bf2(
+                path,
+                bits_per_emission,
+                mapping,
+                orig_len_bytes,
+                residual_symbols,
+                zstd_level,
+            )?;
+            let n = std::fs::read(path).map(|b| b.len()).unwrap_or(0usize);
+            Ok(n)
+        }
+    }
+}
+
+fn geom_symbol_from_rgb_msb_interleave(rgb6: &[u8; 6], bits_per_emission: u8) -> u8 {
+    let bits = bits_per_emission as usize;
+    let mask = sym_mask(bits_per_emission);
+
+    let r = (((rgb6[0] as u16) + (rgb6[3] as u16)) >> 1) as u8;
+    let g = (((rgb6[1] as u16) + (rgb6[4] as u16)) >> 1) as u8;
+    let b = (((rgb6[2] as u16) + (rgb6[5] as u16)) >> 1) as u8;
+
+    let chans = [r, g, b];
+
+    let mut out: u8 = 0;
+    for i in 0..bits {
+        let chan = i % 3;
+        let k = i / 3;
+        let shift = 7usize.saturating_sub(k);
+        let bit = (chans[chan] >> shift) & 1;
+        out |= bit << (i as u8);
+    }
+
+    out & mask
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LowpassState {
+    y: u16,
+}
+
+impl LowpassState {
+    pub(crate) fn new() -> Self {
+        Self { y: 0 }
+    }
+}
+
+fn intensity_u8_from_rgb6(rgb6: &[u8; 6]) -> u8 {
+    let r = (((rgb6[0] as u16) + (rgb6[3] as u16)) >> 1) as u16;
+    let g = (((rgb6[1] as u16) + (rgb6[4] as u16)) >> 1) as u16;
+    let b = (((rgb6[2] as u16) + (rgb6[5] as u16)) >> 1) as u16;
+    let y = (r + g + b) / 3;
+    y as u8
+}
+
+fn lowpass_iir_update(state: &mut LowpassState, x: u8, smooth_shift: u8) -> u8 {
+    if smooth_shift == 0 {
+        state.y = x as u16;
+        return x;
+    }
+    let sh = smooth_shift.min(15);
+    let y = state.y as i32;
+    let xi = x as i32;
+    let diff = xi - y;
+    let step = diff >> (sh as i32);
+    let y2 = (y + step).clamp(0, 255);
+    state.y = y2 as u16;
+    state.y as u8
+}
+
+/// Exported for gen-law so we can map predicted symbols identically.
+pub(crate) fn map_symbol_bitfield(
     mapping: BitMapping,
     map_seed: u64,
     emission: u64,
     rgb6: &[u8; 6],
     bits_per_emission: u8,
+    bit_tau: u8,
+    bit_smooth_shift: u8,
+    lp_state: &mut LowpassState,
 ) -> u8 {
     let mask = sym_mask(bits_per_emission);
 
     match mapping {
-        BitMapping::Geom => {
-            let r = ((rgb6[0] as u16) + (rgb6[3] as u16)) / 2;
-            let g = ((rgb6[1] as u16) + (rgb6[4] as u16)) / 2;
-            let b = ((rgb6[2] as u16) + (rgb6[5] as u16)) / 2;
-
-            let mut sym: u8 = 0;
-
-            if bits_per_emission >= 1 {
-                sym |= ((r > g) as u8) << 0;
-            }
-            if bits_per_emission >= 2 {
-                sym |= ((b > g) as u8) << 1;
-            }
-            if bits_per_emission >= 3 {
-                sym |= ((r > b) as u8) << 2;
-            }
-            if bits_per_emission >= 4 {
-                sym |= ((g > r) as u8) << 3;
-            }
-            if bits_per_emission >= 5 {
-                sym |= ((g > b) as u8) << 4;
-            }
-            if bits_per_emission >= 6 {
-                let y = r + g + b;
-                sym |= ((y > (3 * 128)) as u8) << 5;
-            }
-            if bits_per_emission >= 7 {
-                sym |= (((r as u8) & 0x40 != 0) as u8) << 6;
-            }
-            if bits_per_emission >= 8 {
-                sym |= (((b as u8) & 0x40 != 0) as u8) << 7;
-            }
-
-            sym & mask
-        }
+        BitMapping::Geom => geom_symbol_from_rgb_msb_interleave(rgb6, bits_per_emission),
         BitMapping::Hash => {
             let mut x = map_seed ^ emission.rotate_left(17);
             for &b in rgb6.iter() {
@@ -275,6 +387,15 @@ fn map_symbol_bitfield(
                 x ^= x >> 32;
             }
             (x as u8) & mask
+        }
+        BitMapping::LowpassThresh => {
+            if bits_per_emission != 1 {
+                return 0;
+            }
+            let x = intensity_u8_from_rgb6(rgb6);
+            let y = lowpass_iir_update(lp_state, x, bit_smooth_shift);
+            let bit = if y >= bit_tau { 1u8 } else { 0u8 };
+            bit & mask
         }
     }
 }
@@ -288,6 +409,9 @@ fn ensure_symbol_stream_len(
     bits_per_emission: u8,
     search_emissions: u64,
     max_ticks: u64,
+    bit_tau: u8,
+    bit_smooth_shift: u8,
+    lp_state: &mut LowpassState,
 ) -> bool {
     if stream_syms.len() >= need_len {
         return true;
@@ -300,12 +424,85 @@ fn ensure_symbol_stream_len(
         if let Some(tok) = engine.step() {
             let em = (engine.stats.emissions - 1) as u64;
             let rgb6 = tok.to_rgb_pair().to_bytes();
-            let sym = map_symbol_bitfield(mapping, map_seed, em, &rgb6, bits_per_emission);
+            let sym = map_symbol_bitfield(
+                mapping,
+                map_seed,
+                em,
+                &rgb6,
+                bits_per_emission,
+                bit_tau,
+                bit_smooth_shift,
+                lp_state,
+            );
             stream_syms.push(sym);
         }
     }
 
     stream_syms.len() >= need_len
+}
+
+fn apply_chunk_addk(pred: u8, k: u8, mask: u8) -> u8 {
+    pred.wrapping_add(k) & mask
+}
+
+fn proxy_cost_for_residual(resid_mode: ResidualMode, resid_sym: u8) -> usize {
+    if resid_mode == ResidualMode::Xor {
+        resid_sym.count_ones() as usize
+    } else {
+        if resid_sym == 0 { 0 } else { 1 }
+    }
+}
+
+fn pack_bits01_to_u64(bits01: &[u8]) -> Vec<u64> {
+    let n = bits01.len();
+    let words = (n + 63) / 64;
+    let mut out = vec![0u64; words + 1];
+    for (i, &b) in bits01.iter().enumerate() {
+        if (b & 1) != 0 {
+            out[i >> 6] |= 1u64 << (i & 63);
+        }
+    }
+    out
+}
+
+fn hamming01_aligned(target_words: &[u64], stream_words: &[u64], start_bit: usize, n_bits: usize) -> u32 {
+    let word_shift = start_bit >> 6;
+    let bit_shift = start_bit & 63;
+
+    let full_words = n_bits >> 6;
+    let tail_bits = n_bits & 63;
+
+    let mut acc: u32 = 0;
+
+    for i in 0..full_words {
+        let sw = if bit_shift == 0 {
+            stream_words[word_shift + i]
+        } else {
+            let lo = stream_words[word_shift + i] >> bit_shift;
+            let hi = stream_words[word_shift + i + 1] << (64 - bit_shift);
+            lo | hi
+        };
+        acc = acc.saturating_add((target_words[i] ^ sw).count_ones());
+    }
+
+    if tail_bits != 0 {
+        let i = full_words;
+        let sw = if bit_shift == 0 {
+            stream_words[word_shift + i]
+        } else {
+            let lo = stream_words[word_shift + i] >> bit_shift;
+            let hi = stream_words[word_shift + i + 1] << (64 - bit_shift);
+            lo | hi
+        };
+        let mask = if tail_bits == 64 {
+            !0u64
+        } else {
+            (1u64 << tail_bits) - 1
+        };
+        acc = acc.saturating_add(((target_words[i] ^ sw) & mask).count_ones());
+    }
+
+    acc
 }
 
 pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> {
@@ -314,6 +511,9 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
     }
     if a.bits_per_emission == 0 || a.bits_per_emission > 8 {
         anyhow::bail!("--bits-per-emission must be in 1..=8");
+    }
+    if a.bit_mapping == BitMapping::LowpassThresh && a.bits_per_emission != 1 {
+        anyhow::bail!("bit-mapping lowpass-thresh requires --bits-per-emission 1");
     }
     if a.chunk_size == 0 {
         anyhow::bail!("--chunk-size must be >= 1");
@@ -334,10 +534,15 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
     let seed = parse_seed_hex_opt(a.map_seed, &a.map_seed_hex)?;
 
     let bit_len: usize = target_bytes.len() * 8;
-    let sym_count: usize =
-        (bit_len + (a.bits_per_emission as usize) - 1) / (a.bits_per_emission as usize);
+    let bits: usize = a.bits_per_emission as usize;
+    let sym_count: usize = (bit_len + bits - 1) / bits;
 
-    let target_syms = bitpack::unpack_symbols(a.bits_per_emission, &target_bytes, sym_count)
+    let total_bits: usize = sym_count.saturating_mul(bits);
+    let need_bytes: usize = (total_bits + 7) / 8;
+    let mut padded_target: Vec<u8> = vec![0u8; need_bytes];
+    padded_target[..target_bytes.len()].copy_from_slice(&target_bytes);
+
+    let target_syms = bitpack::unpack_symbols(a.bits_per_emission, &padded_target, sym_count)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let mask = sym_mask(a.bits_per_emission);
@@ -357,11 +562,22 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
     let mut stream_syms: Vec<u8> = Vec::new();
     stream_syms.reserve((a.search_emissions.saturating_sub(start_em)).min(500_000) as usize);
 
+    let mut lp_state = LowpassState::new();
+
     while (engine.stats.emissions as u64) < a.search_emissions && engine.stats.ticks < a.max_ticks {
         if let Some(tok) = engine.step() {
             let em = (engine.stats.emissions - 1) as u64;
             let rgb6 = tok.to_rgb_pair().to_bytes();
-            let sym = map_symbol_bitfield(a.bit_mapping, seed, em, &rgb6, a.bits_per_emission);
+            let sym = map_symbol_bitfield(
+                a.bit_mapping,
+                seed,
+                em,
+                &rgb6,
+                a.bits_per_emission,
+                a.bit_tau,
+                a.bit_smooth_shift,
+                &mut lp_state,
+            );
             stream_syms.push(sym & mask);
         }
     }
@@ -372,12 +588,16 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
     let mut tm_indices: Vec<u64> = Vec::with_capacity(total_n.min(stream_syms.len()));
     let mut residual_syms: Vec<u8> = Vec::with_capacity(total_n.min(stream_syms.len()));
 
+    let mut chunk_addk: Vec<u8> = Vec::new();
+
     eprintln!(
-        "--- fit-xor-chunked (bitfield) --- map=bitfield bits_per_emission={} bit_mapping={:?} map_seed={} (0x{:016x}) residual={:?} objective={:?} refine_topk={} lookahead={} trans_penalty={} chunk_size={} scan_step={} zstd_level={} target_bytes={} target_symbols={} stream_symbols={} base_pos={} start_emission={} end_emissions={} ticks={} delta_ticks={}",
+        "--- fit-xor-chunked (bitfield) --- map=bitfield bits_per_emission={} bit_mapping={:?} map_seed={} (0x{:016x}) bit_tau={} bit_smooth_shift={} residual={:?} objective={:?} refine_topk={} lookahead={} trans_penalty={} chunk_size={} scan_step={} zstd_level={} chunk_xform={:?} target_bytes={} target_symbols={} stream_symbols={} base_pos={} start_emission={} end_emissions={} ticks={} delta_ticks={}",
         a.bits_per_emission,
         a.bit_mapping,
         seed,
         seed,
+        a.bit_tau,
+        a.bit_smooth_shift,
         a.residual,
         a.objective,
         a.refine_topk,
@@ -386,6 +606,7 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
         a.chunk_size,
         a.scan_step,
         a.zstd_level,
+        a.chunk_xform,
         target_bytes.len(),
         total_n,
         stream_syms.len(),
@@ -395,6 +616,8 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
         engine.stats.ticks,
         engine.stats.ticks.saturating_sub(start_ticks),
     );
+
+    let want_addk = a.chunk_xform == ChunkXform::Addk;
 
     let mut prev_pos: Option<u64> = None;
     let mut chunk_idx: usize = 0;
@@ -416,7 +639,6 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
         let min_start: usize = (min_pos - abs_stream_base_pos) as usize;
         let max_start_cap = min_start.saturating_add(a.lookahead);
 
-        // Only require enough stream to score THIS CHUNK (n), not the entire remaining_total.
         let need_min = min_start.saturating_add(n);
         if need_min > stream_syms.len()
             && !ensure_symbol_stream_len(
@@ -428,6 +650,9 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
                 a.bits_per_emission,
                 a.search_emissions,
                 a.max_ticks,
+                a.bit_tau,
+                a.bit_smooth_shift,
+                &mut lp_state,
             )
         {
             eprintln!(
@@ -451,152 +676,260 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
             break;
         }
 
-        let mut scratch_resid: Vec<u8> = vec![0u8; n];
-
-        let mut best_start_proxy: usize = min_start;
-        let mut best_matches_proxy: u64 = 0;
-        let mut best_proxy_score: usize = usize::MAX;
-
-        let mut refine: Vec<(usize, usize, u64)> = Vec::new();
+        let mut best_start: usize = min_start;
+        let mut best_matches: u64 = 0;
+        let mut best_score: usize = usize::MAX;
+        let mut best_resid_metric: usize = usize::MAX;
+        let mut best_k: u8 = 0;
         let mut scanned: u64 = 0;
 
-        let mut s0: usize = min_start;
-        while s0 <= max_start {
-            scanned += 1;
+        let fast01 = a.bits_per_emission == 1
+            && a.residual == ResidualMode::Xor
+            && a.objective == FitObjective::Zstd
+            && a.bit_mapping != BitMapping::LowpassThresh;
 
-            let base_pos = abs_stream_base_pos + (s0 as u64);
-            let mut matches: u64 = 0;
+        if fast01 {
+            let target_slice = &target_syms[off..off + n];
+            let stream_slice = &stream_syms;
 
-            for i in 0..n {
-                let pred = stream_syms[s0 + i] & mask;
-                let resid_b =
-                    make_residual_symbol(a.residual, pred, target_syms[off + i] & mask, mask);
-                scratch_resid[i] = resid_b;
-                if resid_b == 0 {
-                    matches += 1;
+            let target_words = pack_bits01_to_u64(target_slice);
+            let stream_words = pack_bits01_to_u64(stream_slice);
+
+            let mut s0: usize = min_start;
+            while s0 <= max_start {
+                scanned += 1;
+
+                let base_pos = abs_stream_base_pos + (s0 as u64);
+                let jump_cost_raw = tm_jump_cost(prev_pos, base_pos) as u64;
+                let jump_cost_u64 = jump_cost_raw.saturating_mul(a.trans_penalty);
+                let jump_cost = jump_cost_u64 as usize;
+
+                let d0 = hamming01_aligned(&target_words, &stream_words, s0, n) as usize;
+
+                if want_addk {
+                    let d1 = n.saturating_sub(d0);
+                    let (d, k) = if d0 <= d1 { (d0, 0u8) } else { (d1, 1u8) };
+                    let score = d.saturating_add(jump_cost);
+                    if score < best_score || (score == best_score && s0 < best_start) {
+                        best_score = score;
+                        best_start = s0;
+                        best_k = k;
+                        best_matches = (n - d) as u64;
+                        best_resid_metric = d;
+                    }
+                } else {
+                    let score = d0.saturating_add(jump_cost);
+                    if score < best_score || (score == best_score && s0 < best_start) {
+                        best_score = score;
+                        best_start = s0;
+                        best_k = 0;
+                        best_matches = (n - d0) as u64;
+                        best_resid_metric = d0;
+                    }
                 }
+
+                s0 = s0.saturating_add(a.scan_step);
             }
+        } else {
+            let mut scratch_resid: Vec<u8> = vec![0u8; n];
 
-            let jump_cost_raw = tm_jump_cost(prev_pos, base_pos) as u64;
-            let jump_cost_u64 = jump_cost_raw.saturating_mul(a.trans_penalty);
-            let jump_cost = jump_cost_u64 as usize;
+            let mut refine: Vec<(usize, usize, u64)> = Vec::new();
 
-            if a.objective == FitObjective::Zstd {
-                let zlen = zstd_compress_len(&scratch_resid, a.zstd_level);
-                let score = zlen.saturating_add(jump_cost);
-                if score < best_proxy_score || (score == best_proxy_score && s0 < best_start_proxy)
-                {
-                    best_proxy_score = score;
-                    best_start_proxy = s0;
-                    best_matches_proxy = matches;
+            let mut s0: usize = min_start;
+            while s0 <= max_start {
+                scanned += 1;
+
+                let base_pos = abs_stream_base_pos + (s0 as u64);
+
+                let mut matches: u64 = 0;
+                let mut proxy_cost: usize = 0;
+
+                for i in 0..n {
+                    let pred0 = stream_syms[s0 + i] & mask;
+                    let resid_b =
+                        make_residual_symbol(a.residual, pred0, target_syms[off + i] & mask, mask);
+                    scratch_resid[i] = resid_b;
+                    if resid_b == 0 {
+                        matches += 1;
+                    }
+                    proxy_cost = proxy_cost
+                        .saturating_add(proxy_cost_for_residual(a.residual, resid_b));
                 }
-            } else {
-                let proxy_cost = (n as u64).saturating_sub(matches) as usize;
-                let proxy_score = proxy_cost.saturating_add(jump_cost);
-                if proxy_score < best_proxy_score
-                    || (proxy_score == best_proxy_score && s0 < best_start_proxy)
-                {
-                    best_proxy_score = proxy_score;
-                    best_start_proxy = s0;
-                    best_matches_proxy = matches;
-                }
-                if a.refine_topk != 0 {
-                    refine.push((proxy_score, s0, matches));
-                }
-            }
-
-            s0 = s0.saturating_add(a.scan_step);
-        }
-
-        let mut best_start: usize = best_start_proxy;
-        let mut best_matches: u64 = best_matches_proxy;
-        let mut best_score: usize = best_proxy_score;
-        let mut best_resid_zstd: usize = usize::MAX;
-
-        if a.objective == FitObjective::Matches && a.refine_topk != 0 && !refine.is_empty() {
-            refine.sort_by(|a1, b1| a1.0.cmp(&b1.0).then_with(|| a1.1.cmp(&b1.1)));
-            if refine.len() > a.refine_topk {
-                refine.truncate(a.refine_topk);
-            }
-
-            for &(_proxy_score, cand_s, cand_matches) in refine.iter() {
-                let base_pos = abs_stream_base_pos + (cand_s as u64);
 
                 let jump_cost_raw = tm_jump_cost(prev_pos, base_pos) as u64;
                 let jump_cost_u64 = jump_cost_raw.saturating_mul(a.trans_penalty);
                 let jump_cost = jump_cost_u64 as usize;
 
-                for i in 0..n {
-                    scratch_resid[i] = make_residual_symbol(
-                        a.residual,
-                        stream_syms[cand_s + i] & mask,
-                        target_syms[off + i] & mask,
-                        mask,
-                    );
+                if a.objective == FitObjective::Zstd {
+                    refine.push((proxy_cost.saturating_add(jump_cost), s0, matches));
+                } else {
+                    let score = proxy_cost.saturating_add(jump_cost);
+                    if score < best_score || (score == best_score && s0 < best_start) {
+                        best_score = score;
+                        best_start = s0;
+                        best_matches = matches;
+                        best_resid_metric = proxy_cost;
+                    }
+                    if a.refine_topk != 0 {
+                        refine.push((score, s0, matches));
+                    }
                 }
 
-                let zlen = zstd_compress_len(&scratch_resid, a.zstd_level);
-                let score = zlen.saturating_add(jump_cost);
+                s0 = s0.saturating_add(a.scan_step);
+            }
 
-                if score < best_score || (score == best_score && cand_s < best_start) {
-                    best_score = score;
-                    best_start = cand_s;
-                    best_matches = cand_matches;
-                    best_resid_zstd = zlen;
+            if a.objective == FitObjective::Zstd {
+                refine.sort_by(|a1, b1| a1.0.cmp(&b1.0).then_with(|| a1.1.cmp(&b1.1)));
+
+                let mut topk = a.refine_topk;
+                if topk == 0 {
+                    topk = 256;
+                }
+                if refine.len() > topk {
+                    refine.truncate(topk);
+                }
+
+                for &(_proxy_score, cand_s, _cand_matches) in refine.iter() {
+                    let base_pos = abs_stream_base_pos + (cand_s as u64);
+
+                    let jump_cost_raw = tm_jump_cost(prev_pos, base_pos) as u64;
+                    let jump_cost_u64 = jump_cost_raw.saturating_mul(a.trans_penalty);
+                    let jump_cost = jump_cost_u64 as usize;
+
+                    if want_addk {
+                        let alpha = 1usize << (a.bits_per_emission as usize);
+
+                        let mut counts: Vec<u32> = vec![0u32; alpha];
+                        for i in 0..n {
+                            let pred0 = stream_syms[cand_s + i] & mask;
+                            let targ = target_syms[off + i] & mask;
+                            let ksym = targ.wrapping_sub(pred0) & mask;
+                            counts[ksym as usize] = counts[ksym as usize].saturating_add(1);
+                        }
+
+                        let mut ks: Vec<(u32, u8)> =
+                            (0..alpha).map(|k| (counts[k], k as u8)).collect();
+                        ks.sort_by(|a1, b1| b1.0.cmp(&a1.0).then_with(|| a1.1.cmp(&b1.1)));
+                        if ks.len() > 4 {
+                            ks.truncate(4);
+                        }
+
+                        for &(_cnt, kk) in ks.iter() {
+                            let mut matches: u64 = 0;
+                            for i in 0..n {
+                                let pred0 = stream_syms[cand_s + i] & mask;
+                                let pred = apply_chunk_addk(pred0, kk, mask);
+                                let resid = make_residual_symbol(
+                                    a.residual,
+                                    pred,
+                                    target_syms[off + i] & mask,
+                                    mask,
+                                );
+                                scratch_resid[i] = resid;
+                                if resid == 0 {
+                                    matches += 1;
+                                }
+                            }
+
+                            let zlen = zstd_compress_len(&scratch_resid, a.zstd_level);
+                            let score = zlen.saturating_add(jump_cost);
+
+                            if score < best_score || (score == best_score && cand_s < best_start) {
+                                best_score = score;
+                                best_start = cand_s;
+                                best_matches = matches;
+                                best_resid_metric = zlen;
+                                best_k = kk;
+                            }
+                        }
+                    } else {
+                        let mut matches: u64 = 0;
+                        for i in 0..n {
+                            let pred0 = stream_syms[cand_s + i] & mask;
+                            let resid = make_residual_symbol(
+                                a.residual,
+                                pred0,
+                                target_syms[off + i] & mask,
+                                mask,
+                            );
+                            scratch_resid[i] = resid;
+                            if resid == 0 {
+                                matches += 1;
+                            }
+                        }
+
+                        let zlen = zstd_compress_len(&scratch_resid, a.zstd_level);
+                        let score = zlen.saturating_add(jump_cost);
+
+                        if score < best_score || (score == best_score && cand_s < best_start) {
+                            best_score = score;
+                            best_start = cand_s;
+                            best_matches = matches;
+                            best_resid_metric = zlen;
+                            best_k = 0;
+                        }
+                    }
                 }
             }
         }
 
         let base_pos = abs_stream_base_pos + (best_start as u64);
 
-        let jump_cost_raw = tm_jump_cost(prev_pos, base_pos) as u64;
-        let jump_cost_u64 = jump_cost_raw.saturating_mul(a.trans_penalty);
-        let jump_cost = jump_cost_u64 as usize;
-
         for i in 0..n {
             let pos = base_pos + (i as u64);
             tm_indices.push(pos);
+
+            let pred0 = stream_syms[best_start + i] & mask;
+            let pred = if want_addk {
+                apply_chunk_addk(pred0, best_k, mask)
+            } else {
+                pred0
+            };
+
             residual_syms.push(make_residual_symbol(
                 a.residual,
-                stream_syms[best_start + i] & mask,
+                pred,
                 target_syms[off + i] & mask,
                 mask,
             ));
         }
 
+        if want_addk {
+            chunk_addk.push(best_k);
+        }
+
         prev_pos = Some(base_pos + (n as u64) - 1);
 
-        let printed_resid_metric = if a.objective == FitObjective::Zstd {
-            let mut scratch: Vec<u8> = vec![0u8; n];
-            for i in 0..n {
-                scratch[i] = make_residual_symbol(
-                    a.residual,
-                    stream_syms[best_start + i] & mask,
-                    target_syms[off + i] & mask,
-                    mask,
-                );
-            }
-            zstd_compress_len(&scratch, a.zstd_level)
-        } else if best_resid_zstd != usize::MAX {
-            best_resid_zstd
+        if want_addk {
+            eprintln!(
+                "chunk {:04} off_sym={} len_sym={} start_emission={} scanned_windows={} matches={}/{} ({:.2}%) chunk_score={} chunk_resid_metric={} addk={}",
+                chunk_idx,
+                off,
+                n,
+                base_pos,
+                scanned,
+                best_matches,
+                n,
+                (best_matches as f64) * 100.0 / (n as f64),
+                best_score,
+                best_resid_metric,
+                best_k
+            );
         } else {
-            (n as u64).saturating_sub(best_matches) as usize
-        };
-
-        eprintln!(
-            "chunk {:04} off_sym={} len_sym={} start_emission={} scanned_windows={} matches={}/{} ({:.2}%) jump_cost={} chunk_score={} chunk_resid_metric={}",
-            chunk_idx,
-            off,
-            n,
-            base_pos,
-            scanned,
-            best_matches,
-            n,
-            (best_matches as f64) * 100.0 / (n as f64),
-            jump_cost,
-            best_score,
-            printed_resid_metric
-        );
+            eprintln!(
+                "chunk {:04} off_sym={} len_sym={} start_emission={} scanned_windows={} matches={}/{} ({:.2}%) chunk_score={} chunk_resid_metric={}",
+                chunk_idx,
+                off,
+                n,
+                base_pos,
+                scanned,
+                best_matches,
+                n,
+                (best_matches as f64) * 100.0 / (n as f64),
+                best_score,
+                best_resid_metric
+            );
+        }
 
         off += n;
         chunk_idx += 1;
@@ -622,28 +955,30 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
         );
     }
 
-    let tm = TimingMap {
-        indices: tm_indices,
-    };
+    let tm = TimingMap { indices: tm_indices };
 
     let tm_bytes = tm.encode_tm1();
     let tm_raw = tm_bytes.len();
     let tm_zstd = zstd_compress_len(&tm_bytes, a.zstd_level);
 
-    // Decide BF encoding
     let want_lanes = a.time_split || a.bitfield_residual == BitfieldResidualEncoding::Lanes;
 
-    // Write residual
     let (resid_raw, resid_zstd) = if !want_lanes {
-        let packed_resid = write_bitfield_residual_bf1(
+        let file_bytes = write_bitfield_residual_bf1(
             &a.out_residual,
             a.bits_per_emission,
             a.bit_mapping,
             target_bytes.len(),
             &residual_syms,
+            if want_addk { Some(a.chunk_size) } else { None },
+            if want_addk {
+                Some(chunk_addk.as_slice())
+            } else {
+                None
+            },
         )?;
-        let resid_raw = packed_resid.len();
-        let resid_zstd = zstd_compress_len(&packed_resid, a.zstd_level);
+        let resid_raw = file_bytes.len();
+        let resid_zstd = zstd_compress_len(&file_bytes, a.zstd_level);
         (resid_raw, resid_zstd)
     } else {
         write_bitfield_residual_bf2(
@@ -699,6 +1034,9 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
     if a.bits_per_emission == 0 || a.bits_per_emission > 8 {
         anyhow::bail!("--bits-per-emission must be in 1..=8");
     }
+    if a.bit_mapping == BitMapping::LowpassThresh && a.bits_per_emission != 1 {
+        anyhow::bail!("bit-mapping lowpass-thresh requires --bits-per-emission 1");
+    }
 
     let recipe = recipe_file::load_k8r(&a.recipe)?;
     let tm = timemap::read_tm1(&a.timemap)?;
@@ -710,12 +1048,13 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
 
     let bf = read_bitfield_residual(&a.residual)?;
 
-    // Resolve residual symbols from BF container
-    let (bf_bits, bf_mapping, bf_orig_len_bytes, bf_symbol_count, resid_syms): (
+    let (bf_bits, bf_mapping, bf_orig_len_bytes, bf_symbol_count, bf_chunk_size, bf_chunk_addk, resid_syms): (
         u8,
         BitMapping,
         usize,
         usize,
+        Option<usize>,
+        Option<Vec<u8>>,
         Vec<u8>,
     ) = match bf {
         BitfieldResidual::Bf1 {
@@ -723,6 +1062,8 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
             mapping,
             orig_len_bytes,
             symbol_count,
+            chunk_size,
+            chunk_addk,
             packed_symbols,
         } => {
             let syms = bitpack::unpack_symbols(bits_per_emission, &packed_symbols, symbol_count)
@@ -732,6 +1073,8 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
                 mapping,
                 orig_len_bytes,
                 symbol_count,
+                chunk_size,
+                chunk_addk,
                 syms,
             )
         }
@@ -773,6 +1116,8 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
                 mapping,
                 orig_len_bytes,
                 symbol_count,
+                None,
+                None,
                 out,
             )
         }
@@ -800,6 +1145,19 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
         );
     }
 
+    if let (Some(cs), Some(ref ks)) = (bf_chunk_size, bf_chunk_addk.as_ref()) {
+        let need_chunks = (bf_symbol_count + cs - 1) / cs;
+        if ks.len() != need_chunks {
+            anyhow::bail!(
+                "BF1 chunk_addk len mismatch: got {} want {} (symbols={} chunk_size={})",
+                ks.len(),
+                need_chunks,
+                bf_symbol_count,
+                cs
+            );
+        }
+    }
+
     let mut engine = Engine::new(recipe)?;
 
     let mut max_idx: u64 = 0;
@@ -814,14 +1172,32 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
 
     let mask = sym_mask(a.bits_per_emission);
 
+    let mut lp_state = LowpassState::new();
+
     while engine.stats.ticks < a.max_ticks && (engine.stats.emissions as u64) <= max_idx {
         if let Some(tok) = engine.step() {
             let em = (engine.stats.emissions - 1) as u64;
 
             while i < tm.indices.len() && tm.indices[i] == em {
                 let rgb6 = tok.to_rgb_pair().to_bytes();
-                let pred =
-                    map_symbol_bitfield(a.bit_mapping, seed, em, &rgb6, a.bits_per_emission) & mask;
+                let pred0 = map_symbol_bitfield(
+                    a.bit_mapping,
+                    seed,
+                    em,
+                    &rgb6,
+                    a.bits_per_emission,
+                    a.bit_tau,
+                    a.bit_smooth_shift,
+                    &mut lp_state,
+                ) & mask;
+
+                let pred = if let (Some(cs), Some(ref ks)) = (bf_chunk_size, bf_chunk_addk.as_ref()) {
+                    let ci = i / cs;
+                    apply_chunk_addk(pred0, ks[ci], mask)
+                } else {
+                    pred0
+                };
+
                 let sym = apply_residual_symbol(a.residual_mode, pred, resid_syms[i] & mask, mask);
                 out_syms.push(sym);
                 i += 1;
@@ -847,12 +1223,14 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
     std::fs::write(&a.out, &out_bytes)
         .with_context(|| format!("write reconstruct out: {}", a.out))?;
     eprintln!(
-        "reconstruct ok (bitfield): out={} bytes={} symbols={} bits_per_emission={} bit_mapping={:?} ticks={} emissions={} map_seed={} (0x{:016x})",
+        "reconstruct ok (bitfield): out={} bytes={} symbols={} bits_per_emission={} bit_mapping={:?} bit_tau={} bit_smooth_shift={} ticks={} emissions={} map_seed={} (0x{:016x})",
         a.out,
         out_bytes.len(),
         out_syms.len(),
         a.bits_per_emission,
         a.bit_mapping,
+        a.bit_tau,
+        a.bit_smooth_shift,
         engine.stats.ticks,
         engine.stats.emissions,
         seed,
