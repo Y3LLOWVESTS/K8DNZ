@@ -1,3 +1,5 @@
+// crates/k8dnz-cli/src/cmd/timemap/gen_law.rs
+
 use super::args::*;
 use super::bitfield::{map_symbol_bitfield, write_bitfield_residual, LowpassState};
 use super::residual::{make_residual_symbol, sym_mask};
@@ -10,6 +12,26 @@ use k8dnz_core::signal::timing_map::TimingMap;
 use k8dnz_core::Engine;
 
 use crate::io::{recipe_file, timemap};
+
+const MAGIC_TM0: &[u8; 4] = b"TM0\0";
+const MAGIC_TM1: &[u8; 4] = b"TM1\0";
+const MAGIC_TM2: &[u8; 4] = b"TM2\0";
+
+fn tm_format_from_bytes(bytes: &[u8]) -> &'static str {
+    if bytes.len() < 4 {
+        return "SHORT";
+    }
+    let m = &bytes[0..4];
+    if m == MAGIC_TM0 {
+        "TM0"
+    } else if m == MAGIC_TM1 {
+        "TM1"
+    } else if m == MAGIC_TM2 {
+        "TM2"
+    } else {
+        "UNKNOWN"
+    }
+}
 
 fn circ_dist_turn32(a: u32, b: u32) -> u32 {
     let d1 = a.wrapping_sub(b);
@@ -55,14 +77,10 @@ fn apply_chunk_addk(pred: u8, k: u8, mask: u8) -> u8 {
 }
 
 fn tri_wave_i64(k: u64, period: u64, phi: u64) -> i64 {
-    if period == 0 {
-        return 0;
-    }
+    if period == 0 { return 0; }
     let u = (k.wrapping_add(phi)) % period;
     let half = period / 2;
-    if half == 0 {
-        return 0;
-    }
+    if half == 0 { return 0; }
     let r = if u < half { u } else { period - u };
     let v = (r as i64) - (half as i64 / 2);
     v
@@ -81,26 +99,19 @@ fn closed_form_start_offset(
     g2: i64,
     phi2: u64,
 ) -> usize {
-    if window_len == 0 {
-        return 0;
-    }
+    if window_len == 0 { return 0; }
 
     let kk = k as i64;
 
     let tri1 = if p1 != 0 && g1 != 0 {
         g1.saturating_mul(tri_wave_i64(k, p1, phi1))
-    } else {
-        0
-    };
+    } else { 0 };
 
     let tri2 = if p2 != 0 && g2 != 0 {
         g2.saturating_mul(tri_wave_i64(k, p2, phi2))
-    } else {
-        0
-    };
+    } else { 0 };
 
-    let quad = c
-        .saturating_mul(kk.saturating_mul(kk.saturating_sub(1)) / 2);
+    let quad = c.saturating_mul(kk.saturating_mul(kk.saturating_sub(1)) / 2);
 
     let raw = b
         .saturating_add(a.saturating_mul(kk))
@@ -110,9 +121,7 @@ fn closed_form_start_offset(
 
     let wl = window_len as i64;
     let mut m = raw % wl;
-    if m < 0 {
-        m += wl;
-    }
+    if m < 0 { m += wl; }
     (m as u64 % window_len) as usize
 }
 
@@ -206,7 +215,7 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 em,
                 &rgb6,
                 a.bits_per_emission,
-                a.bit_tau,
+                a.bit_tau, // u16, now supported by map_symbol_bitfield
                 a.bit_smooth_shift,
                 &mut lp_state,
             );
@@ -296,14 +305,20 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
 
                 let plain = target_syms[i] & mask;
                 let resid = make_residual_symbol(a.residual, pred, plain, mask);
-                if resid == 0 { matches += 1; }
+                if resid == 0 {
+                    matches += 1;
+                }
                 residual_syms.push(resid & mask);
             }
 
             let tm = TimingMap { indices: tm_indices };
-            timemap::write_tm1(&a.out_timemap, &tm)?;
+            timemap::write_timemap_auto(&a.out_timemap, &tm)?;
 
-            let enc = if a.time_split { BitfieldResidualEncoding::Lanes } else { a.bitfield_residual };
+            let enc = if a.time_split {
+                BitfieldResidualEncoding::Lanes
+            } else {
+                a.bitfield_residual
+            };
 
             let resid_container_bytes = write_bitfield_residual(
                 &a.out_residual,
@@ -317,19 +332,26 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 if use_addk { Some(chunk_addk.as_slice()) } else { None },
             )?;
 
-            let tm_file_bytes = std::fs::read(&a.out_timemap).unwrap_or_default();
-            let tm_zstd = zstd_compress_len(&tm_file_bytes, a.zstd_level);
+            let tm_bytes = tm.encode_auto();
+            let tm_raw = tm_bytes.len();
+            let tm_zstd = zstd_compress_len(&tm_bytes, a.zstd_level);
+            let tm_format = tm_format_from_bytes(&tm_bytes);
 
-            let packed_resid = bitpack::pack_symbols(a.bits_per_emission, &residual_syms)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let resid_zstd = zstd_compress_len(&packed_resid, a.zstd_level);
+            let resid_file_bytes = std::fs::read(&a.out_residual)
+                .with_context(|| format!("read residual for sizing: {}", a.out_residual))?;
+            let resid_container_zstd = zstd_compress_len(&resid_file_bytes, a.zstd_level);
 
             let plain_packed = bitpack::pack_symbols(a.bits_per_emission, &target_syms)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let plain_zstd = zstd_compress_len(&plain_packed, a.zstd_level);
 
-            let effective_no_recipe = tm_zstd.saturating_add(resid_zstd);
-            let effective_with_recipe = recipe_raw_len.saturating_add(effective_no_recipe);
+            let effective_no_recipe_tm_zstd = tm_zstd.saturating_add(resid_container_zstd);
+            let effective_with_recipe_tm_zstd =
+                recipe_raw_len.saturating_add(effective_no_recipe_tm_zstd);
+
+            let effective_no_recipe_tm_raw = tm_raw.saturating_add(resid_container_zstd);
+            let effective_with_recipe_tm_raw =
+                recipe_raw_len.saturating_add(effective_no_recipe_tm_raw);
 
             eprintln!("--- gen-law (bitfield) ---");
             eprintln!("law_type                   = {:?}", a.law_type);
@@ -357,20 +379,37 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 sym_count,
                 (matches as f64) * 100.0 / (sym_count as f64)
             );
+
             eprintln!("recipe_raw_bytes           = {}", recipe_raw_len);
             eprintln!("plain_zstd_bytes           = {}", plain_zstd);
-            eprintln!("tm1_zstd_bytes             = {}", tm_zstd);
+
+            eprintln!("tm_raw_bytes               = {}", tm_raw);
+            eprintln!("tm_zstd_bytes              = {}", tm_zstd);
+            eprintln!("tm_format                  = {}", tm_format);
+
             eprintln!("residual_container_bytes   = {}", resid_container_bytes);
-            eprintln!("residual_packed_zstd_bytes = {}", resid_zstd);
-            eprintln!("effective_no_recipe        = {}", effective_no_recipe);
-            eprintln!("effective_with_recipe      = {}", effective_with_recipe);
+            eprintln!("residual_container_zstd_bytes = {}", resid_container_zstd);
+
+            eprintln!("effective_no_recipe_tm_zstd = {}", effective_no_recipe_tm_zstd);
+            eprintln!("effective_with_recipe_tm_zstd = {}", effective_with_recipe_tm_zstd);
             eprintln!(
-                "delta_vs_plain_zstd_no_recipe   = {}",
-                (effective_no_recipe as i64) - (plain_zstd as i64)
+                "delta_vs_plain_zstd_no_recipe_tm_zstd   = {}",
+                (effective_no_recipe_tm_zstd as i64) - (plain_zstd as i64)
             );
             eprintln!(
-                "delta_vs_plain_zstd_with_recipe = {}",
-                (effective_with_recipe as i64) - (plain_zstd as i64)
+                "delta_vs_plain_zstd_with_recipe_tm_zstd = {}",
+                (effective_with_recipe_tm_zstd as i64) - (plain_zstd as i64)
+            );
+
+            eprintln!("effective_no_recipe_tm_raw  = {}", effective_no_recipe_tm_raw);
+            eprintln!("effective_with_recipe_tm_raw  = {}", effective_with_recipe_tm_raw);
+            eprintln!(
+                "delta_vs_plain_zstd_no_recipe_tm_raw    = {}",
+                (effective_no_recipe_tm_raw as i64) - (plain_zstd as i64)
+            );
+            eprintln!(
+                "delta_vs_plain_zstd_with_recipe_tm_raw  = {}",
+                (effective_with_recipe_tm_raw as i64) - (plain_zstd as i64)
             );
 
             Ok(())
@@ -410,15 +449,21 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
 
                     let plain = target_syms[gi] & mask;
                     let resid = make_residual_symbol(a.residual, pred, plain, mask);
-                    if resid == 0 { matches += 1; }
+                    if resid == 0 {
+                        matches += 1;
+                    }
                     residual_syms.push(resid & mask);
                 }
             }
 
             let tm = TimingMap { indices: tm_indices };
-            timemap::write_tm1(&a.out_timemap, &tm)?;
+            timemap::write_timemap_auto(&a.out_timemap, &tm)?;
 
-            let enc = if a.time_split { BitfieldResidualEncoding::Lanes } else { a.bitfield_residual };
+            let enc = if a.time_split {
+                BitfieldResidualEncoding::Lanes
+            } else {
+                a.bitfield_residual
+            };
 
             let resid_container_bytes = write_bitfield_residual(
                 &a.out_residual,
@@ -432,19 +477,26 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 if use_addk { Some(chunk_addk.as_slice()) } else { None },
             )?;
 
-            let tm_file_bytes = std::fs::read(&a.out_timemap).unwrap_or_default();
-            let tm_zstd = zstd_compress_len(&tm_file_bytes, a.zstd_level);
+            let tm_bytes = tm.encode_auto();
+            let tm_raw = tm_bytes.len();
+            let tm_zstd = zstd_compress_len(&tm_bytes, a.zstd_level);
+            let tm_format = tm_format_from_bytes(&tm_bytes);
 
-            let packed_resid = bitpack::pack_symbols(a.bits_per_emission, &residual_syms)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let resid_zstd = zstd_compress_len(&packed_resid, a.zstd_level);
+            let resid_file_bytes = std::fs::read(&a.out_residual)
+                .with_context(|| format!("read residual for sizing: {}", a.out_residual))?;
+            let resid_container_zstd = zstd_compress_len(&resid_file_bytes, a.zstd_level);
 
             let plain_packed = bitpack::pack_symbols(a.bits_per_emission, &target_syms)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let plain_zstd = zstd_compress_len(&plain_packed, a.zstd_level);
 
-            let effective_no_recipe = tm_zstd.saturating_add(resid_zstd);
-            let effective_with_recipe = recipe_raw_len.saturating_add(effective_no_recipe);
+            let effective_no_recipe_tm_zstd = tm_zstd.saturating_add(resid_container_zstd);
+            let effective_with_recipe_tm_zstd =
+                recipe_raw_len.saturating_add(effective_no_recipe_tm_zstd);
+
+            let effective_no_recipe_tm_raw = tm_raw.saturating_add(resid_container_zstd);
+            let effective_with_recipe_tm_raw =
+                recipe_raw_len.saturating_add(effective_no_recipe_tm_raw);
 
             eprintln!("--- gen-law (bitfield) ---");
             eprintln!("law_type                   = {:?}", a.law_type);
@@ -480,20 +532,37 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 sym_count,
                 (matches as f64) * 100.0 / (sym_count as f64)
             );
+
             eprintln!("recipe_raw_bytes           = {}", recipe_raw_len);
             eprintln!("plain_zstd_bytes           = {}", plain_zstd);
-            eprintln!("tm1_zstd_bytes             = {}", tm_zstd);
+
+            eprintln!("tm_raw_bytes               = {}", tm_raw);
+            eprintln!("tm_zstd_bytes              = {}", tm_zstd);
+            eprintln!("tm_format                  = {}", tm_format);
+
             eprintln!("residual_container_bytes   = {}", resid_container_bytes);
-            eprintln!("residual_packed_zstd_bytes = {}", resid_zstd);
-            eprintln!("effective_no_recipe        = {}", effective_no_recipe);
-            eprintln!("effective_with_recipe      = {}", effective_with_recipe);
+            eprintln!("residual_container_zstd_bytes = {}", resid_container_zstd);
+
+            eprintln!("effective_no_recipe_tm_zstd = {}", effective_no_recipe_tm_zstd);
+            eprintln!("effective_with_recipe_tm_zstd = {}", effective_with_recipe_tm_zstd);
             eprintln!(
-                "delta_vs_plain_zstd_no_recipe   = {}",
-                (effective_no_recipe as i64) - (plain_zstd as i64)
+                "delta_vs_plain_zstd_no_recipe_tm_zstd   = {}",
+                (effective_no_recipe_tm_zstd as i64) - (plain_zstd as i64)
             );
             eprintln!(
-                "delta_vs_plain_zstd_with_recipe = {}",
-                (effective_with_recipe as i64) - (plain_zstd as i64)
+                "delta_vs_plain_zstd_with_recipe_tm_zstd = {}",
+                (effective_with_recipe_tm_zstd as i64) - (plain_zstd as i64)
+            );
+
+            eprintln!("effective_no_recipe_tm_raw  = {}", effective_no_recipe_tm_raw);
+            eprintln!("effective_with_recipe_tm_raw  = {}", effective_with_recipe_tm_raw);
+            eprintln!(
+                "delta_vs_plain_zstd_no_recipe_tm_raw    = {}",
+                (effective_no_recipe_tm_raw as i64) - (plain_zstd as i64)
+            );
+            eprintln!(
+                "delta_vs_plain_zstd_with_recipe_tm_raw  = {}",
+                (effective_with_recipe_tm_raw as i64) - (plain_zstd as i64)
             );
 
             Ok(())

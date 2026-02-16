@@ -5,7 +5,7 @@ use super::mapping::map_byte;
 use super::residual::{apply_residual_byte, make_residual_byte};
 use super::tags::{apply_conditioning_if_enabled, read_cond_tags, CondTags};
 use super::util::{
-    parse_seed, parse_seed_hex_opt, tm1_len_contig, tm_jump_cost, zstd_compress_len,
+    parse_seed, parse_seed_hex_opt, tm_jump_cost, zstd_compress_len,
 };
 
 use k8dnz_core::signal::timing_map::TimingMap;
@@ -15,7 +15,7 @@ use crate::io::{recipe_file, timemap};
 
 pub fn cmd_make(a: MakeArgs) -> anyhow::Result<()> {
     let tm = TimingMap::stride(a.len, a.start, a.step).map_err(|e| anyhow::anyhow!("{e}"))?;
-    timemap::write_tm1(&a.out, &tm)?;
+    timemap::write_timemap_auto(&a.out, &tm)?;
     eprintln!(
         "timemap ok: out={} len={} start={} step={} last={:?}",
         a.out,
@@ -28,7 +28,7 @@ pub fn cmd_make(a: MakeArgs) -> anyhow::Result<()> {
 }
 
 pub fn cmd_inspect(a: InspectArgs) -> anyhow::Result<()> {
-    let tm = timemap::read_tm1(&a.r#in)?;
+    let tm = timemap::read_timemap(&a.r#in)?;
     eprintln!(
         "timemap: in={} len={} first={:?} last={:?}",
         a.r#in,
@@ -90,7 +90,7 @@ pub fn cmd_map_seed(a: MapSeedArgs) -> anyhow::Result<()> {
 
 pub fn cmd_apply(a: ApplyArgs) -> anyhow::Result<()> {
     let recipe = recipe_file::load_k8r(&a.recipe)?;
-    let tm = timemap::read_tm1(&a.timemap)?;
+    let tm = timemap::read_timemap(&a.timemap)?;
     if tm.indices.is_empty() {
         anyhow::bail!("timemap empty");
     }
@@ -184,7 +184,7 @@ pub fn cmd_fit(a: FitArgs) -> anyhow::Result<()> {
     }
 
     let tm = TimingMap { indices };
-    timemap::write_tm1(&a.out, &tm)?;
+    timemap::write_timemap_auto(&a.out, &tm)?;
 
     eprintln!(
         "timemap fit ok: out={} target_bytes={} first_idx={:?} last_idx={:?} start_emission={} start_ticks={} end_emissions={} end_ticks={} delta_ticks={}",
@@ -304,8 +304,11 @@ pub fn cmd_fit_xor(a: FitXorArgs) -> anyhow::Result<()> {
             FitObjective::Zstd => zstd_compress_len(&scratch_resid, a.zstd_level),
         };
 
-        let tm1_raw_len = tm1_len_contig(base_pos, n);
-        let score_effective = score_metric.saturating_add(tm1_raw_len);
+        // IMPORTANT FIX:
+        // Previously we added tm1_len_contig(...) which overestimates program cost now that TM0 exists.
+        // For contiguous indices, the on-disk timemap will be TM0 (tiny), so use tm0_len_contig(...) here.
+        let tm_raw_len = tm0_len_contig(n as u64);
+        let score_effective = score_metric.saturating_add(tm_raw_len);
 
         if score_effective < best_score_effective {
             best_score_effective = score_effective;
@@ -322,8 +325,7 @@ pub fn cmd_fit_xor(a: FitXorArgs) -> anyhow::Result<()> {
 
     let abs_win_start_pos: u64 = abs_stream_base_pos + (best_start as u64);
 
-    let indices: Vec<u64> = (0..(n as u64)).map(|i| abs_win_start_pos + i).collect();
-    let tm = TimingMap { indices };
+    let tm = TimingMap::stride(n as u64, abs_win_start_pos, 1).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let mut residual: Vec<u8> = Vec::with_capacity(n);
     for i in 0..n {
@@ -333,7 +335,7 @@ pub fn cmd_fit_xor(a: FitXorArgs) -> anyhow::Result<()> {
         residual.push(make_residual_byte(a.residual, mapped, target[i]));
     }
 
-    let tm_bytes = tm.encode_tm1();
+    let tm_bytes = tm.encode_auto();
     let tm_raw = tm_bytes.len();
     let tm_zstd = zstd_compress_len(&tm_bytes, a.zstd_level);
 
@@ -345,7 +347,7 @@ pub fn cmd_fit_xor(a: FitXorArgs) -> anyhow::Result<()> {
     let effective_no_recipe = tm_zstd.saturating_add(resid_zstd);
     let effective_with_recipe = recipe_raw_len.saturating_add(effective_no_recipe);
 
-    timemap::write_tm1(&a.out_timemap, &tm)?;
+    timemap::write_timemap_auto(&a.out_timemap, &tm)?;
     std::fs::write(&a.out_residual, &residual)?;
 
     eprintln!(
@@ -380,8 +382,8 @@ pub fn cmd_fit_xor(a: FitXorArgs) -> anyhow::Result<()> {
     eprintln!("recipe_raw_bytes           = {}", recipe_raw_len);
     eprintln!("plain_raw_bytes            = {}", target.len());
     eprintln!("plain_zstd_bytes           = {}", plain_zstd);
-    eprintln!("tm1_raw_bytes              = {}", tm_raw);
-    eprintln!("tm1_zstd_bytes             = {}", tm_zstd);
+    eprintln!("tm_raw_bytes               = {}", tm_raw);
+    eprintln!("tm_zstd_bytes              = {}", tm_zstd);
     eprintln!("resid_raw_bytes            = {}", resid_raw);
     eprintln!("resid_zstd_bytes           = {}", resid_zstd);
     eprintln!("effective_bytes_no_recipe  = {}", effective_no_recipe);
@@ -396,7 +398,7 @@ pub fn cmd_fit_xor(a: FitXorArgs) -> anyhow::Result<()> {
     );
     eprintln!("note_best_scan_score_proxy_or_zstd = {}", best_zstd_resid);
     eprintln!(
-        "note_best_scan_effective_rawtm_plus_score = {}",
+        "note_best_scan_effective_prog_plus_score = {}",
         best_score_effective
     );
 
@@ -715,7 +717,7 @@ pub fn cmd_fit_xor_chunked(a: FitXorChunkedArgs) -> anyhow::Result<()> {
     let tm = TimingMap {
         indices: tm_indices,
     };
-    let tm_bytes = tm.encode_tm1();
+    let tm_bytes = tm.encode_auto();
     let tm_raw = tm_bytes.len();
     let tm_zstd = zstd_compress_len(&tm_bytes, a.zstd_level);
 
@@ -728,15 +730,15 @@ pub fn cmd_fit_xor_chunked(a: FitXorChunkedArgs) -> anyhow::Result<()> {
     let effective_no_recipe = tm_zstd.saturating_add(resid_zstd);
     let effective_with_recipe = recipe_raw_len.saturating_add(effective_no_recipe);
 
-    timemap::write_tm1(&a.out_timemap, &tm)?;
+    timemap::write_timemap_auto(&a.out_timemap, &tm)?;
     std::fs::write(&a.out_residual, &residual)?;
 
     eprintln!("--- scoreboard ---");
     eprintln!("recipe_raw_bytes           = {}", recipe_raw_len);
     eprintln!("plain_raw_bytes            = {}", produced);
     eprintln!("plain_zstd_bytes           = {}", plain_zstd);
-    eprintln!("tm1_raw_bytes              = {}", tm_raw);
-    eprintln!("tm1_zstd_bytes             = {}", tm_zstd);
+    eprintln!("tm_raw_bytes               = {}", tm_raw);
+    eprintln!("tm_zstd_bytes              = {}", tm_zstd);
     eprintln!("resid_raw_bytes            = {}", resid_raw);
     eprintln!("resid_zstd_bytes           = {}", resid_zstd);
     eprintln!("effective_bytes_no_recipe  = {}", effective_no_recipe);
@@ -755,7 +757,7 @@ pub fn cmd_fit_xor_chunked(a: FitXorChunkedArgs) -> anyhow::Result<()> {
 
 pub fn cmd_reconstruct(a: ReconstructArgs) -> anyhow::Result<()> {
     let recipe = recipe_file::load_k8r(&a.recipe)?;
-    let tm = timemap::read_tm1(&a.timemap)?;
+    let tm = timemap::read_timemap(&a.timemap)?;
     if tm.indices.is_empty() {
         anyhow::bail!("timemap empty");
     }
@@ -960,4 +962,21 @@ fn collect_rgbpair_bytes(
     }
 
     Ok(out)
+}
+
+// TM0 raw size estimate for contiguous stride (step=1).
+// Format is:
+// MAGIC(4) + varint(len) + varint(start) + varint(step)
+// This is used only for scan scoring in cmd_fit_xor.
+fn tm0_len_contig(len: u64) -> usize {
+    4 + varint_len_u64(len) + varint_len_u64(0) + varint_len_u64(1)
+}
+
+fn varint_len_u64(mut x: u64) -> usize {
+    let mut n = 1usize;
+    while x >= 0x80 {
+        x >>= 7;
+        n += 1;
+    }
+    n
 }

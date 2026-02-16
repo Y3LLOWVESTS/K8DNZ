@@ -268,7 +268,6 @@ fn write_bitfield_residual_bf2(
     Ok(())
 }
 
-/// Wrapper used by gen-law to choose BF1 vs BF2 without duplicating container code.
 pub(crate) fn write_bitfield_residual(
     path: &str,
     bits_per_emission: u8,
@@ -364,14 +363,13 @@ fn lowpass_iir_update(state: &mut LowpassState, x: u8, smooth_shift: u8) -> u8 {
     state.y as u8
 }
 
-/// Exported for gen-law so we can map predicted symbols identically.
 pub(crate) fn map_symbol_bitfield(
     mapping: BitMapping,
     map_seed: u64,
     emission: u64,
     rgb6: &[u8; 6],
     bits_per_emission: u8,
-    bit_tau: u8,
+    bit_tau: u16,
     bit_smooth_shift: u8,
     lp_state: &mut LowpassState,
 ) -> u8 {
@@ -394,7 +392,10 @@ pub(crate) fn map_symbol_bitfield(
             }
             let x = intensity_u8_from_rgb6(rgb6);
             let y = lowpass_iir_update(lp_state, x, bit_smooth_shift);
-            let bit = if y >= bit_tau { 1u8 } else { 0u8 };
+
+            // NOTE: bit_tau is u16 so it can exceed 255 (your requirement).
+            // y is still 0..255; compare in u16 space to avoid truncation.
+            let bit = if (y as u16) >= bit_tau { 1u8 } else { 0u8 };
             bit & mask
         }
     }
@@ -409,7 +410,7 @@ fn ensure_symbol_stream_len(
     bits_per_emission: u8,
     search_emissions: u64,
     max_ticks: u64,
-    bit_tau: u8,
+    bit_tau: u16,
     bit_smooth_shift: u8,
     lp_state: &mut LowpassState,
 ) -> bool {
@@ -957,9 +958,10 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
 
     let tm = TimingMap { indices: tm_indices };
 
-    let tm_bytes = tm.encode_tm1();
+    let tm_bytes = tm.encode_auto();
     let tm_raw = tm_bytes.len();
     let tm_zstd = zstd_compress_len(&tm_bytes, a.zstd_level);
+    let tm_is_tm0 = tm_bytes.len() >= 4 && &tm_bytes[0..4] == b"TM0\0";
 
     let want_lanes = a.time_split || a.bitfield_residual == BitfieldResidualEncoding::Lanes;
 
@@ -1003,14 +1005,15 @@ pub fn cmd_fit_xor_chunked_bitfield(a: FitXorChunkedArgs) -> anyhow::Result<()> 
     let effective_no_recipe = tm_zstd.saturating_add(resid_zstd);
     let effective_with_recipe = recipe_raw_len.saturating_add(effective_no_recipe);
 
-    timemap::write_tm1(&a.out_timemap, &tm)?;
+    timemap::write_timemap_auto(&a.out_timemap, &tm)?;
 
     eprintln!("--- scoreboard (bitfield) ---");
     eprintln!("recipe_raw_bytes           = {}", recipe_raw_len);
     eprintln!("plain_raw_bytes            = {}", target_bytes.len());
     eprintln!("plain_zstd_bytes           = {}", plain_zstd);
-    eprintln!("tm1_raw_bytes              = {}", tm_raw);
-    eprintln!("tm1_zstd_bytes             = {}", tm_zstd);
+    eprintln!("tm_raw_bytes               = {}", tm_raw);
+    eprintln!("tm_zstd_bytes              = {}", tm_zstd);
+    eprintln!("tm_format                  = {}", if tm_is_tm0 { "TM0" } else { "TM1" });
     eprintln!("resid_raw_bytes            = {}", resid_raw);
     eprintln!("resid_zstd_bytes           = {}", resid_zstd);
     eprintln!("effective_bytes_no_recipe  = {}", effective_no_recipe);
@@ -1039,7 +1042,7 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
     }
 
     let recipe = recipe_file::load_k8r(&a.recipe)?;
-    let tm = timemap::read_tm1(&a.timemap)?;
+    let tm = timemap::read_timemap(&a.timemap)?;
     if tm.indices.is_empty() {
         anyhow::bail!("timemap empty");
     }

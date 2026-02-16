@@ -1,17 +1,17 @@
-
 # K8DNZ / The Cadence Project (Rust)
 
-**Last updated:** 2026-02-16  
-**Status:** Experimental, but we now have a proven “time-indexed reconstruction” pipeline — plus a deterministic banding + tags primitive (`orbexp bandsplit`) that can generate low-alphabet “timelines” (TG1 tags). We also falsified the current conditioning-as-XOR-mask approach (it destroys fit), so the next step is new conditioning semantics where tags select mapping/field variants rather than scrambling bytes.
+**Last updated:** 2026-02-16
+**Status:** Experimental — but we now have a proven “time-indexed reconstruction” pipeline, a vision-aligned structured-bit mapping (`lowpass-thresh`), and (new) a **byte-perfect merkle-style cascading compression + decompression proof** (“merkle-zip / merkle-unzip”). This establishes the core closure property we need for ARK-of-ARKs composition.
 
 ## Current progress (2026-02-16)
 
 We have a new, concrete “vision-aligned” path that is showing real signal:
 
-- ✅ `timemap gen-law` now generates TM1 + residual from a deterministic **law** (no window-scanning required).
-- ✅ A new bitfield mapping family, **low-pass threshold** (`--bit-mapping lowpass-thresh`), produces **structured bits** (runs/streaks) so the residual becomes more zstd-friendly.
-- ✅ We reached **57.31% matches** on a 1024-byte target (bitfield(1), rgbpair, lowpass-thresh, closed-form law).
-- ✅ On a 512-byte target, we got **effective_no_recipe = 303 vs plain_zstd = 272** (**only +31 bytes** overhead), meaning we are **closing in on plain zstd** while still using a deterministic “program + patch” architecture.
+* ✅ `timemap gen-law` now generates TM1 + residual from a deterministic **law** (no window-scanning required).
+* ✅ A new bitfield mapping family, **low-pass threshold** (`--bit-mapping lowpass-thresh`), produces **structured bits** (runs/streaks) so the residual becomes more zstd-friendly.
+* ✅ We reached **57.31% matches** on a 1024-byte target (bitfield(1), rgbpair, lowpass-thresh, closed-form law).
+* ✅ On a 512-byte target, we got **effective_no_recipe = 303 vs plain_zstd = 272** (**only +31 bytes** overhead), meaning we are **closing in on plain zstd** while still using a deterministic “program + patch” architecture.
+* ✅ **NEW (major milestone):** we proved **merkle-style cascade compression and decompression** is byte-perfect. Concretely: we built two “leaf ARK blobs” (recipe + timemap + residual) for two halves of data, packed them into a container, compressed that container into a single “root ARK blob,” then decompressed the root and recovered the original leaf blobs **bit-for-bit identical**.
 
 ### Current formula (math)
 
@@ -28,7 +28,7 @@ where $s$ (the chosen start) is produced deterministically by the selected law (
 **Low-pass threshold bit extraction**
 
 $$
-\hat{x}[t] = \mathbb{1}\!\left(\mathrm{LP}\!\left(I(t);\tau,\mathrm{smooth\_shift}\right) \ge \theta\right)
+\hat{x}[t] = \mathbb{1}!\left(\mathrm{LP}!\left(I(t);\tau,\mathrm{smooth_shift}\right) \ge \theta\right)
 $$
 
 (`lowpass-thresh` smooths a deterministic intensity signal from the generator and thresholds it into 0/1.)
@@ -36,11 +36,10 @@ $$
 **Residual (XOR)**
 
 $$
-r[i] = x[i] \oplus \hat{x}\!\left(\mathrm{TM1}[i]\right)
+r[i] = x[i] \oplus \hat{x}!\left(\mathrm{TM1}[i]\right)
 $$
 
 > Important: match% is not the only metric; we care about **residual compressibility**. Low-pass helps even when match% is moderate because it makes the residual less noise-like.
-
 
 ### New way to run (current best path)
 
@@ -118,7 +117,8 @@ This is implemented as:
 * `timemap fit-xor` / `timemap fit-xor-chunked` → finds windows in the generated stream and produces:
 
   * a **TM1** (time positions / indices into the stream)
-  * a **residual** (patch bytes; historically XOR, now also supports other residual semantics and bitfield residual payloads)
+  * a **residual** (patch bytes; XOR and SUB modes; plus bitfield residual payloads in fit paths)
+
 * `timemap reconstruct` → regenerates the stream at those indices and applies the residual to produce the exact target
 
 This has been validated with `cmp ... OK` across:
@@ -160,7 +160,174 @@ This remains a lever for residual reduction.
 * `analyze` prints byte histograms + entropy + zstd ratio
 * `ark-inspect --dump-ciphertext` extracts ciphertext for analysis
 * `encode --dump-keystream` dumps the keystream used for XOR
-* timemap runs print a **scoreboard** (recipe bytes, TM1 bytes/zstd, residual bytes/zstd, effective totals)
+* timemap runs print a **scoreboard** (recipe bytes, TM bytes/zstd, residual bytes/zstd, effective totals)
+
+---
+
+## NEW milestone: Merkle-style cascading compression is proven (merkle-zip / merkle-unzip)
+
+This is the “moment of truth” milestone for cascading composition.
+
+**Claim:** We can take two leaf “ARK artifacts” (recipe + timemap + residual) and compress them into a single root “ARK artifact” (recipe + timemap + residual). Then we can decompress the root and recover the two leaf artifacts **byte-for-byte identical**.
+
+This is exactly what we proved using:
+
+* leaf mapping: `bitfield(1) + rgbpair + lowpass-thresh`
+* residual mode: `xor`
+* tick budget: `--max-ticks 200000000`
+* a tiny packed container format `"K8P2"` (magic + version + lengths + payload)
+
+### What the artifacts were (concrete)
+
+We built two leaf blobs:
+
+* `A.blob = recipe.k8r || a_full.tm1 || a_full.bf`
+* `B.blob = recipe.k8r || b_full.tm1 || b_full.bf`
+
+Then we packed them into:
+
+* `P.bin = K8P2 container that contains A.blob and B.blob`
+
+Then we compressed P.bin into a root artifact:
+
+* `root.tm1` + `root.bf` (with the same recipe and same mapping params)
+
+Then we decompressed root back into:
+
+* `P.out` and verified `P.out == P.bin`
+
+Then we unpacked `P.out` back into:
+
+* `A2.blob` and `B2.blob` and verified `A2.blob == A.blob` and `B2.blob == B.blob`
+
+### Size results (from the proven run)
+
+* `A.blob` = 2343 bytes
+* `B.blob` = 2344 bytes
+* `P.bin` = 4700 bytes
+
+Root “ARK artifact” size (compressed side-data + recipe):
+
+* `recipe_raw_bytes = 210`
+* `tm_zstd_bytes = 18`
+* `resid_zstd_bytes = 1632`
+* `effective_bytes_with_recipe = 1860 bytes`
+
+So the root (1860B) expands into a packed payload (4700B) that contains two leaf artifacts.
+
+### How to reproduce the merkle proof exactly
+
+This is a fully reproducible command sequence.
+
+#### 0) Prepare the two halves
+
+This assumes you already created `/tmp/k8dnz_half/g1_a.bin` and `/tmp/k8dnz_half/g1_b.bin` (split Genesis1 into two parts). If you used a different split method previously, keep using it. The proof does not depend on how you split, only that you keep the same two inputs through the steps below.
+
+#### 1) Generate the two leaf timemap + residual pairs (leaf ARKs)
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked --recipe ./configs/tuned_validated.k8r --target /tmp/k8dnz_half/g1_a.bin --out-timemap /tmp/k8dnz_half/a_full.tm1 --out-residual /tmp/k8dnz_half/a_full.bf --map bitfield --mode rgbpair --bits-per-emission 1 --bit-mapping lowpass-thresh --bitfield-residual packed --residual xor --objective zstd --zstd-level 3 --lookahead 400000 --max-ticks 200000000
+
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked --recipe ./configs/tuned_validated.k8r --target /tmp/k8dnz_half/g1_b.bin --out-timemap /tmp/k8dnz_half/b_full.tm1 --out-residual /tmp/k8dnz_half/b_full.bf --map bitfield --mode rgbpair --bits-per-emission 1 --bit-mapping lowpass-thresh --bitfield-residual packed --residual xor --objective zstd --zstd-level 3 --lookahead 400000 --max-ticks 200000000
+```
+
+These runs produce:
+
+* `/tmp/k8dnz_half/a_full.tm1` and `/tmp/k8dnz_half/a_full.bf`
+* `/tmp/k8dnz_half/b_full.tm1` and `/tmp/k8dnz_half/b_full.bf`
+
+#### 2) Build the two leaf blobs (leaf ARK blobs)
+
+```bash
+mkdir -p /tmp/k8dnz_half/ark2
+cp ./configs/tuned_validated.k8r /tmp/k8dnz_half/ark2/recipe.k8r
+cp /tmp/k8dnz_half/a_full.tm1 /tmp/k8dnz_half/ark2/a.tm1
+cp /tmp/k8dnz_half/a_full.bf  /tmp/k8dnz_half/ark2/a.bf
+cp /tmp/k8dnz_half/b_full.tm1 /tmp/k8dnz_half/ark2/b.tm1
+cp /tmp/k8dnz_half/b_full.bf  /tmp/k8dnz_half/ark2/b.bf
+
+cat /tmp/k8dnz_half/ark2/recipe.k8r /tmp/k8dnz_half/ark2/a.tm1 /tmp/k8dnz_half/ark2/a.bf > /tmp/k8dnz_half/ark2/A.blob
+cat /tmp/k8dnz_half/ark2/recipe.k8r /tmp/k8dnz_half/ark2/b.tm1 /tmp/k8dnz_half/ark2/b.bf > /tmp/k8dnz_half/ark2/B.blob
+
+wc -c /tmp/k8dnz_half/ark2/A.blob /tmp/k8dnz_half/ark2/B.blob
+```
+
+Expected sizes from the proven run were:
+
+* `A.blob = 2343`
+* `B.blob = 2344`
+
+#### 3) Pack the two leaf blobs into one self-delimiting container (K8P2)
+
+```bash
+LA=$(wc -c < /tmp/k8dnz_half/ark2/A.blob)
+LB=$(wc -c < /tmp/k8dnz_half/ark2/B.blob)
+
+printf 'K8P2' > /tmp/k8dnz_half/ark2/P.bin
+printf '\x01' >> /tmp/k8dnz_half/ark2/P.bin
+perl -e 'print pack("V",$ARGV[0])' "$LA" >> /tmp/k8dnz_half/ark2/P.bin
+perl -e 'print pack("V",$ARGV[0])' "$LB" >> /tmp/k8dnz_half/ark2/P.bin
+cat /tmp/k8dnz_half/ark2/A.blob /tmp/k8dnz_half/ark2/B.blob >> /tmp/k8dnz_half/ark2/P.bin
+
+wc -c /tmp/k8dnz_half/ark2/P.bin
+```
+
+Expected from the proven run:
+
+* `P.bin = 4700`
+
+#### 4) merkle-zip: compress the packed container into a single root timemap+residual
+
+```bash
+cargo run -p k8dnz-cli -- timemap fit-xor-chunked --recipe ./configs/tuned_validated.k8r --target /tmp/k8dnz_half/ark2/P.bin --out-timemap /tmp/k8dnz_half/ark2/root.tm1 --out-residual /tmp/k8dnz_half/ark2/root.bf --map bitfield --mode rgbpair --bits-per-emission 1 --bit-mapping lowpass-thresh --bitfield-residual packed --residual xor --objective zstd --zstd-level 3 --lookahead 400000 --max-ticks 200000000
+```
+
+This produces the root artifact:
+
+* `/tmp/k8dnz_half/ark2/root.tm1`
+* `/tmp/k8dnz_half/ark2/root.bf`
+
+#### 5) merkle-unzip: reconstruct P.out from the root artifact
+
+Important: `timemap reconstruct` uses `--residual-mode` and does not accept `--bitfield-residual`.
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/k8dnz_half/ark2/root.tm1 --residual /tmp/k8dnz_half/ark2/root.bf --out /tmp/k8dnz_half/ark2/P.out --map bitfield --mode rgbpair --bits-per-emission 1 --bit-mapping lowpass-thresh --residual-mode xor --bit-tau 128 --bit-smooth-shift 3 --max-ticks 200000000
+```
+
+Verify byte identity:
+
+```bash
+cmp -s /tmp/k8dnz_half/ark2/P.bin /tmp/k8dnz_half/ark2/P.out && echo OK_P
+```
+
+Expected:
+
+* `OK_P`
+
+#### 6) Unpack P.out and verify both recovered leaf blobs match exactly
+
+```bash
+MAGIC=$(dd if=/tmp/k8dnz_half/ark2/P.out bs=1 count=4 status=none)
+test "$MAGIC" = "K8P2" && echo OK_MAGIC
+
+LA=$(dd if=/tmp/k8dnz_half/ark2/P.out bs=1 skip=5 count=4 status=none | perl -e 'read(STDIN,$x,4); print unpack("V",$x)')
+LB=$(dd if=/tmp/k8dnz_half/ark2/P.out bs=1 skip=9 count=4 status=none | perl -e 'read(STDIN,$x,4); print unpack("V",$x)')
+
+dd if=/tmp/k8dnz_half/ark2/P.out bs=1 skip=13 count=$LA status=none > /tmp/k8dnz_half/ark2/A2.blob
+dd if=/tmp/k8dnz_half/ark2/P.out bs=1 skip=$((13+LA)) count=$LB status=none > /tmp/k8dnz_half/ark2/B2.blob
+
+cmp -s /tmp/k8dnz_half/ark2/A.blob /tmp/k8dnz_half/ark2/A2.blob && echo OK_A_BLOB
+cmp -s /tmp/k8dnz_half/ark2/B.blob /tmp/k8dnz_half/ark2/B2.blob && echo OK_B_BLOB
+```
+
+Expected:
+
+* `OK_MAGIC`
+* `OK_A_BLOB`
+* `OK_B_BLOB`
+
+This completes the merkle-style proof: **root expands to the exact packed container that contains exact leaf artifacts**.
 
 ---
 
@@ -187,12 +354,7 @@ And validated end-to-end:
 
 * **Bitfield(8)** (256 symbol lanes) reconstructs correctly, but residual is still large.
 * **Bitfield(2)** (4 symbol lanes → `00/01/10/11`) reconstructs correctly and is currently the best-performing bitfield run of this session.
-
-  * It also increased match rates significantly (~25–33% matches per 128–512 symbol chunk in many segments), indicating we’re capturing more structure.
 * **Bitfield(1)** is structurally interesting: match rates jump dramatically (often ~55–60% matches per 512-symbol chunk), suggesting the generator is “closer” to a 1-bit view.
-
-  * But it increases symbol count and requires more ticks / stream length to chain across the whole target.
-* Smaller bits-per-emission increases symbol count and generally requires **more ticks**; tick budget matters (we saw “no room to finish” at low tick limits and fixed it by increasing `--max-ticks`).
 
 ### The new “timeline” idea is now concretely realized
 
@@ -215,8 +377,6 @@ We added:
   * per-lane bitset sizes and zstd sizes
   * totals vs baseline packed payload zstd
 
-This is primarily an **analysis tool**: naïvely splitting lanes into separate compressed bitsets usually loses cross-lane redundancy, but the lane distribution skew is extremely informative for “timeline” strategies.
-
 ---
 
 ## New milestone: `orbexp bandsplit` produces deterministic lanes + TG1 tags (banding + timelines)
@@ -235,23 +395,13 @@ This yields a tiny, deterministic **routing / band ID** per block that matches t
 
 With Genesis1, 128-bit blocks, `bucket_fn=tfirst`, `bucket_mod=4`:
 
-* Under `mod = 2^32 (4294967296)`, lane assignment can become degenerate:
-
-  * for shifts 0..16 we observed lanes_used = 1 (all blocks map to lane 0)
-  * even at shift=29 we saw lanes_used = 3 (lane 3 unused)
-
-* Under `mod = 2^32 - 1 (4294967295)`, the same setup produces all 4 lanes with meaningful distribution, e.g.:
-
-  * lane0: 33 blocks
-  * lane1: 27 blocks
-  * lane2: 68 blocks
-  * lane3: 134 blocks
+* Under `mod = 2^32 (4294967296)`, lane assignment can become degenerate.
+* Under `mod = 2^32 - 1 (4294967295)`, the same setup produces all 4 lanes with meaningful distribution.
 
 Interpretation:
 
 * This is not invertible decoding (collisions are expected and fine).
 * But it is a powerful deterministic primitive.
-* `mod = 2^32` can collapse lane entropy; `mod = 2^32 - 1` restores entropy and is now the default for banding experiments.
 
 ---
 
@@ -267,7 +417,6 @@ This has two related goals:
 2. **Compression-by-model** (actively underway): for structured data (e.g., text), fit a cadence recipe + mapping + timing map so that the target can be reconstructed with a **small, compressible residual**.
 
 We are currently validating the system end-to-end using **Genesis1.txt** as the canonical sample.
-We scale to larger text only after the pipeline is proven on Genesis.
 
 ---
 
@@ -307,7 +456,6 @@ A successful reconstruction can be thought of as two interlocking strands:
 * **Strand 2 (Value / Patch):** the residual – what must be applied at those positions
 
 Together, they reconstruct the target perfectly from a deterministic generator.
-The major remaining goal is to make these strands **small** (especially the residual).
 
 ---
 
@@ -397,8 +545,6 @@ cmp /tmp/gen256.bin /tmp/gen256.out && echo OK
 
 ### RGBPair mode (flattened 6-byte-per-emission stream)
 
-RGBPair fitting uses flattened indices: `pos = emission*6 + lane`.
-
 ```bash
 cargo run -p k8dnz-cli -- timemap fit-xor --recipe ./configs/tuned_validated.k8r --target /tmp/gen256.bin --out-timemap /tmp/gen256_rgb.tm1 --out-residual /tmp/gen256_rgb.resid --mode rgbpair --search-emissions 2000000 --max-ticks 80000000 --start-emission 0
 cargo run -p k8dnz-cli -- timemap reconstruct --recipe ./configs/tuned_validated.k8r --timemap /tmp/gen256_rgb.tm1 --residual /tmp/gen256_rgb.resid --out /tmp/gen256_rgb.out --mode rgbpair --max-ticks 80000000
@@ -418,10 +564,6 @@ cmp /tmp/gen256.bin /tmp/gen256_rgb_mapped.out && echo OK
 ## Timemap pipeline (bitfield mapping)
 
 ### Bitfield(2) example: 4 lanes (00/01/10/11)
-
-This treats the target as a stream of 2-bit symbols and fits time windows that maximize matches.
-
-> Note: when reconstructing, **always pass `--max-ticks` at least as large as the fit run**. We saw `reconstruct short` until we added `--max-ticks 250000000` (and later `--max-ticks 600000000`), after which reconstruction succeeded.
 
 ```bash
 cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
@@ -466,90 +608,6 @@ Inspect lane distribution:
 cargo run -p k8dnz-cli -- timemap bf-lanes --in /tmp/g1_bf2.bf2 --zstd-level 3
 ```
 
-### Bitfield(2) + hash mapping variant
-
-```bash
-cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
-  --recipe ./configs/tuned_validated.k8r \
-  --target text/Genesis1.txt \
-  --out-timemap /tmp/g1_bf2_hash.tm1 \
-  --out-residual /tmp/g1_bf2_hash.bf2 \
-  --mode rgbpair \
-  --map bitfield \
-  --bits-per-emission 2 \
-  --bit-mapping hash \
-  --map-seed 1337 \
-  --time-split \
-  --objective matches \
-  --chunk-size 512 \
-  --lookahead 1200000 \
-  --search-emissions 8000000 \
-  --max-ticks 250000000 \
-  --zstd-level 3
-```
-
-Reconstruct (note the explicit `--max-ticks` again):
-
-```bash
-cargo run -p k8dnz-cli -- timemap reconstruct \
-  --recipe ./configs/tuned_validated.k8r \
-  --timemap /tmp/g1_bf2_hash.tm1 \
-  --residual /tmp/g1_bf2_hash.bf2 \
-  --out /tmp/g1_bf2_hash.recon \
-  --mode rgbpair \
-  --map bitfield \
-  --bits-per-emission 2 \
-  --bit-mapping hash \
-  --map-seed 1337 \
-  --residual-mode xor \
-  --max-ticks 250000000
-```
-
-### Bitfield(1) direction (next experiment)
-
-The next planned experiment is 1-bit emissions (“color pair = 0/1”) with a larger tick budget.
-
-```bash
-cargo run -p k8dnz-cli -- timemap fit-xor-chunked \
-  --recipe ./configs/tuned_validated.k8r \
-  --target text/Genesis1.txt \
-  --out-timemap /tmp/g1_bf1.tm1 \
-  --out-residual /tmp/g1_bf1.bf2 \
-  --mode rgbpair \
-  --map bitfield \
-  --bits-per-emission 1 \
-  --bit-mapping geom \
-  --time-split \
-  --objective matches \
-  --chunk-size 512 \
-  --lookahead 1200000 \
-  --search-emissions 8000000 \
-  --max-ticks 250000000 \
-  --zstd-level 3
-```
-
-Then:
-
-```bash
-cargo run -p k8dnz-cli -- timemap reconstruct \
-  --recipe ./configs/tuned_validated.k8r \
-  --timemap /tmp/g1_bf1.tm1 \
-  --residual /tmp/g1_bf1.bf2 \
-  --out /tmp/g1_bf1.recon \
-  --mode rgbpair \
-  --map bitfield \
-  --bits-per-emission 1 \
-  --bit-mapping geom \
-  --residual-mode xor \
-  --max-ticks 250000000
-```
-
-Inspect lanes:
-
-```bash
-cargo run -p k8dnz-cli -- timemap bf-lanes --in /tmp/g1_bf1.bf2 --zstd-level 3
-```
-
 ---
 
 ## Orbital experiments (`orbexp`)
@@ -582,8 +640,8 @@ cargo run -p k8dnz-cli -- orbexp bandsplit \
 
 This emits:
 
-* `/tmp/ts_mod_m1.data.bin` (adjacency-preserving block stream)
-* `/tmp/ts_mod_m1.tags.bin` (TG1 packed tags)
+* `/tmp/ts_mod_m1.data.bin`
+* `/tmp/ts_mod_m1.tags.bin`
 
 ---
 
@@ -594,23 +652,17 @@ Current `.ark` is a deterministic container:
 ```
 MAGIC[4] = "ARK1"
 recipe_len:u32
-recipe_bytes[recipe_len]      (K8R recipe blob, includes its own checks)
+recipe_bytes[recipe_len]
 data_len:u64
-data_bytes[data_len]          (ciphertext)
-crc32:u32                     (over everything before crc32)
+data_bytes[data_len]
+crc32:u32
 ```
-
-The `.ark` file is self-contained:
-
-* embedded recipe enables deterministic regen of the keystream
-* `decode` recomputes the keystream and XORs back to plaintext
-* CRC guards corruption
 
 ---
 
 ## “ARK Key” formats (future-facing)
 
-We expect to support a compact **string key** that can reproduce outputs without shipping a full recipe file. These are sketches (not final), but they match the project direction.
+We expect to support a compact **string key** that can reproduce outputs without shipping a full recipe file.
 
 ### Option 1: URL-safe ARK string (human-copyable)
 
@@ -638,26 +690,13 @@ ARK1_<base64url(packed_bytes)>
 
 ### Option 4: “Russian doll pages” (cascading composition)
 
-Pages are first-class outputs:
-
-* output is “page chunks” that can be chained
-* pages can themselves contain ARK strings (cascading composition)
-
-Note: cascading compression will likely be built last.
+Pages are first-class outputs.
 
 ---
 
 ## Why “time” matters (the project’s core invariant)
 
 Cadence output is indexed by deterministic tick time. The same recipe + seed produces the same emissions at the same ticks.
-If the time index is off—even slightly—the emitted pairs differ or disappear.
-
-This property enables:
-
-* reproducible regen
-* “counting game” reconstruction
-* curve/arc decoding ideas (paired digits → numbers → curves → recover pairs with known time)
-* the timemap+residual “double helix” reconstruction layer
 
 ---
 
@@ -665,47 +704,25 @@ This property enables:
 
 ### Near-term (now)
 
-* Fix recipe tuning degeneracy: ensure any tuned recipe generates a non-degenerate stream (no “all zeros” regen)
-* Residual-first optimization: update timemap objective from “max matches” to “min zstd(residual)” (true compression objective)
-* Add more mapping families beyond SplitMix64 (affine byte map, permute-256 table from seed, lane-aware mapping for rgbpair)
-* Improve scoreboard reporting:
-
-  * recipe bytes
-  * timemap bytes (and compressed timemap bytes)
-  * residual zstd bytes
-  * total effective bytes vs plain zstd
+* Fix recipe tuning degeneracy: ensure any tuned recipe generates a non-degenerate stream
+* Residual-first optimization: objective should prioritize `zstd(residual)` directly (true compression objective)
+* Improve scoreboard reporting and add residual run statistics for bitfield(1) / lowpass-thresh
 
 ### Next experiment set (active)
 
-* Conditioning V2 (core engineering milestone):
-
-  * replace conditioning-as-XOR-mask (falsified) with conditioning where TG1 tags select:
-
-    * mapping/field seed variants, or
-    * mapping families, or
-    * timeline-specific scan/mapping rules
-  * success criterion: residual zstd decreases vs baseline (even 5–15% is signal)
-
-* Time-split into 4 timelines:
-
-  * 00 / 01 / 10 / 11 via 2-bit TG1 tags or via bitfield(2) lanes
-  * model each timeline with its own deterministic mapping/field variant
-  * goal: push more structure into the “program” (TM1/tags) so residual shrinks
-
-* 1-bit emission direction:
-
-  * “color pair = 0/1” as the primitive token and/or 1-bit tags
-  * aim: maximize structure in the timing/banding program so residual shrinks
+* Conditioning V2: replace conditioning-as-XOR-mask with conditioning where TG1 tags select mapping/field variants
+* Time-split into 4 timelines: 00 / 01 / 10 / 11
+* 1-bit emission direction: maximize structure so residual shrinks
 
 ### Mid-term
 
 * Compress TM1 efficiently (delta + varint + zstd)
 * Multi-window / piecewise TM1 selection to reduce residual
-* ARK string spec + decoder (embed mapping + TM1 + residual in a compact form)
+* Formalize leaf container format (self-describing “leaf ARK blob”) so merkle-zip/unzip never relies on fixed recipe/tm sizes
 
 ### Long-term
 
-* End-to-end: KJV Bible as reproducible output via ARK keys
+* End-to-end: larger Genesis samples, then full Book of Genesis, then beyond
 * Cascading ARK pages (Russian doll composition)
 * Deterministic visualization tooling (optional π/τ only)
 

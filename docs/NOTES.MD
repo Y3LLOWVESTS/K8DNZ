@@ -14243,3 +14243,1428 @@ If you paste this into the next instance, the very first thing to do is: **run P
 
 
 ### END NOTE - FEBRUARY 16 2026 - 10:10 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 11:11 CST
+
+# K8DNZ / Cadence Project — Carry-Over Notes (2026-02-16, next instance handoff)
+
+These notes are written so the next instance can resume **immediately** with the right experiments and the right code changes, without re-deriving context.
+
+---
+
+## 0) North Star (unchanged)
+
+We are building a **deterministic, parameterized codec prototype** (Cadence) where a compact “ARK-like key” (recipe + seed + a tiny deterministic program) can expand to the target data (Genesis1.txt is canonical target for now). The system is built around the vision:
+
+**time → two dots free-orbit → alignment window ε → lockstep spiral on frustum → deterministic field influences emission → paired token emitted → repeat**
+
+Core requirements:
+
+* deterministic across machines/runs (same recipe+seed = same output)
+* fixed-point “turns” logic (no floats; π only optional for viz)
+* modular engine (dynamics / field / emission / recipe / CLI)
+* the “stored stuff” should become mostly: **tiny program + tiny parameters + compressible residual**
+
+Immediate objective:
+
+* Beat or match baseline `zstd` on small targets first (512/1024/4096), then scale to Genesis1.
+
+---
+
+## 1) What we proved / achieved so far
+
+### 1.1 Determinism & full pipeline are real
+
+* Determinism works.
+* We have an end-to-end “time-indexed reconstruction” pipeline.
+* Timemap “program” files (.tm1) can be very small under zstd in some regimes, but can also become a major overhead depending on how indices are stored (see 4096 results).
+
+### 1.2 Bitfield mapping track is the main path right now
+
+We shifted from “byte prediction” to **k-bit symbol streams** derived from engine emissions, especially:
+
+* `--map bitfield --mode rgbpair`
+* `--bits-per-emission 1` is the current most interpretable / vision-aligned setting.
+* Residual mode: `--residual xor`.
+
+Residual container in these runs:
+
+* `--bitfield-residual packed` (BF1 packed bitstream)
+
+### 1.3 Gen-law is now a primary tool (no scanning required)
+
+We are using:
+
+* `k8dnz-cli timemap gen-law`
+* law-driven indexing with `--law-type closed-form` (and earlier `jump-walk`).
+
+**Important: current `gen-law` behavior is a contiguous window** (one global start), not per-chunk start selection. That matters for both compression and what a “timemap” needs to store.
+
+### 1.4 Breakthrough mapping: LowpassThresh
+
+The major breakthrough was moving away from hashy/geom bit extraction and adopting:
+
+* `--bit-mapping lowpass-thresh`
+* `--bit-tau ...`
+* `--bit-smooth-shift ...`
+
+This mapping introduces **memory / smoothness** (vision-aligned “color bands / gradients”), producing predicted streams with **run structure**. Even when match% is moderate, residual can become more compressible.
+
+---
+
+## 2) Key confirmed results (with concrete numbers)
+
+### 2.1 1024-byte closed-form baseline reproduced cleanly
+
+Command family (canonical best pocket):
+
+* `target_bytes=1024`, `symbols=8192`, `bits_per_emission=1`
+* `closed-form` law params:
+
+  * `cf_b=0 cf_a=37 cf_c=1`
+  * `p1/g1/phi1 = 64/7/0`
+  * `p2/g2/phi2 = 256/3/13`
+* LowpassThresh often best around `(tau, smooth_shift) ≈ (160,7)` and also shows same best plateau for `(64,7)` depending on run.
+
+**Observed baseline (confirmed):**
+
+* matches: **4695/8192 (57.31%)**
+* plain_zstd_bytes: **445**
+* tm1_zstd_bytes: **33**
+* residual_packed_zstd_bytes: **445**
+* effective_no_recipe: **478**
+* delta_vs_plain_zstd_no_recipe: **+33**
+
+Interpretation:
+
+* At 1KB, residual is essentially baseline zstd already.
+* The remaining gap is almost entirely **TM overhead** in the current format/approach.
+
+### 2.2 1024 sweep behavior: two regimes, best plateau repeats
+
+During the tau/smooth sweep, we observed runs clustering into:
+
+* Regime A (worse): ~42.7% matches, residual_zstd ~453–456, effective ~486–489
+* Regime B (best plateau): **57.31% matches**, residual_zstd **445**, effective **478** (same as baseline)
+
+This suggests:
+
+* Parameter searching is now **diminishing returns** under current mapping/law.
+* Next win should come from **format/program changes**, not more sweeping.
+
+### 2.3 4096 closed-form run succeeded (with higher ticks) — but reveals the real blocker
+
+We initially failed at 80M ticks due to emission starvation; at 200M ticks it succeeded.
+
+**4096 run (closed-form + lowpass-thresh tau=64 smooth=7) produced:**
+
+* target_bytes: 4096
+* symbols: 32768
+* produced_emissions_end: 51427 (enough)
+* matches: **18704/32768 (57.08%)**
+* plain_zstd_bytes: **1299**
+* tm1_zstd_bytes: **379**
+* residual_packed_zstd_bytes: **1299**
+* effective_no_recipe: **1678**
+* delta_vs_plain_zstd_no_recipe: **+379**
+
+Interpretation:
+
+* Residual is still behaving “baseline-like” at 4KB (residual_zstd equals plain_zstd).
+* TM1 overhead becomes huge at 4KB (**379 bytes**), swamping any potential wins.
+* This is the smoking gun: the next unlock is **not** “more match%” first — it is **stop storing a big TM list when the mapping is law-derived/contiguous**.
+
+---
+
+## 3) The Current Formula (what we are actually doing)
+
+We are currently using: **law-driven indexing + low-pass threshold bit extraction + XOR residual**.
+
+### 3.1 Predicted bitstream from engine (LowpassThresh)
+
+At each emission `t`, engine emits an `rgbpair` token. We compute a deterministic intensity-like scalar `I(t)` and apply low-pass smoothing with parameters `(tau, smooth_shift)`, then threshold into a bit:
+
+* `S[t] ∈ {0,1}` is the predicted bitstream.
+
+Key property:
+
+* Lowpass introduces correlation / run structure.
+
+### 3.2 Timemap (current gen-law behavior)
+
+For this gen-law mode, timemap indices are **contiguous**:
+
+* `TM[i] = s + i` for `i = 0..N-1`
+  where `s` is chosen deterministically by the law (closed-form).
+
+### 3.3 Residual (xor)
+
+* `r[i] = X[i] XOR S[TM[i]]`
+
+We track:
+
+* match% (where r[i]==0)
+* but the true objective is **residual compressibility** + minimizing “program overhead.”
+
+---
+
+## 4) What we learned from the 4096 data (the “hard truth”)
+
+1. **LowpassThresh is good, but not sufficient alone**
+   It provides structure, but at 4KB the residual still compresses about the same as baseline.
+
+2. **TM1 is now the dominant overhead**
+   At 4KB, TM1 zstd is **379 bytes**. This is unacceptable if we’re aiming for a small program.
+
+3. Therefore: **we must stop serializing full index lists** when:
+
+   * the window is contiguous, and/or
+   * indices are fully determined by law parameters.
+
+This is the clearest next unlock.
+
+---
+
+## 5) Next Engineering Sprint (backwards-compatible plan)
+
+User preference: **backwards compatible is best.**
+
+### 5.1 Add a new timemap format: TM0 (or TM2) “implicit contiguous”
+
+Goal: eliminate the need to store a long list of indices when they are contiguous.
+
+**Format concept:**
+
+* magic header identifies new format (e.g., `TM0\0` or `TM2\0`)
+* store only:
+
+  * `start_pos: u64`
+  * `len: u64`
+  * optional `stride: u32` (default 1)
+* Decoder can expand indices in memory (keeping apply pipeline unchanged), but on disk timemap shrinks radically.
+
+**Backward compatibility approach:**
+
+* Keep existing `.tm1` read/write for legacy.
+* Add new `read_timemap()` that auto-detects:
+
+  * if bytes begin with TM0/TM2 magic → parse implicit
+  * else → fall back to existing TM1 decode
+* CLI should be able to:
+
+  * write TM1 as before (`--timemap-format tm1`)
+  * write implicit as new default for contiguous (`--timemap-format auto` or `tm0`)
+
+Expected impact:
+
+* At 1024 bytes: should erase the **+33** overhead essentially immediately.
+* At 4096 bytes: should erase the **+379** overhead (huge).
+
+### 5.2 Optional but likely needed: “law header timemap” (derivable indices)
+
+Beyond contiguous windows, closed-form could generate indices without storage:
+
+* store only law params + seeds + N
+* decoder regenerates indices on the fly
+
+This can be a second format variant (TM-LAW) later, but first win is TM0 for contiguous.
+
+---
+
+## 6) Next Experiment Plan (minimal runs that matter)
+
+### 6.1 Before code changes: confirm 4096 stability with 2 configs (no sweeps)
+
+Run these two, and log the metrics:
+
+1. tau=64 smooth=7 (already run, baseline)
+2. tau=160 smooth=7 (compare)
+
+(Keep: closed-form params fixed, max-ticks 200M, bits=1)
+
+### 6.2 After TM0 is implemented: re-run the known baselines
+
+Re-run:
+
+* 1024 best case
+* 4096 best case
+
+Expected:
+
+* same matches and residual_zstd,
+* but `tm*_zstd_bytes` collapses, causing `effective_no_recipe` to drop by ~33 at 1KB and ~379 at 4KB.
+
+This is the clean “we just won or got very close” validation.
+
+### 6.3 Only after TM0 win: revisit residual structure improvements
+
+If after TM0 we’re still not beating baseline meaningfully at 4KB, the next knob is not sweeps; it’s structure:
+
+* per-chunk 1-bit flip (addk) (cheap)
+* hysteresis / adaptive threshold in LowpassThresh
+* then (later) per-chunk start_pos(k) closed-form (real formula tracking local structure)
+
+---
+
+## 7) Emissions starvation rule of thumb (so we don’t waste time again)
+
+For 1-bit symbols:
+
+* required symbols = `target_bytes * 8`
+* need produced emissions ≥ that
+
+Observed:
+
+* at 4096 bytes we needed 32768 emissions.
+* at 80M ticks we only got ~20571 emissions (fail).
+* at 200M ticks we got ~51427 emissions (pass).
+
+Practical:
+
+* For 4KB tests under this recipe/law family, use **200M ticks minimum** unless recipe changes.
+
+---
+
+## 8) Script / loop issue (why sweeps felt “stuck”)
+
+The sweep was a shell nested loop printing full banners per run. It isn’t “infinite,” it’s just long and noisy.
+
+Future sweep strategy:
+
+* Keep sweep tiny, bounded.
+* Print a one-line progress header before each run.
+* Add a max-run cap.
+
+Don’t do big sweeps until after TM0 is in, because the best plateau is repeating and we’re overhead-limited.
+
+---
+
+## 9) Code touched / current state
+
+### 9.1 `io/timemap.rs` was updated (atomic + mkdir)
+
+Current `crates/k8dnz-cli/src/io/timemap.rs` includes:
+
+* create parent directories
+* atomic write via temp + rename
+* contextual decode errors
+
+This is stable and correct.
+
+### 9.2 Next required code work
+
+* Implement backwards-compatible timemap read/write supporting a new implicit format (TM0/TM2).
+* Wire `gen-law` output to write implicit timemap when contiguous (or behind a flag).
+
+---
+
+## 10) “Success criteria” for the next instance
+
+**Phase 1 success:** after TM0/TM2:
+
+* 1024 run: `effective_no_recipe` should drop from **478** to ~**445-ish** (or near baseline) because tm overhead collapses.
+* 4096 run: `effective_no_recipe` should drop from **1678** to near **1299-ish** (or much closer), because tm overhead collapses.
+
+If that happens, we are no longer “stuck in predictor quality land”; we are back to being able to iterate on residual structure meaningfully.
+
+---
+
+## 11) Next steps checklist (do these in order)
+
+1. Implement TM0/TM2 implicit timemap format (backwards compatible auto-detect read).
+2. Add CLI option or auto behavior: for contiguous gen-law, write implicit format.
+3. Re-run:
+
+   * 1024 best config
+   * 4096 best config
+4. If 4KB still not beating baseline after TM overhead is removed:
+
+   * enable per-chunk 1-bit flip (addk) in gen-law path
+   * then add hysteresis threshold mapping
+
+---
+
+## 12) Canonical commands (copy/paste)
+
+### 12.1 1024 baseline (best pocket)
+
+```bash
+dd if=text/Genesis1.txt bs=1 count=1024 of=/tmp/g1_1024.bin
+cargo run -p k8dnz-cli -- timemap gen-law \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_1024.bin \
+  --out-timemap /tmp/g1_1024_cf_lp.tm1 \
+  --out-residual /tmp/g1_1024_cf_lp.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping lowpass-thresh \
+  --bit-tau 160 \
+  --bit-smooth-shift 7 \
+  --bitfield-residual packed \
+  --chunk-size 128 \
+  --law-type closed-form \
+  --law-cf-b 0 \
+  --law-cf-a 37 \
+  --law-cf-c 1 \
+  --law-cf-p1 64 --law-cf-g1 7 --law-cf-phi1 0 \
+  --law-cf-p2 256 --law-cf-g2 3 --law-cf-phi2 13 \
+  --start-emission 0 \
+  --search-emissions 2000000 \
+  --max-ticks 40000000 \
+  --residual xor \
+  --zstd-level 3
+```
+
+### 12.2 4096 baseline (requires higher ticks)
+
+```bash
+dd if=text/Genesis1.txt bs=1 count=4096 of=/tmp/g1_4096.bin
+cargo run -p k8dnz-cli -- timemap gen-law \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_4096.bin \
+  --out-timemap /tmp/g1_4096_cf_lp.tm1 \
+  --out-residual /tmp/g1_4096_cf_lp.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping lowpass-thresh \
+  --bit-tau 64 \
+  --bit-smooth-shift 7 \
+  --bitfield-residual packed \
+  --chunk-size 128 \
+  --law-type closed-form \
+  --law-cf-b 0 \
+  --law-cf-a 37 \
+  --law-cf-c 1 \
+  --law-cf-p1 64 --law-cf-g1 7 --law-cf-phi1 0 \
+  --law-cf-p2 256 --law-cf-g2 3 --law-cf-phi2 13 \
+  --start-emission 0 \
+  --search-emissions 2000000 \
+  --max-ticks 200000000 \
+  --residual xor \
+  --zstd-level 3
+```
+
+---
+
+## 13) Final “where we stand” summary
+
+* We have a stable deterministic baseline at 1KB: **residual compresses to baseline zstd** and the only reason we lose is **TM overhead** (+33).
+* At 4KB, we again see **residual == baseline**, but TM overhead becomes huge (+379).
+* Therefore the highest-leverage next step is a **backwards-compatible implicit timemap format** for contiguous/law-derived indexing (TM0/TM2).
+* After that, we can fairly judge whether we need further predictor improvements (chunk flip, hysteresis, per-chunk start_pos).
+
+This is the cleanest “finish line sprint” path.
+
+---
+
+
+## ADDITIONAL NOTE:
+
+Here’s the “formula-level” answer, with the **minimum new variables** that buy the **maximum probability** of reaching 4KB→600B, while staying faithful to “programmatic / formula-driven / deterministic.”
+
+The key meta-point from your data is:
+
+> At 4KB, residual is **still baseline-sized**, so the only way to win is to (a) remove timemap overhead and (b) force the XOR residual to become **structured** (runs/sparsity/motifs) at 4KB scale.
+
+That implies we need to add variables that **shape error structure**, not just “raise match%.”
+
+---
+
+## What variables to add (highest leverage, in order)
+
+### 1) Replace TM1 list with an implicit program (TM0/TM-LAW)
+
+**Variable(s):**
+
+* `s0` start position
+* `N` symbol count
+* (optional) `stride=1`
+
+**Why it matters:**
+Your 4KB run lost **379 bytes purely due to TM1**. This is not “model weakness,” it’s “format tax.” Removing it is mandatory and nearly guaranteed.
+
+**Formula change:**
+Instead of storing `TM[i]` list:
+
+* store `(s0, N)` and reconstruct `TM[i] = s0 + i`.
+
+This doesn’t change prediction; it only removes overhead.
+
+---
+
+### 2) Add a per-chunk flip bit `k[j]` (cheap, huge)
+
+This is the single highest “odds increaser” because it costs almost nothing and can dramatically reduce systematic bias mismatch.
+
+**Variable(s):**
+
+* chunk index `j = 0..C-1`
+* per-chunk flip `k[j] ∈ {0,1}` (1 bit per chunk)
+* chunk size `L` symbols (e.g., 1024 bits for 128 bytes at b=1)
+
+**Formula change:**
+Let `pred[i] = S[TM[i]]` as before. Define chunk:
+
+* `j = floor(i / L)`
+
+Then:
+[
+\hat{x}'[i] = \hat{x}[i] \oplus k[j]
+]
+[
+r[i] = x[i] \oplus \hat{x}'[i]
+]
+
+**Why it increases success odds:**
+At 4KB with chunk_size=128 bytes → `C=256` chunks → **256 bits = 32 bytes** overhead.
+If this reduces residual by even ~200–400 bytes, it’s a slam dunk. It often does because lowpass predictors tend to have **global bias/phase** that drifts slowly; chunk flips correct that cheaply.
+
+**Deterministic selection options:**
+
+* **Stored-best:** choose `k[j]` that minimizes residual for each chunk (store 1 bit/chunk).
+* **Law-derived:** compute `k[j] = parity(hash(law_seed, j))` (store 0 bits). Less powerful but free.
+
+For the milestone, “stored-best” is the pragmatic option: 32 bytes is nothing compared to the 700–800 byte gap.
+
+---
+
+### 3) Upgrade LowpassThresh to hysteresis + adaptive baseline (creates runs)
+
+You already have a memoryful mapping, but at 4KB it’s not *forcing* enough run stability in the bitstream or mismatch stream.
+
+**Variable(s):**
+
+* `T_hi`, `T_lo` (hysteresis thresholds), with `T_hi > T_lo`
+* `μ[t]` slow baseline (adaptive mean)
+* `τ_fast`, `τ_slow` (dual time constants)
+
+**Formula change:**
+Compute intensity `I(t)`. Maintain two smoothers:
+[
+LP_f(t) = LP_f(t-1) + \frac{I(t)-LP_f(t-1)}{\tau_{\text{fast}}}
+]
+[
+\mu(t) = \mu(t-1) + \frac{LP_f(t)-\mu(t-1)}{\tau_{\text{slow}}}
+]
+
+Then threshold with hysteresis around the baseline:
+[
+y(t) = LP_f(t) - \mu(t)
+]
+[
+\hat{x}[t] =
+\begin{cases}
+1,& y(t)\ge T_{\text{hi}} \
+0,& y(t)\le T_{\text{lo}} \
+\hat{x}[t-1],& \text{otherwise}
+\end{cases}
+]
+
+**Why it increases success odds:**
+Hysteresis + baseline removes “chatter,” producing longer constant runs, and it also stabilizes bit balance over long sequences. That tends to make the **residual mismatch stream** compressible (zstd loves runs and repeated local motifs).
+
+---
+
+### 4) Move from a single global start `s0` to per-chunk starts `s[j]` (still formula-driven)
+
+Your current gen-law is “one contiguous window.” That’s likely too rigid for 4KB+ text because local structure changes.
+
+**Variable(s):**
+
+* per-chunk start `s[j]`
+* closed-form parameters (already have) but applied at chunk index
+
+**Formula change:**
+Replace:
+[
+TM[i] = s_0 + i
+]
+with chunkwise:
+[
+TM[i] = s[j] + (i - jL)
+]
+[
+s[j] = \text{base} + F(j;\theta_{\text{law}})\bmod W
+]
+where `F` is your closed-form gear function.
+
+**Why it increases success odds:**
+This allows the “program” to **steer** so each chunk lands in a region of the generated stream whose lowpass field phase better matches the chunk’s target structure. It increases the chance that residual becomes *locally runny* rather than globally random.
+
+**Storage strategy (still ARK-like):**
+
+* Ideal: store only law params (no per-chunk list).
+* Practical hybrid: store law params + tiny “resync corrections” when drift occurs.
+
+---
+
+### 5) Change the residual container to exploit 1-bit structure directly
+
+If you want 600 bytes, the residual must compress far below baseline. For 1-bit, “packed bitstream + zstd” is not always the best.
+
+**Variable(s):**
+
+* block size `B` (e.g., 512 or 1024 bits)
+* per-block encoding choice (RLE vs raw vs sparse positions)
+
+**Formula-level idea:**
+Treat the residual as a **mismatch indicator bitset** and encode by blocks:
+
+* if block has very few 1s → store positions (varints)
+* if block is runny → store RLE run lengths
+* else → store raw bits
+
+Even without fancy entropy coding, zstd on this representation often improves if your new knobs (hysteresis + chunk flip) create sparsity/runs.
+
+---
+
+## Carry-over notes patch (paste-ready)
+
+```md
+## FORMULA PATCH: variables to add that increase success odds (4KB → ~600B)
+
+### Why we’re adding variables
+4096-byte run shows:
+- residual_zstd == plain_zstd (1299)
+- TM1 overhead explodes (tm1_zstd=379)
+So we must (1) eliminate TM list cost and (2) force XOR residual to become *structured* (runs/sparse/motifs) at 4KB scale.
+
+---
+
+### (A) Make timemap implicit (TM0) for contiguous windows (backwards compatible)
+**New stored vars:** `s0` (u64), `N` (u64), optional `stride=1`.
+**Formula (instead of TM1 list):**
+- `TM[i] = s0 + i`, for `i=0..N-1`.
+**Effect:** removes TM1 zstd tax (e.g., +379 at 4KB).
+
+Implementation plan:
+- Add TM0 magic header; autodetect TM0 vs TM1 on read; keep TM1 support.
+
+---
+
+### (B) Add per-chunk 1-bit flip k[j] (cheap, huge win)
+**New vars:** chunk index `j`, chunk length `L` symbols, flip bit `k[j] ∈ {0,1}`.
+Let `j = floor(i/L)`.
+**Formula:**
+- `pred[i] = S(TM[i])`
+- `pred'[i] = pred[i] XOR k[j]`
+- `r[i] = x[i] XOR pred'[i]`
+
+Storage: 1 bit/chunk.
+At 4KB, chunk_size=128 bytes ⇒ 256 chunks ⇒ 256 bits = 32 bytes.
+Pick k[j] either:
+- Stored-best (min residual per chunk), or
+- Law-derived (0 stored bits, weaker).
+
+This directly targets residual structure/bias mismatch.
+
+---
+
+### (C) Upgrade LowpassThresh → hysteresis + adaptive baseline (run-length maker)
+**New vars:** `T_hi`, `T_lo` (T_hi>T_lo), `τ_fast`, `τ_slow`.
+Maintain fast smoother and slow baseline:
+- `LP_f(t) = LP_f(t-1) + (I(t)-LP_f(t-1))/τ_fast`
+- `μ(t) = μ(t-1) + (LP_f(t)-μ(t-1))/τ_slow`
+- `y(t) = LP_f(t) - μ(t)`
+Hysteresis threshold:
+- if `y(t) >= T_hi` ⇒ bit=1
+- else if `y(t) <= T_lo` ⇒ bit=0
+- else hold previous bit
+
+Goal: reduce chatter, create longer runs, stabilize bit balance → residual becomes more zstd-compressible.
+
+---
+
+### (D) Move from one global start s0 → per-chunk starts s[j] (still formula-driven)
+Current gen-law is one contiguous slice; likely too rigid for 4KB+ text.
+**New vars:** per-chunk start `s[j]` generated by closed-form law:
+- `s[j] = base + F(j; law_params) mod W`
+Then:
+- `TM[i] = s[j] + (i - jL)` where `j=floor(i/L)`.
+
+This lets the program steer across time to follow local structure without scanning.
+
+---
+
+### (E) 1-bit residual container upgrade (after B/C)
+If B/C create sparse/runny residual, encode residual as mismatch-bitset blocks:
+- per block choose: sparse positions (varints) OR RLE OR raw bits
+then zstd. This can beat raw packed-bits zstd when structure emerges.
+
+---
+
+### Next execution gates (fast validation)
+1) Implement TM0 + rerun 1024/4096 baselines: same residual, TM overhead collapses.
+2) Add per-chunk flip k[j] (stored-best first): rerun 4096; watch residual_zstd drop.
+3) Add hysteresis+baseline mapping: rerun 4096; watch for runs/sparsity improvements.
+4) Only then consider per-chunk s[j] closed-form (steering) if residual still stuck near baseline.
+```
+
+---
+
+If you want the *single* “most likely to move the needle” variable: **`k[j]` per chunk**. It’s the best odds-per-byte trade you can make, and it works synergistically with hysteresis (runs get longer, and the flip corrects bias per region).
+
+
+
+### END NOTE - FEBRUARY 16 2026 - 11:11 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 12:00 CST
+
+
+# K8DNZ / Cadence Project — Carry-Over Notes (2026-02-16, next instance handoff v2)
+
+These notes are written so the next instance can resume **immediately** with the right code state, the right commands, and the right “finish line” plan.
+
+---
+
+## 0) Updated short-term win condition (new target)
+
+**Short-term milestone:** **4096 bytes → ~1024 bytes ARK payload** (lossless).
+
+We will accept:
+
+* residual + program + tiny params totaling **≈ 1KB** for a **4KB target** as a massive proof.
+* If we can then pack **3–4 ARKs into one ARK** (cascading compression demo), that’s “super massive victory.”
+
+Long-term (unchanged):
+
+* shrink key further over time (600B, 500B ARK key goals), but **first prove the concept**.
+
+---
+
+## 1) Where we are right now (ground truth)
+
+### ✅ Build is clean
+
+* `cargo build` is clean after fixes.
+* We fixed the core compilation issue in `k8dnz-core` by correcting `TimingMap` imports to use `crate::error::{K8Error, Result}`.
+* We now have **TM0 support** (implicit stride encoding) and **TM1 support** (explicit list) in `TimingMap`.
+
+### ✅ TimingMap now supports TM0 + TM1 + auto detect
+
+File:
+
+* `crates/k8dnz-core/src/signal/timing_map.rs`
+
+Features:
+
+* TM1: explicit delta-varint encoding
+* TM0: implicit `(len, start, step)` varints
+* `encode_auto()` emits TM0 if indices are arithmetic progression; else TM1
+* `decode_auto()` detects TM0/TM1 magic
+
+This is critical: **TM overhead was the biggest 4KB blocker**.
+
+### ✅ We are now on the “formula-driven” track (no scanning required)
+
+The workflow we converged on:
+
+* **law-driven indexing** (`timemap gen-law`) with:
+
+  * `LawType::ClosedForm` (primary)
+  * `LawType::JumpWalk` (secondary / older)
+* **bitfield mapping** with **1-bit per emission** (most vision-aligned)
+* **LowpassThresh** mapping (the breakthrough): gives smoothness/memory → run structure
+* **XOR residual** on the symbol stream
+
+---
+
+## 2) The “smoking gun” we observed (why TM0 matters)
+
+Earlier confirmed results (before TM0):
+
+* At 1KB, residual_zstd ≈ plain_zstd, but we lost to baseline by **exactly TM zstd overhead**.
+* At 4KB, residual_zstd again ≈ plain_zstd, but TM zstd overhead was **huge** (~379 bytes), dominating effective size.
+
+Interpretation:
+
+* We were *not* losing because the predictor was “bad.”
+* We were losing because we were paying a **format tax**: serializing index lists that are actually contiguous/law-derived.
+
+**TM0 is the first “format unlock” that can immediately erase hundreds of bytes at 4KB.**
+
+---
+
+## 3) What we changed / fixed in code (exactly)
+
+### 3.1 `k8dnz-core` TimingMap fixed + extended
+
+File updated:
+
+* `crates/k8dnz-core/src/signal/timing_map.rs`
+
+Changes:
+
+* imports corrected: `use crate::error::{K8Error, Result};`
+* TM0 encoding/decoding added
+* TM0/TM1 autodetect decode added
+* `as_arith_prog()` determines whether TM0 is legal
+
+### 3.2 CLI side is mid-transition: we must wire TM0 into CLI I/O
+
+Right now, much of the CLI still calls:
+
+* `timemap::read_tm1(...)`
+* `timemap::write_tm1(...)`
+
+To actually realize the TM0 win, we must update CLI timemap I/O to:
+
+* **write “auto”** (TM0 if possible)
+* **read “auto”** (TM0/TM1 autodetect)
+
+This is the next required step if not already done in CLI’s `io/timemap.rs`.
+
+---
+
+## 4) Current algorithm “formula” (what the codec is doing)
+
+We’re effectively building a deterministic predictor stream `S[t]` from the engine:
+
+1. Engine emits `rgbpair` tokens each emission `t`
+
+2. We compute a 1-bit symbol from those tokens using **LowpassThresh**:
+
+   * smooth intensity with tau + shift
+   * threshold to bit
+   * yields predicted symbol stream `S[t] ∈ {0,1}`
+
+3. The law chooses an index program `TM[i]` mapping target symbol index `i` to predicted stream position.
+
+4. XOR residual:
+
+* `r[i] = x[i] XOR S[TM[i]]`
+
+5. Store:
+
+* timemap program (ideally TM0)
+* residual container (BF1 packed + zstd, or lanes encoding if time_split)
+* recipe pointer / recipe bytes (depending on ARK packaging)
+
+---
+
+## 5) What remains (highest leverage, in order)
+
+### 5.1 Must-do: Wire TM0 into CLI timemap read/write paths
+
+Goal: remove timemap overhead in real runs.
+
+**Required behavior:**
+
+* when writing a timemap, if indices are contiguous stride (start+step), write TM0
+* when reading, accept either TM0 or TM1 (auto detect)
+
+This requires:
+
+* `crates/k8dnz-cli/src/io/timemap.rs` to expose something like:
+
+  * `write_tm_auto(path, &TimingMap)` → writes `tm.encode_auto()`
+  * `read_tm_auto(path)` → reads bytes → `TimingMap::decode_auto()`
+
+And then update commands that currently hardcode tm1:
+
+* `timemap gen-law` output timemap
+* `timemap fit-xor` / `fit-xor-chunked` output timemap
+* reconstruct paths that read timemap
+
+**Success criterion:** re-run previous 4KB baseline and see:
+
+* `tm*_zstd_bytes` collapse from hundreds → tens.
+
+---
+
+### 5.2 After TM0 works: rerun the canonical baselines (no sweeps)
+
+We only need two validation runs after TM0 is active:
+
+**1024 bytes (fast sanity):**
+
+* confirms we erased the +33 overhead in practice
+
+**4096 bytes (real milestone):**
+
+* confirms we erased the +379 overhead and now can compete
+
+If we get:
+
+* effective_no_recipe near plain_zstd (≈1299 at 4KB)
+  we are “unstuck” and can pursue the 1KB goal.
+
+---
+
+### 5.3 Next “odds increaser”: per-chunk 1-bit flip (Addk) in law path
+
+We already have the scaffolding idea:
+
+* `chunk_xform = Addk`
+* one small correction per chunk to kill local bias
+
+Cost:
+
+* at 4KB with chunk_size=128 bytes and bits=1, that’s 256 chunks → 256 bits = 32 bytes (tiny)
+
+Why it matters:
+
+* it can turn residual into sparse/runny mismatch structure
+* it’s the best bytes→gain trade we have
+
+Two variants:
+
+* **law-derived** k (free, weaker)
+* **stored-best** k (costs 1 bit/chunk, stronger)
+
+Short-term goal (1KB ARK) likely needs stored-best.
+
+---
+
+### 5.4 If still stuck: upgrade LowpassThresh to hysteresis + baseline
+
+Purpose:
+
+* create longer runs / reduce chatter
+* produce zstd-friendly residual motifs
+
+This is a mapping change; do only after TM0 + Addk.
+
+---
+
+## 6) “Ark key” packaging concept for the milestone
+
+For the 4KB→1KB milestone we can define a practical ARK container:
+
+**ARK payload should include:**
+
+* recipe identifier OR recipe bytes (choose one for demo)
+* timemap program (TM0 ideally)
+* residual container bytes (compressed)
+* minimal header: mode, bits_per_emission, bit_mapping params, residual mode, law params
+
+Then demonstrate:
+
+1. decode reproduces exact original 4096 bytes (lossless)
+2. then **cascading**: concatenate 3–4 ARK payloads and re-encode them into one “meta-ARK”
+
+For a concept demo, it’s okay if:
+
+* the meta-ARK is not smaller yet on first attempt,
+  as long as:
+* it is deterministic and lossless,
+  and we can show *some* size win when stacking 3–4 similar ARKs (later tuning).
+
+---
+
+## 7) Canonical commands (copy/paste baselines)
+
+### 7.1 1024 baseline (fast check)
+
+```bash
+dd if=text/Genesis1.txt bs=1 count=1024 of=/tmp/g1_1024.bin
+cargo run -p k8dnz-cli -- timemap gen-law \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_1024.bin \
+  --out-timemap /tmp/g1_1024_cf_lp.tmX \
+  --out-residual /tmp/g1_1024_cf_lp.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping lowpass-thresh \
+  --bit-tau 160 \
+  --bit-smooth-shift 7 \
+  --bitfield-residual packed \
+  --chunk-size 128 \
+  --law-type closed-form \
+  --law-cf-b 0 \
+  --law-cf-a 37 \
+  --law-cf-c 1 \
+  --law-cf-p1 64 --law-cf-g1 7 --law-cf-phi1 0 \
+  --law-cf-p2 256 --law-cf-g2 3 --law-cf-phi2 13 \
+  --start-emission 0 \
+  --search-emissions 2000000 \
+  --max-ticks 40000000 \
+  --residual xor \
+  --zstd-level 3
+```
+
+### 7.2 4096 baseline (real milestone run)
+
+```bash
+dd if=text/Genesis1.txt bs=1 count=4096 of=/tmp/g1_4096.bin
+cargo run -p k8dnz-cli -- timemap gen-law \
+  --recipe ./configs/tuned_validated.k8r \
+  --target /tmp/g1_4096.bin \
+  --out-timemap /tmp/g1_4096_cf_lp.tmX \
+  --out-residual /tmp/g1_4096_cf_lp.bf \
+  --map bitfield \
+  --mode rgbpair \
+  --bits-per-emission 1 \
+  --bit-mapping lowpass-thresh \
+  --bit-tau 64 \
+  --bit-smooth-shift 7 \
+  --bitfield-residual packed \
+  --chunk-size 128 \
+  --law-type closed-form \
+  --law-cf-b 0 \
+  --law-cf-a 37 \
+  --law-cf-c 1 \
+  --law-cf-p1 64 --law-cf-g1 7 --law-cf-phi1 0 \
+  --law-cf-p2 256 --law-cf-g2 3 --law-cf-phi2 13 \
+  --start-emission 0 \
+  --search-emissions 2000000 \
+  --max-ticks 200000000 \
+  --residual xor \
+  --zstd-level 3
+```
+
+Notes:
+
+* `tmX` is intentional: once TM0 is wired, the on-disk file may not be TM1 anymore.
+* The metric that matters is **tm_zstd_bytes** collapsing.
+
+---
+
+## 8) Immediate next-instance TODO list (do in order)
+
+1. **Update CLI timemap I/O to auto detect/write**
+
+   * implement `read_tm_auto` + `write_tm_auto`
+   * replace callsites currently using `read_tm1/write_tm1`
+
+2. Re-run the 1024 and 4096 baselines and confirm:
+
+   * same matches/residual stats
+   * timemap zstd bytes collapsed
+
+3. If 4KB effective still above ~1KB target:
+
+   * enable Addk and store per-chunk flip bits (or at least law-derived as a first try)
+   * rerun 4096
+
+4. Start ARK container MVP for the 4KB→1KB demo:
+
+   * header + recipe ref + timemap bytes + residual bytes
+   * decode check (byte-identical)
+
+5. Cascading demo:
+
+   * package 3–4 ARKs
+   * encode that payload again and measure
+
+---
+
+## 9) The key insight to preserve (so we don’t drift)
+
+We are no longer chasing match% as the primary metric.
+
+The 4KB data showed:
+
+* residual compression ≈ baseline already
+* **program overhead (timemap storage) was the real enemy**
+
+So the correct “finish line sprint” strategy is:
+
+1. **remove program overhead first (TM0)**
+2. then **shape residual structure (Addk, hysteresis)**
+3. then **package ARK + prove cascading**
+
+This keeps the work faithful to the vision:
+
+* deterministic formula-driven “time program”
+* small parameters / tiny program dominating the stored state
+
+---
+
+If you paste the next compile error or the current `crates/k8dnz-cli/src/io/timemap.rs`, the next instance can finish the TM0 wiring in one shot and we can immediately rerun the 4KB baseline to see the overhead collapse.
+
+
+
+### END NOTE - FEBRUARY 16 2026 - 12:00 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 13:33 CST
+
+Alright — here’s the **God-tier “formula view”**, what I’d change to make it work better, how to push **tau > 255 correctly**, how to **shrink the recipe hard**, and then a **comprehensive carry-over notes pack** you can paste into the next instance and continue immediately.
+
+---
+
+# 1) The project formula (what we’re *actually* doing)
+
+At the highest level, K8DNZ right now is:
+
+> **DATA** ≈ **Predictor(recipe, law, mapping, params)** ⊕ **Residual**
+
+Where:
+
+* **Predictor** is deterministic: driven by the engine emissions stream (RGBPAIR tokens) and then a mapping into symbols/bits.
+* **Residual** is “what we must store” to correct predictor mismatches.
+* **Timemap** (or law-generated indices) chooses *which emissions* are used for each output symbol.
+
+So the concrete codec equation is:
+
+### Core reconstruction formula
+
+For each output symbol index `i`:
+
+1. pick an emission index `e = TM[i]` (or generated by law / chunk law)
+2. compute a predicted symbol
+   `pred[i] = MAP( recipe, map_seed, emission=e, rgbpair(e), params )`
+3. reconstruct output symbol
+
+   * XOR mode: `out[i] = pred[i] XOR resid[i]`
+   * SUB mode: `out[i] = pred[i] + resid[i] (mod 2^b)` (depending on your exact definition)
+
+**The entire win condition is:**
+
+> Make `pred` so structured / correlated with the target that `resid` becomes *compressible*.
+
+Right now, your timemap “program” compresses extremely well, but the predictor match rate is hovering ~50% in many regimes, so **residual becomes noise-like** and zstd can’t help.
+
+That’s the whole project in one sentence:
+
+> **We are building a deterministic “oracle stream” where TM selects indices and MAP turns emissions into symbols; the only blocker is predictor quality (structure), not determinism.**
+
+---
+
+# 2) The single most important improvement (why we’re stuck)
+
+You’re currently using:
+
+* a deterministic emission stream (good)
+* scanning windows / chunk selection (okay)
+* mappings that still behave **too random-ish** relative to the target (the real problem)
+
+If the mapping behaves like a PRNG, then:
+
+* best possible match rate ~50% for 1-bit (or ~1/2^b for b bits)
+* residual ≈ random
+* compressed residual ≈ raw residual
+
+So the “missing piece” is not more brute force scanning — it’s **a mapping / law that produces predictable structure aligned with text/byte structure**.
+
+### The “God-tier” reframe
+
+You don’t want: `MAP(emission) ~ random`
+You want: `MAP(emission) ~ structured low-dimensional signal`
+
+That means:
+
+* **reduce degrees of freedom**
+* **make mapping a smooth/phase-linked function of time**
+* **introduce *slowly varying* states** (lowpass / hysteresis / phase bins / band selection)
+* and optionally: **separate lanes/timelines** (your time-split idea) so each lane is simpler and more compressible.
+
+---
+
+# 3) Tau > 255 (what it *must* mean + what to change)
+
+Right now your lowpass path is roughly:
+
+* compute intensity `x` as u8 (0..255)
+* update IIR state `y` (clamped 0..255)
+* threshold: `bit = (y >= tau)`
+
+If you want **tau > 255**, then **y must have a range bigger than 255**. Otherwise tau>255 is impossible to reach and you’d always output 0.
+
+### What tau > 255 should mean
+
+Make intensity be **higher dynamic range**. Easy options:
+
+**Option A (simple, good):**
+
+* intensity = `r + g + b` as u16 → range 0..=765
+* tau becomes u16 in 0..=765
+  This makes “tau > 255” meaningful and very controllable.
+
+**Option B (more expressive):**
+
+* use weighted luminance in u16 scale (0..=65535) by upscaling 8-bit channels
+* tau becomes u16 full range
+  This gives more resolution but isn’t necessarily better.
+
+**I strongly recommend Option A first** (0..765), because it’s simple and matches the “color wall intensity” vibe.
+
+### Concrete changes you should enforce everywhere
+
+* `bit_tau: u16` in args ✅ (you already did)
+* `map_symbol_bitfield(... bit_tau: u16 ...)`
+* `ensure_symbol_stream_len(... bit_tau: u16 ...)`
+* `intensity_*` returns u16
+* `lowpass_iir_update` operates in u16 and clamps to max 765 (or chosen max)
+
+This also fixes your compile errors (`expected u8 found u16`) *without* unsafe truncation.
+
+---
+
+# 4) Recipe shrinking: how far can we realistically push 210B?
+
+You measured:
+
+* **raw:** 210 bytes
+* **zstd -3:** 185 bytes
+
+Abbreviating names does nothing (binary already), so we shrink by **layout and semantics**.
+
+## K8R2 strategy (likely big win)
+
+### A) Defaults + bitmask (“delta recipe”)
+
+Store:
+
+* `profile_id` (varint)
+* `changed_fields_mask` (bitset)
+* only changed values
+
+For recipes that are mostly default-ish, this is huge.
+
+### B) Switch fixed-width → varints
+
+If you store a bunch of u32/u64 that are usually small, varints cut a lot.
+
+### C) Fixed-point quantization for floats
+
+If you have any `f64`/`f32` inside, that’s 4–8 bytes each. Many knobs can be:
+
+* `i16` / `u16` fixed point
+
+### D) Remove alignment padding
+
+Your hexdump shows patterns that strongly suggest padding/alignment.
+
+## What size can we aim for?
+
+Realistic targets:
+
+* **K8R2 (packed/varint)**: **~120–170 bytes**
+* **K8R2 + profile/delta mask** (if defaults dominate): **~30–90 bytes**
+* If you also allow “implicit defaults by version”: could go even lower.
+
+Even if you only save 80 bytes raw, in ARK-string form that’s meaningful.
+
+### ARK-string consequence
+
+If you encode recipe bytes as:
+
+* base64url of raw: 210 → ~280 chars
+* base64url of zstd: 185 → ~247 chars
+  If you shrink to 80 bytes:
+* base64url raw: ~107 chars
+* base64url zstd maybe ~90–110 chars (depending on entropy)
+
+So yes: recipe optimization can matter a lot for “key-string aesthetics”.
+
+---
+
+# 5) What I would change to make the system succeed faster
+
+Here’s the “success playbook” that aligns with your vision (time + orbit + cone walls + structured color bands):
+
+## Change 1: Make mapping stateful and smooth (not hashy)
+
+The best mapping candidate you already have is **LowpassThresh**, but it must be **high-dynamic-range** (tau > 255 meaningful) and probably use **hysteresis**:
+
+* `bit = 1` when `y >= tau_hi`
+* `bit = 0` when `y <= tau_lo`
+* otherwise keep previous bit
+
+This prevents rapid flipping and creates **long runs**, which compress well.
+
+## Change 2: Use time-split lanes as a real codec mode
+
+Your time-split idea is strong because it turns one complicated residual into multiple simpler bitstreams.
+But don’t just “split 00/01/10/11” as a vibe — define it formally:
+
+For b=1:
+
+* split by phase bin / cycle index / lock/unlock state / band id
+
+For b>1:
+
+* BF2 lanes already does “lane per symbol value”. That’s good.
+  But you also want “timeline lanes” where indices are partitioned by a *law state*, not by symbol value.
+
+## Change 3: Replace scan-heavy selection with formula-driven selection
+
+Your `gen-law` ClosedForm is exactly the right direction:
+
+* low-dimensional law
+* repeatable, gear-like revisits
+* makes TM compressible and understandable
+
+But: a “law” must couple to the same underlying structure your mapping is using (intensity bands, lock windows, phase bins). Otherwise it’s just another PRNG.
+
+So make law depend on:
+
+* lock/unlock derived from phases
+* band index derived from intensity (or quantized phase)
+* then choose offsets deterministically
+
+## Change 4: Optimize for “compressible residual”, not just match count
+
+Match count is a proxy, not the goal.
+Sometimes 48% matches but in **long streaks** compresses better than 52% matches scattered randomly.
+
+So for `objective=zstd`, also track:
+
+* run-length statistics for residual
+* lane entropy
+* longest run
+* number of transitions
+
+This will directly guide whether lowpass/hysteresis is helping.
+
+---
+
+# 6) Carry-Over Notes Pack (paste into next instance)
+
+## BEGIN CARRY-OVER NOTES — K8DNZ / The Cadence Project (2026-02-16)
+
+### 0) North Star (unchanged)
+
+We are building a deterministic codec where a compact “ARK key” (recipe + seeds + params + law) expands into target data (Genesis1.txt). Current working milestone: reduce “stored stuff” to mostly **time program + small param payload**, with residual shrinking as mapping/law improve.
+
+### 1) What works today (confirmed)
+
+* Determinism works.
+* Reconstruction works end-to-end when max_ticks is high enough.
+* Timemap (“program”) zstd-compresses extremely well (often tiny).
+* Harness is mature: `timemap fit-xor-chunked`, `bf-lanes`, `gen-law`, etc.
+
+### 2) Current blocker (the real problem)
+
+Predictor quality is still too random-ish → match rates often ~48–55% (or equivalent), so residual behaves noise-like, and zstd can’t compress residual effectively. Result: effective bytes are worse than baseline zstd on packed target.
+
+### 3) The true project formula (core model)
+
+For each output symbol index i:
+
+* choose emission index `e = TM[i]` (or law-generated)
+* compute `pred[i] = MAP(recipe, seed, e, rgbpair(e), params)`
+* reconstruct: `out[i] = pred[i] XOR resid[i]` (or SUB)
+  Goal: make MAP + TM produce structured predictions so residual becomes compressible (runs/low entropy), not noise.
+
+### 4) Important measurement facts
+
+* `configs/tuned_validated.k8r` is **binary K8R1**, size:
+
+  * raw 210 bytes
+  * zstd -3 185 bytes
+  * gzip ~190 bytes
+* There are no parameter names in the file (binary), so “abbreviating parameter names” does **not** shrink recipe. Shrinking comes from binary layout optimization (K8R2).
+
+### 5) Recipe shrink plan (K8R2)
+
+Target: push recipe from 210B → ~120–170B via packing/varints; potentially ~30–90B with profile+delta mask.
+Methods:
+
+* Defaults + changed_fields bitmask (delta recipe)
+* Varints instead of fixed-width ints
+* Fixed-point quantization for floats
+* Remove padding/alignment
+* Optional: versioned defaults; optional CRC
+
+### 6) Tau > 255 plan (critical fix)
+
+We decided tau must go higher than 255 for LowpassThresh mapping.
+This requires **intensity and IIR state to exceed 0..255**.
+Implement intensity as u16:
+
+* Option A (recommended): `intensity = r+g+b` (0..=765)
+* IIR operates on u16 and clamps to 0..=765
+* `bit_tau` stays u16
+  Update signatures everywhere:
+* `map_symbol_bitfield(... bit_tau: u16 ...)`
+* `ensure_symbol_stream_len(... bit_tau: u16 ...)`
+* args already updated to `bit_tau: u16`
+  Do NOT truncate with `try_into().unwrap()`; that defeats tau>255.
+
+### 7) Best “vision-aligned” mapping direction
+
+The mapping must be structured/low-dimensional, not PRNG-like:
+
+* LowpassThresh is promising but must be high-dynamic-range and ideally have hysteresis to create long runs.
+  Suggested upgrade:
+* `tau_hi`, `tau_lo` hysteresis thresholds (or derive tau_lo = tau_hi - delta)
+* keep last_bit when between thresholds
+
+### 8) Time-split / lanes direction (next experiments)
+
+We want to split residual into multiple simpler streams:
+
+* BF2 already does “lane per symbol value” bitsets, zstd per lane.
+* Additional idea: “timeline split” based on law state (phase bins / lock state / band id), not only symbol values.
+* For 1-bit, strongly consider splitting by phase/lock state to create longer runs.
+
+### 9) Law direction (reduce randomness, increase structure)
+
+We have `timemap gen-law` with `LawType::JumpWalk` and `LawType::ClosedForm`.
+The goal is to make indices formula-driven and coupled to orbit/phase/lock structure (gear-like revisits), not PRNG scanning.
+
+### 10) Immediate next runs (action list)
+
+**A) Confirm tau>255 behavior**
+Run LowpassThresh with tau above 255 and inspect match/run stats:
+
+* `--map bitfield --mode rgbpair --bits-per-emission 1 --bit-mapping lowpass-thresh`
+* test `--bit-tau 260`, `320`, `420`, `600`, `700`
+* vary `--bit-smooth-shift` (0, 2, 3, 5, 7)
+* use objective zstd and capture scoreboard + any run-length stats we add
+
+**B) 1-bit regime focus**
+1-bit makes the “oracle” problem simplest; residual becomes a bitstream and is easier to analyze for structure (runs, lane entropy).
+Use:
+
+* `--bits-per-emission 1`
+* compare mappings:
+
+  * geom
+  * hash (baseline randomness check)
+  * lowpass-thresh (structured)
+
+**C) Time-split**
+Test `--time-split` / BF2 lanes and compare to BF1 packed.
+
+**D) ClosedForm law experiments**
+Try `timemap gen-law --law-type closedform` with small gear params:
+
+* set `law_cf_a` small, `law_cf_c` 0 or tiny
+* set `law_cf_p1` and `law_cf_g1` to create repeatable revisits
+  Goal: produce indices that create structured residual.
+
+### 11) Known compile issue that triggered this phase
+
+Rust error: functions expected `bit_tau: u8` but args changed to `u16`.
+Fix is to propagate u16 through bitfield mapping + ensure_symbol_stream_len + any callsites (bitfield.rs and gen_law.rs). Do not cast down.
+
+## END CARRY-OVER NOTES
+
+---
+
+# 7) What remains to fully “finish the sprint”
+
+If we do only one “big bet” next, it should be:
+
+### **1-bit + high-range lowpass + hysteresis + law-coupling**
+
+Because that’s the smallest state space where structure becomes obvious, and compressibility can spike quickly if we stop producing flip-noise.
+
+Once the 1-bit predictor creates long runs / low entropy residual, we can:
+
+* generalize to 2-bit / 4-bit
+* move from threshold mapping to “band index mapping”
+* then shrink ARK recipe (K8R2) and ARK string encoding.
+
+---
+
+If you want, in your next message paste:
+
+* the struct/serializer for K8R1 (where recipe is written)
+  and I’ll give you a **drop-in K8R2 design** (field-by-field) with an estimated byte budget and a migration plan that keeps backwards compatibility.
+
+### END NOTE - FEBRAURY 16 2026 - 13:33 CST

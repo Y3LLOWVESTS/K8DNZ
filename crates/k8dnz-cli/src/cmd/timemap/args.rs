@@ -329,7 +329,7 @@ pub struct FitXorChunkedArgs {
 
     /// NEW: Lowpass threshold (only used for bit_mapping=lowpass-thresh)
     #[arg(long, default_value_t = 128)]
-    pub bit_tau: u8,
+    pub bit_tau: u16,
 
     /// NEW: Lowpass IIR smooth strength (0 disables, larger = smoother). Only used for lowpass-thresh.
     #[arg(long, default_value_t = 3)]
@@ -422,7 +422,7 @@ pub struct GenLawArgs {
 
     /// NEW: Lowpass threshold (only used for bit_mapping=lowpass-thresh)
     #[arg(long, default_value_t = 128)]
-    pub bit_tau: u8,
+    pub bit_tau: u16,
 
     /// NEW: Lowpass IIR smooth strength (0 disables, larger = smoother). Only used for lowpass-thresh.
     #[arg(long, default_value_t = 3)]
@@ -569,7 +569,7 @@ pub struct ReconstructArgs {
 
     /// NEW: Lowpass threshold (only used for bit_mapping=lowpass-thresh)
     #[arg(long, default_value_t = 128)]
-    pub bit_tau: u8,
+    pub bit_tau: u16,
 
     /// NEW: Lowpass IIR smooth strength (0 disables, larger = smoother). Only used for lowpass-thresh.
     #[arg(long, default_value_t = 3)]
