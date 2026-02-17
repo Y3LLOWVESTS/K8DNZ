@@ -15668,3 +15668,466 @@ If you want, in your next message paste:
   and I’ll give you a **drop-in K8R2 design** (field-by-field) with an estimated byte budget and a migration plan that keeps backwards compatibility.
 
 ### END NOTE - FEBRAURY 16 2026 - 13:33 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 18:05 CST
+
+### Side notes: enhancements we planned (save for later)
+
+#### A) Fix/finish **tau > 255** correctly (make it *meaningful*)
+
+* Ensure **intensity** is u16 (recommended: `r+g+b` → 0..765) and the **IIR state** is u16 clamped to the same max.
+* Propagate `bit_tau: u16` end-to-end (no downcasts).
+* Confirm behavior by sweeping `--bit-tau 260..700` and `--bit-smooth-shift` values and checking residual zstd + run structure.
+
+#### B) Make lowpass mapping more “compressible” (reduce flip-noise)
+
+* Add **hysteresis**: `tau_hi / tau_lo` (or `tau_lo = tau_hi - delta`) so bits don’t chatter.
+* Optional: keep-last-bit band between thresholds.
+
+#### C) Shift the objective from “matches” to “compressibility”
+
+* Continue using `objective=zstd`, but also print run metrics:
+
+  * transition count, longest run, run-length histogram, lane entropy
+* Use these to guide tau/smoothing/hysteresis instead of match% alone.
+
+#### D) Reduce scan randomness with **formula-driven laws**
+
+* Push `timemap gen-law` / closed-form gear params harder so indexing is structured and explainable.
+* Couple law state to orbit/phase/lock/band signals (avoid “law behaves like PRNG”).
+
+#### E) Time-split / lane strategies (make residual smaller by structure)
+
+* Beyond BF lanes “by symbol value”, do **timeline split** by phase bins / lock state / band id.
+* For 1-bit especially: split by deterministic state that creates long runs per lane.
+
+#### F) **Recipe shrinking (K8R2)**
+
+* Add packed/varint encoding, remove padding/alignment.
+* Add “defaults + changed_fields bitmask” delta recipes.
+* Target: 210B → ~120–170B, possibly ~30–90B with profile+delta.
+
+#### G) Remove friction / paper cuts
+
+* Add CLI consistency (e.g., reconstruct flags vs fit flags; residual payload type auto-detect).
+* Add a first-class “package” command for merkle payloads so we don’t hand-roll headers with perl/dd.
+
+---
+
+## TODO list (park it for later)
+
+1. [ ] Implement u16 intensity + u16 IIR state; clamp to 765; keep `bit_tau: u16`.
+2. [ ] Add lowpass hysteresis mapping (tau_hi/tau_lo or tau+delta).
+3. [ ] Add residual run-structure stats to scoreboard (transitions, longest run, etc.).
+4. [ ] Expand gen-law closed-form experiments; couple law to orbit/phase/band state.
+5. [ ] Implement timeline split (by law/phase/lock/band), not only by symbol value.
+6. [ ] Design + implement K8R2 packed recipe (varints + delta mask).
+7. [ ] Add merkle-zip / merkle-unzip as real CLI commands (no perl/dd needed).
+
+---
+
+Now—are you ready for us to build notes for what we want to do with **the entire book of Genesis → one root ark key** (the full merkle-zip plan, file formats, and exact commands)?
+
+
+### END NOTE - FEBRUARY 16 2026 - 18:05 CST
+
+
+### BEGIN - BUILDING GENESIS ARK KEY NOTES - FEBRUARY 16 2026 - 18:10 CST
+
+
+Yes, it makes perfect sense — and this is exactly the right “productization” step: **turn the merkle-zip/merkle-unzip proof into a one-command UX** that anyone can clone/build/run.
+
+Below is a **comprehensive blueprint** to add **`arkc <file>` → one root key** and **`arku <root>` → original file**, with everything deterministic, reproducible, and dead-simple to try.
+
+---
+
+## Goal
+
+### User experience (repo visitor)
+
+```bash
+cargo build --release
+
+target/release/arkc path/to/Genesis.txt
+# prints: ROOT_KEY=... (or writes root file and prints path)
+
+target/release/arku path/to/genesis.root.arkm out.txt
+# verifies and writes reconstructed bytes
+```
+
+No perl/dd/cat glue. No manual steps. Everything is encapsulated.
+
+---
+
+## Core idea (Merkle-tree codec)
+
+We already proved the primitive:
+
+* A blob can be “compressed” as: **(recipe + tm + residual)** such that `reconstruct(recipe, tm, residual) == original bytes`.
+* If the “original bytes” happen to be a **container that holds two child blobs**, then reconstructing that container gives us the children back exactly.
+* Repeating this recursively is literally a **Merkle tree** where internal nodes are “compressed containers” and leaves are “compressed chunks”.
+
+So:
+
+* **Leaves:** ARK blobs of file chunks (2KB each).
+* **Internal nodes:** ARK blobs of a two-child container (`K8P2`).
+* **Root:** one ARK blob that reconstructs the top container.
+* **Unzip:** reconstruct root → unpack into children → reconstruct each → … → stitch leaves → truncate to original length.
+
+---
+
+## Terminology (consistent names)
+
+* **merkle-zip**: build the tree (compress many → one)
+* **merkle-unzip**: expand the tree (decompress one → many)
+* A **blob** = a self-contained artifact that can reconstruct some payload bytes.
+
+  * Leaf blob reconstructs a chunk.
+  * Node blob reconstructs a `K8P2` container holding two child blobs.
+
+---
+
+## Artifact formats (minimal + robust)
+
+### 1) Leaf & Node blob format: `K8B1` (the “ARK blob”)
+
+A blob must contain everything needed to reconstruct its payload **without extra CLI flags**.
+
+**`K8B1` header:**
+
+* magic: `b"K8B1"`
+* version: `u8`
+* payload_len: `u32` (bytes of reconstructed payload)
+* recon_params: (stored so decode is automatic)
+
+  * mode (`pair`/`rgbpair`)
+  * map (`bitfield` etc)
+  * bits_per_emission
+  * bit_mapping (`lowpass-thresh`)
+  * bit_tau
+  * bit_smooth_shift
+  * residual_mode (`xor`/`sub`)
+  * max_ticks used (critical)
+  * map_seed
+* recipe_len: `u32`, recipe_bytes
+* tm_len: `u32`, tm_bytes (raw TM0/TM1 bytes as currently written)
+* resid_len: `u32`, resid_bytes (raw residual file bytes as currently written)
+* crc32: `u32` (over everything above)
+
+**Meaning:** `reconstruct(blob) -> payload bytes`.
+
+> MVP shortcut: you can embed recipe every time (like you already did). Later we optimize by factoring recipe out.
+
+### 2) Pair container format: `K8P2` (two children)
+
+This is the same thing you hand-built, but official in Rust.
+
+* magic: `b"K8P2"`
+* version: `u8`
+* len_a: `u32` little-endian
+* len_b: `u32` little-endian
+* bytes_a[len_a]
+* bytes_b[len_b]
+* crc32: `u32` (optional but recommended)
+
+**Meaning:** `unpack(payload) -> (childA_blob_bytes, childB_blob_bytes)`.
+
+### 3) Root “key” format: `ARKM1` (the one file/key you give users)
+
+This is what `arkc` outputs and `arku` consumes.
+
+Two good options:
+
+**Option A (best UX): root is just a `K8B1` blob** whose payload is a `K8P2` container, and recursion continues.
+
+* Then “root key” is literally the bytes of a `K8B1`.
+* `arkc` writes `something.arkm` but it is actually `K8B1` (fine).
+* Simple.
+
+**Option B (more explicit):** a tiny wrapper `ARKM1` that contains:
+
+* magic/version
+* original file length (`u64`)
+* chunk_bytes (`u32`)
+* leaf_count (`u32`)
+* padding strategy
+* root_blob_len + root_blob_bytes (a `K8B1`)
+* crc32
+
+This makes metadata explicit (nice for future-proofing).
+
+I recommend **Option B** because it lets `arku` reassemble correctly and validate everything without guessing.
+
+---
+
+## Deterministic chunking rules (2KB + even + ordering)
+
+### Chunking (MVP)
+
+* chunk_bytes = **2048**
+* split input into sequential chunks: `chunk[0], chunk[1], ...`
+* store `original_len` in the root wrapper
+
+### Even/power-of-two padding
+
+To make clean pairwise rounds, we want leaf count to become a power of two.
+
+Rule:
+
+* Let `n = number_of_real_chunks`
+* Let `m = next_power_of_two(n)`
+* Add `(m - n)` **pad chunks** of length 0 (or fixed known bytes) at the end.
+
+During unzip:
+
+* reconstruct all leaves in order
+* concatenate
+* truncate to `original_len`
+
+This preserves exact original bytes while keeping the Merkle tree perfect and deterministic.
+
+---
+
+## Compression plan (arkc)
+
+### Inputs (defaults)
+
+* recipe: `./configs/tuned_validated.k8r`
+* method: your proven “merkle proof” method:
+
+  * `timemap fit-xor-chunked`
+  * `--map bitfield --bits-per-emission 1 --bit-mapping lowpass-thresh`
+  * `--objective zstd`
+  * `--max-ticks` default to something high (or auto-grow)
+* chunk_bytes: 2048
+
+### Pipeline
+
+1. **Read file**, chunk into 2KB, pad to power-of-two.
+2. **Leaf round (round 0)**:
+
+   * For each chunk `i`:
+
+     * run the fit command to produce `tm` + `resid`
+     * create `K8B1 leaf blob` for this chunk (payload_len=chunk_len)
+3. **Internal rounds (round 1..k)**:
+
+   * pairwise combine adjacent blobs in order:
+
+     * build `K8P2` payload from (blobA, blobB)
+     * fit/compress that payload into a new `K8B1 node blob`
+4. At the end, one blob remains: **root blob**.
+5. Write the final **ARKM1** file (or root blob directly), and print:
+
+   * root size
+   * leaf count
+   * number of rounds
+   * deterministic “key id” (e.g., hex of crc32 or sha256)
+
+### “Auto ticks” (very important for UX)
+
+You do not want users to guess `--max-ticks`.
+
+MVP deterministic strategy:
+
+* Start with `max_ticks = X` (e.g., 200_000_000)
+* If fit returns “no room” / partial output, deterministically retry with:
+
+  * `max_ticks *= 2` until success or until cap reached
+* Store the final `max_ticks_used` inside each blob so reconstruct works.
+
+Because retries are deterministic (same doubling schedule), output is reproducible.
+
+---
+
+## Decompression plan (arku)
+
+1. Read the root artifact (`ARKM1` or `K8B1`).
+2. Extract root blob.
+3. **Recursive expand**:
+
+   * `payload = reconstruct(blob)`
+   * if payload magic is `K8P2`:
+
+     * unpack → (child_blob_A_bytes, child_blob_B_bytes)
+     * recurse on each
+   * else:
+
+     * it’s a leaf payload chunk → append in-order to output buffer
+4. When done, truncate output buffer to `original_len`
+5. Write output file.
+6. Validate CRC / size invariants; optionally print a short proof log (depth, node count, etc.).
+
+This is *exactly* merkle-unzip.
+
+---
+
+## CLI design (super user friendly)
+
+### Two new binaries (recommended)
+
+Add in `crates/k8dnz-cli/src/bin/`:
+
+* `arkc.rs` (front-door compressor)
+* `arku.rs` (front-door decompressor)
+
+These wrap internal library functions (next section), so the “marketing UX” is perfect.
+
+**arkc**
+
+```bash
+arkc <input_path> [--out <root_path>] [--chunk-bytes 2048] [--recipe <path>] [--profile tuned_validated]
+```
+
+**arku**
+
+```bash
+arku <root_path> <out_path>
+```
+
+Defaults should “just work” with the tuned recipe in the repo.
+
+---
+
+## Internal module layout (clean + modular)
+
+Create a new module in core or cli crate (I’d put it in `k8dnz-core` so it’s reusable):
+
+```
+crates/k8dnz-core/src/merkle/
+  mod.rs
+  format.rs        (K8B1, K8P2, ARKM1 structs + read/write + CRC)
+  zip.rs           (merkle_zip: file -> root)
+  unzip.rs         (merkle_unzip: root -> bytes/file)
+  planner.rs       (chunking, padding, pairing schedule)
+  runner.rs        (calls existing timemap fit/reconstruct programmatically)
+  stats.rs         (optional: print node sizes, depth, ratios)
+```
+
+Then in CLI:
+
+```
+crates/k8dnz-cli/src/bin/arkc.rs  -> calls k8dnz_core::merkle::merkle_zip_file(...)
+crates/k8dnz-cli/src/bin/arku.rs  -> calls k8dnz_core::merkle::merkle_unzip_file(...)
+```
+
+---
+
+## Reuse existing timemap code (don’t re-shell out)
+
+**Do not spawn `cargo run` internally.** Call the same functions directly.
+
+The zip runner should essentially call the same “fit-xor-chunked pipeline” that the CLI subcommand uses today, but as a Rust function.
+
+We want a clean API like:
+
+```rust
+fn compress_payload_to_blob(
+  recipe_bytes: &[u8],
+  payload: &[u8],
+  recon_params: ReconParams,
+  fit_params: FitParams,
+) -> K8B1Blob
+```
+
+and
+
+```rust
+fn reconstruct_blob(blob: &K8B1Blob) -> Vec<u8>
+```
+
+So `arkc/arku` are just orchestrators.
+
+---
+
+## Determinism + invariants (must-haves)
+
+### Determinism rules
+
+* Same recipe + same params + same input bytes ⇒ identical output root bytes.
+* No RNG anywhere unless explicitly seeded and stored.
+
+### Blob invariants
+
+* `reconstruct(blob)` must output exactly `payload_len` bytes.
+* CRC must validate.
+* `max_ticks_used` stored in blob must be sufficient for reconstruct.
+
+### Merkle invariants
+
+* Leaf count = power of two.
+* Tree is strictly ordered (left-to-right).
+* Unzip concatenation order must match zip order.
+* Final output truncated to `original_len`.
+
+---
+
+## “Proof mode” output (nice for README)
+
+Both commands should print a short proof summary:
+
+**arkc prints:**
+
+* input bytes
+* chunk_bytes, real_leaves, padded_leaves
+* depth (rounds)
+* root bytes
+* ratio root/input
+* (optional) per-round size table
+
+**arku prints:**
+
+* root bytes
+* reconstructed bytes
+* depth
+* CRC OK
+* (optional) leaf count
+
+This makes the merkle proof visible to users.
+
+---
+
+## README integration (what we’ll add next)
+
+A new section:
+
+### “Merkle-zip / merkle-unzip: one-key for whole Genesis”
+
+* Build
+* `arkc text/Genesis.txt`
+* `arku genesis.arkm /tmp/out.txt`
+* `diff` or `cmp`
+* Print proof output
+
+And a “How it works” paragraph:
+
+* leaves are chunks
+* internal nodes are compressed containers
+* root expands recursively
+
+---
+
+## MVP scope (what to implement first)
+
+1. Implement formats: `K8P2` pack/unpack + `K8B1` blob pack/unpack + root wrapper (`ARKM1`)
+2. Implement merkle planner: chunking + padding schedule + pairing rounds
+3. Implement runner glue: “compress payload to blob” + “reconstruct blob”
+4. Add `arkc` + `arku` bins
+5. Add tests:
+
+   * roundtrip small text
+   * roundtrip random bytes
+   * determinism test: run arkc twice; root files identical
+6. Update README with exact commands
+
+This gets you the “clone repo and try it” experience immediately.
+
+---
+
+If you want, next message: tell me whether you want the root artifact to be **(A)** “just a `K8B1` file” or **(B)** “an `ARKM1` wrapper that contains metadata + root blob”. I’ll pick the best default if you don’t care — and then I’ll produce the **full paste-ready file set** (paths + Rust code) to add `arkc` and `arku` as real binaries.
+
+
+
+### END - BUILDING GENESIS ARK KEY NOTES - FEBRUARY 16 2026 - 18:10 CST
