@@ -1,15 +1,99 @@
 # K8DNZ / The Cadence Project (Rust)
 
-# Fixed loop issue 
+>Update: Fixed loop issue 
+
 
 # How to run:
 
 ```bash
 cargo build --release
+
+INPUT_PATH="path/to/input.bin"
+OUT_ROOT="/tmp/output.arkm"
+OUT_RECON="/tmp/output.reconstructed"
+
+target/release/arkc "$INPUT_PATH" --out "$OUT_ROOT" --chunk-bytes 2048
+target/release/arku "$OUT_ROOT" "$OUT_RECON"
+
+cmp -s "$INPUT_PATH" "$OUT_RECON" && echo OK || echo MISMATCH
+```
+
+# How to run example:
+
+```bash
+cargo build --release
+
+target/release/arkc text/TheBookOfGenesis.txt --out /tmp/genesis_full.arkm --chunk-bytes 2048
+target/release/arku /tmp/genesis_full.arkm /tmp/genesis_full.unpacked
+
+cmp -s text/TheBookOfGenesis.txt /tmp/genesis_full.unpacked && echo OK || echo MISMATCH
+```
+
+
+## How `arkc` / `arku` runs (Merkle-encoded ARK)
+
+> Example input: `text/TheBookOfGenesis.txt`
+
+K8DNZ encodes data into a **Merkle tree of deterministic “node blobs.”** Each blob is a self-contained program:
+- a compact **timemap** (the “time program”)
+- a **residual** (xor/sub, etc.)
+- the **recipe + recon params** needed to deterministically reconstruct bytes
+
+### Phase 1: Leaves (chunk compression)
+
+`arkc` splits the input into fixed-size chunks (`--chunk-bytes`, e.g. 2048), then compresses each chunk as a **leaf blob**:
+
+- It processes `LEAF 1/128 … LEAF 128/128`
+- Most leaves are exactly `chunk_bytes` (2048)
+- The last real leaf may be smaller if the file size isn’t a multiple of `chunk_bytes`
+- Leaves are padded up to a power-of-two (`padded_leaves`) so the Merkle tree is complete
+
+You’ll see logs like:
+
+- `real_leaves=121 padded_leaves=128 (pow2)`
+- `LEAF 1/128 bytes=2048 seed=...`
+- `reconstruct ok ...`
+- `success: reconstruction matches payload`
+
+### Phase 2: Internal nodes (parent compression)
+
+After all leaves are produced, `arkc` builds the Merkle tree **bottom-up**. Each internal node payload is formed by combining two child blobs (left + right) into a deterministic parent payload, then compressing that payload into its own node blob.
+
+For `padded_leaves=128`, internal levels are:
+
+- Level above leaves: 64 nodes  
+- Next: 32  
+- Next: 16  
+- Next: 8  
+- Next: 4  
+- Next: 2  
+- Root: 1  
+
+Total internal nodes = **127**.
+
+This continues until the **root blob** is produced. The root path you pass to `--out` is the root of the Merkle-ARK container.
+
+---
+
+## How it “decompresses” (reconstruction)
+
+`arku` reconstructs the original file by walking the Merkle-ARK container and rebuilding the tree **top-down**:
+
+1. Start at the **root blob**
+2. Deterministically **reconstruct** the root payload (timemap + residual + recipe params)
+3. From that payload, obtain the two child blobs (left/right)
+4. Repeat until reaching the **leaf blobs**
+5. Reconstruct each leaf’s original chunk bytes and write them out **in order**
+6. Trim padding / truncate to the stored original length
+
+Because reconstruction is deterministic, **any mismatch means something is wrong** (params, residual parsing, or determinism), and `cmp` should catch it.
+
+### Example
+
+```bash
 target/release/arkc text/TheBookOfGenesis.txt --out /tmp/genesis_full.arkm --chunk-bytes 2048
 target/release/arku /tmp/genesis_full.arkm /tmp/genesis_full.unpacked
 cmp -s text/TheBookOfGenesis.txt /tmp/genesis_full.unpacked && echo OK || echo MISMATCH
-
 ```
 
 **Last updated:** 2026-02-16
