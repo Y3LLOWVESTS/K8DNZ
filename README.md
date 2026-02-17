@@ -1,6 +1,8 @@
 # K8DNZ / The Cadence Project (Rust)
 
->Update: Fixed loop issue 
+>Update: Major design flaw discovered for arkc (/merkel/) - Each row in the merkel tree is being stacked together then compressed which is not the intended design - its showing much higher data output - patch in progress 
+
+
 
 
 # How to run:
