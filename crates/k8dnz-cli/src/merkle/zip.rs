@@ -1,3 +1,5 @@
+// crates/k8dnz-cli/src/merkle/zip.rs
+
 use anyhow::{Context, Result};
 
 use super::format::{Arkm1Root, K8b1Blob, K8p2Pair};
@@ -19,6 +21,9 @@ pub fn merkle_zip_bytes(
     profile: &FitProfile,
     map_seed: u64,
 ) -> Result<(Vec<u8>, ZipReport)> {
+    // FIX: load recipe bytes once; runner signature requires recipe_bytes.
+    let recipe_bytes = std::fs::read(recipe_path).with_context(|| format!("read recipe bytes {}", recipe_path))?;
+
     let (chunks, original_len, leaf_count) = chunk_and_pad_pow2(input, chunk_bytes);
 
     eprintln!(
@@ -73,7 +78,8 @@ pub fn merkle_zip_bytes(
             seed_i
         );
 
-        let blob: K8b1Blob = compress_payload_to_blob(recipe_path, ch, &p, seed_i)
+        // FIX: runner requires (recipe_path, recipe_bytes, payload, map_seed, profile)
+        let blob: K8b1Blob = compress_payload_to_blob(recipe_path, &recipe_bytes, ch, seed_i, &p)
             .with_context(|| format!("compress leaf payload i={}", i))?;
 
         let enc = blob.encode();
@@ -111,7 +117,8 @@ pub fn merkle_zip_bytes(
                 seed_n
             );
 
-            let node_blob = compress_payload_to_blob(recipe_path, &pair_payload, &p, seed_n)
+            // FIX: runner requires (recipe_path, recipe_bytes, payload, map_seed, profile)
+            let node_blob = compress_payload_to_blob(recipe_path, &recipe_bytes, &pair_payload, seed_n, &p)
                 .with_context(|| format!("compress internal node payload r={} node={}", rounds, node_idx))?;
 
             let enc = node_blob.encode();

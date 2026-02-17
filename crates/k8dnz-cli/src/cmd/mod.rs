@@ -13,3 +13,8 @@ pub mod tune;
 
 // NEW
 pub mod orbexp;
+
+// NEW (Lane MVP)
+pub mod encode2kb;
+pub mod decode2kb;
+pub mod lane_sweep;

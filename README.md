@@ -3,7 +3,7 @@
 >Update: Major design flaw discovered for arkc (/merkel/) - Each row in the merkel tree is being stacked together then compressed which is not the intended design - its showing much higher data output - patch in progress 
 >Very CPU heavy right now will optimize when we figure it out
 >Currently the 2kb ark key + recipe goal is not achieved but we are near ZSTD compression (but extremely slow)
-
+>Will update repo with daily changes check docs/NOTES.MD for running project notes
 
 
 # How to run:

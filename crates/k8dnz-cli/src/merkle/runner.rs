@@ -41,7 +41,7 @@ pub struct FitProfile {
     pub lookahead_cap: u64,
     pub search_emissions_cap: u64,
 
-    /// If 0 => unlimited attempts (keep expanding budgets until success or integer saturation).
+    /// Attempts bound. If 0, treat as "legacy unbounded" (but Default no longer uses 0).
     pub max_attempts: usize,
 }
 
@@ -60,137 +60,69 @@ impl Default for FitProfile {
             scan_step: 1,
             start_emission: 0,
 
-            trans_penalty: 1,
-            max_chunks: 0,
+            trans_penalty: 0,
+            max_chunks: 1,
 
-            bit_tau: 128,
-            bit_smooth_shift: 3,
+            bit_tau: 256,
+            bit_smooth_shift: 0,
             bitfield_residual: BitfieldResidualEncoding::Packed,
             chunk_xform: ChunkXform::None,
             time_split: false,
 
-            max_ticks_start: 200_000_000,
-
-            // IMPORTANT: remove hard caps by default so arkc can run on any sized file.
-            max_ticks_cap: u64::MAX,
-            lookahead_cap: u64::MAX,
-            search_emissions_cap: u64::MAX,
+            max_ticks_start: 20_000_000,
+            max_ticks_cap: 20_000_000,
 
             verify_reconstruct: true,
 
-            // IMPORTANT: unlimited by default (0 => unlimited).
-            max_attempts: 0,
+            lookahead_cap: 1_200_000,
+            search_emissions_cap: 6_000_000,
+
+            // KEY FIX: bounded by default so we don't "infinite loop" on persistent mismatch.
+            max_attempts: 32,
         }
     }
 }
 
-/// IMPORTANT:
-/// `timemap reconstruct` does not accept `--bitfield-residual`, so it must infer the residual
-/// container/encoding from the residual file itself (commonly by extension like .bf1/.bf2).
-/// If we write residual to a generic ".bf", reconstruct may parse it incorrectly and produce a
-/// deterministic mismatch forever.
-fn residual_ext_for_bits(bits_per_emission: u8) -> &'static str {
-    match bits_per_emission {
-        1 => "bf1",
-        2 => "bf2",
-        4 => "bf4",
-        8 => "bf8",
-        _ => "bf", // fallback
-    }
-}
-
-fn is_capacity_fit_error(e: &anyhow::Error) -> bool {
-    let s = format!("{:#}", e);
-    s.contains("no room for chunk")
-        || s.contains("no output produced")
-        || s.contains("stopping")
-        || s.contains("need ") && s.contains(" syms") && s.contains(" have ")
-}
-
-fn bump_budgets(profile: &FitProfile, max_ticks: &mut u64, lookahead: &mut u64, search_emissions: &mut u64) -> Result<()> {
-    if *lookahead < profile.lookahead_cap {
-        let next = lookahead.saturating_mul(2);
-        *lookahead = next.min(profile.lookahead_cap);
-    }
-    if *search_emissions < profile.search_emissions_cap {
-        let next = search_emissions.saturating_mul(2);
-        *search_emissions = next.min(profile.search_emissions_cap);
-    }
-
-    let next_ticks = max_ticks.saturating_mul(2);
-    if next_ticks == *max_ticks {
-        anyhow::bail!("max_ticks saturated at {} (cannot grow further)", max_ticks);
-    }
-
-    let capped = next_ticks.min(profile.max_ticks_cap);
-    if capped == *max_ticks {
-        anyhow::bail!(
-            "max_ticks cap reached (cap={}) without success (lookahead={} search_emissions={})",
-            profile.max_ticks_cap,
-            lookahead,
-            search_emissions
-        );
-    }
-    *max_ticks = capped;
-
-    Ok(())
-}
-
 pub fn compress_payload_to_blob(
-    recipe_path: &str,
+    _recipe_path: &str,
+    recipe_bytes: &[u8],
     payload: &[u8],
-    profile: &FitProfile,
     map_seed: u64,
+    profile: &FitProfile,
 ) -> Result<K8b1Blob> {
-    if payload.is_empty() {
-        return Ok(K8b1Blob {
-            payload_len: 0,
-            recon: ReconParams {
-                max_ticks: profile.max_ticks_start,
-                map_seed,
-                bits_per_emission: profile.bits_per_emission,
-                bit_mapping: bit_mapping_to_u8(profile.bit_mapping),
-                bit_tau: profile.bit_tau as u32,
-                bit_smooth_shift: profile.bit_smooth_shift,
-                residual_mode: residual_mode_to_u8(profile.residual_mode),
-            },
-            recipe: std::fs::read(recipe_path).context("read recipe")?,
-            timemap: Vec::new(),
-            residual: Vec::new(),
-        });
-    }
-
-    let tmp = TempDir::new().context("tempdir")?;
-
-    let target_path = tmp.path().join("payload.bin");
-    std::fs::write(&target_path, payload).context("write payload")?;
-
+    let tmp = TempDir::new().context("TempDir")?;
+    let target_path = tmp.path().join("target.bin");
+    let recipe_tmp = tmp.path().join("recipe.k8r");
     let out_tm = tmp.path().join("out.tm1");
+    let out_res = tmp.path().join("out.bf");
 
-    // Key fix: choose residual extension based on bits_per_emission so reconstruct parses correctly.
-    let res_ext = residual_ext_for_bits(profile.bits_per_emission);
-    let out_res = tmp.path().join(format!("out.{res_ext}"));
+    std::fs::write(&target_path, payload).context("write target")?;
+    std::fs::write(&recipe_tmp, recipe_bytes).context("write recipe")?;
 
-    let recipe_bytes = std::fs::read(recipe_path).context("read recipe")?;
+    let mut max_ticks = profile.max_ticks_start;
+    let mut lookahead = profile.lookahead;
+    let mut search_emissions = profile.search_emissions;
 
-    let mut max_ticks = profile.max_ticks_start.max(1);
-    let mut lookahead = profile.lookahead.max(1);
-    let mut search_emissions = profile.search_emissions.max(1);
+    // chunk_size in SYMBOLS (not bytes): timemap chunking is in emission symbols.
+    let chunk_size = {
+        let bpe = profile.bits_per_emission as u64;
+        let total_bits = (payload.len() as u64) * 8;
+        if bpe == 0 {
+            total_bits // degenerate, shouldn't happen
+        } else {
+            (total_bits + (bpe - 1)) / bpe
+        }
+    };
 
-    // IMPORTANT: chunk_size is in SYMBOLS for bitfield mode; respect bits_per_emission.
-    // bits_total = bytes*8; symbols_needed = ceil(bits_total / bpe).
-    let bits_total: u64 = (payload.len() as u64).saturating_mul(8);
-    let bpe: u64 = (profile.bits_per_emission as u64).max(1);
-    let chunk_size: u64 = ((bits_total + (bpe - 1)) / bpe).max(1);
-
-    let max_chunks = if profile.max_chunks == 0 { 1 } else { profile.max_chunks.max(1) };
+    let max_chunks = profile.max_chunks;
 
     let mut attempt: usize = 1;
-
     loop {
         if profile.max_attempts != 0 && attempt > profile.max_attempts {
             anyhow::bail!(
-                "runner gave up after {} attempts without matching reconstruction (payload={} bytes)",
+                "runner gave up after {} attempts without matching reconstruction (payload={} bytes). \
+                 Consider inspecting /tmp/k8dnz_expected.bin and /tmp/k8dnz_got.bin, \
+                 or increasing max_attempts explicitly.",
                 profile.max_attempts,
                 payload.len()
             );
@@ -199,11 +131,7 @@ pub fn compress_payload_to_blob(
         eprintln!(
             "[runner] attempt {}{} payload={} max_ticks={} lookahead={} search_emissions={} chunk_size_syms={} max_chunks={} bpe={}",
             attempt,
-            if profile.max_attempts == 0 {
-                " (unbounded)"
-            } else {
-                ""
-            },
+            if profile.max_attempts == 0 { " (unbounded)" } else { "" },
             payload.len(),
             max_ticks,
             lookahead,
@@ -214,7 +142,7 @@ pub fn compress_payload_to_blob(
         );
 
         let a = FitXorChunkedArgs {
-            recipe: recipe_path.to_string(),
+            recipe: recipe_tmp.to_string_lossy().to_string(),
             target: target_path.to_string_lossy().to_string(),
             out_timemap: out_tm.to_string_lossy().to_string(),
             out_residual: out_res.to_string_lossy().to_string(),
@@ -264,14 +192,24 @@ pub fn compress_payload_to_blob(
             cmd: TimemapCmd::FitXorChunked(a),
         };
 
-        // FIX: capacity failures must be retryable, not fatal.
+        // Capacity failures should be retryable, not fatal.
         if let Err(e) = timemap_run(args) {
             if is_capacity_fit_error(&e) {
                 eprintln!(
                     "[runner] fit capacity failure -> retry (attempt={} max_ticks={}) : {}",
                     attempt, max_ticks, e
                 );
-                bump_budgets(profile, &mut max_ticks, &mut lookahead, &mut search_emissions)?;
+                if !advance_knobs(profile, &mut max_ticks, &mut lookahead, &mut search_emissions)? {
+                    anyhow::bail!(
+                        "runner cannot advance any knobs further (capacity failures persist). \
+                         payload={} bytes bpe={} max_ticks={} lookahead={} search_emissions={}",
+                        payload.len(),
+                        profile.bits_per_emission,
+                        max_ticks,
+                        lookahead,
+                        search_emissions
+                    );
+                }
                 attempt = attempt.saturating_add(1);
                 continue;
             }
@@ -292,7 +230,7 @@ pub fn compress_payload_to_blob(
                 bit_smooth_shift: profile.bit_smooth_shift,
                 residual_mode: residual_mode_to_u8(profile.residual_mode),
             },
-            recipe: recipe_bytes.clone(),
+            recipe: recipe_bytes.to_vec(),
             timemap: tm,
             residual: resid,
         };
@@ -317,19 +255,69 @@ pub fn compress_payload_to_blob(
             return Ok(blob);
         }
 
-        bump_budgets(profile, &mut max_ticks, &mut lookahead, &mut search_emissions)?;
+        if !advance_knobs(profile, &mut max_ticks, &mut lookahead, &mut search_emissions)? {
+            anyhow::bail!(
+                "runner cannot advance any knobs further (reconstruct mismatch persists). \
+                 payload={} bytes bpe={} max_ticks={} lookahead={} search_emissions={}",
+                payload.len(),
+                profile.bits_per_emission,
+                max_ticks,
+                lookahead,
+                search_emissions
+            );
+        }
+
         attempt = attempt.saturating_add(1);
     }
+}
+
+fn advance_knobs(profile: &FitProfile, max_ticks: &mut u64, lookahead: &mut u64, search_emissions: &mut u64) -> Result<bool> {
+    // Primary: increase budgets up to caps.
+    let mut changed = false;
+
+    let prev_ticks = *max_ticks;
+    let prev_look = *lookahead;
+    let prev_emit = *search_emissions;
+
+    bump_budgets(profile, max_ticks, lookahead, search_emissions)?;
+
+    if *max_ticks != prev_ticks || *lookahead != prev_look || *search_emissions != prev_emit {
+        changed = true;
+    }
+
+    // If we hit caps and nothing changed, we cannot move further in this runner instance.
+    Ok(changed)
+}
+
+fn bump_budgets(profile: &FitProfile, max_ticks: &mut u64, lookahead: &mut u64, search_emissions: &mut u64) -> Result<()> {
+    // Expand max_ticks but respect cap.
+    if *max_ticks < profile.max_ticks_cap {
+        let next = (*max_ticks).saturating_add((*max_ticks) / 2).max(*max_ticks + 1);
+        *max_ticks = next.min(profile.max_ticks_cap);
+    }
+
+    // Expand lookahead but respect cap.
+    if *lookahead < profile.lookahead_cap {
+        let next = (*lookahead).saturating_add((*lookahead) / 2).max(*lookahead + 1);
+        *lookahead = next.min(profile.lookahead_cap);
+    }
+
+    // Expand search_emissions but respect cap.
+    if *search_emissions < profile.search_emissions_cap {
+        let next = (*search_emissions)
+            .saturating_add((*search_emissions) / 2)
+            .max(*search_emissions + 1);
+        *search_emissions = next.min(profile.search_emissions_cap);
+    }
+
+    Ok(())
 }
 
 fn dump_mismatch(expected: &[u8], got: &[u8]) {
     let _ = std::fs::write("/tmp/k8dnz_expected.bin", expected);
     let _ = std::fs::write("/tmp/k8dnz_got.bin", got);
 
-    eprintln!(
-        "[runner] wrote /tmp/k8dnz_expected.bin and /tmp/k8dnz_got.bin (for xxd/cmp)"
-    );
-
+    eprintln!("[runner] wrote /tmp/k8dnz_expected.bin and /tmp/k8dnz_got.bin (for xxd/cmp)");
     eprintln!(
         "[runner] mismatch lens: expected={} got={}",
         expected.len(),
@@ -353,92 +341,82 @@ fn dump_mismatch(expected: &[u8], got: &[u8]) {
     match diff {
         None => {
             if expected.len() != got.len() {
-                eprintln!("[runner] mismatch: contents equal for min_len={}, only length differs", n);
+                eprintln!("[runner] mismatch: all shared bytes match; length differs.");
             } else {
-                eprintln!("[runner] mismatch: no differing byte found, but buffers not equal (unexpected)");
+                eprintln!("[runner] mismatch: no differing index found but buffers not equal (unexpected).");
             }
         }
         Some(i) => {
-            let start = i.saturating_sub(16);
-            let end = (i + 16).min(n);
-            eprintln!("[runner] first_diff_at={} (0x{:x})", i, i);
             eprintln!(
-                "[runner] expected[{}..{}] = {}",
-                start,
-                end,
-                hex_slice(&expected[start..end])
-            );
-            eprintln!(
-                "[runner] got     [{}..{}] = {}",
-                start,
-                end,
-                hex_slice(&got[start..end])
+                "[runner] first diff @ {}: expected=0x{:02x} got=0x{:02x}",
+                i, expected[i], got[i]
             );
         }
     }
 }
 
-fn fnv1a64(buf: &[u8]) -> u64 {
+fn fnv1a64(b: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
-    for &b in buf {
-        h ^= b as u64;
+    for &x in b {
+        h ^= x as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
     h
 }
 
-fn hex_slice(buf: &[u8]) -> String {
-    let mut s = String::with_capacity(buf.len() * 2);
-    for &b in buf {
-        use std::fmt::Write;
-        let _ = write!(s, "{:02x}", b);
-    }
-    s
+fn is_capacity_fit_error(e: &anyhow::Error) -> bool {
+    let s = format!("{:#}", e);
+    s.contains("no room for chunk") || s.contains("capacity")
 }
 
-pub fn reconstruct_blob(blob: &K8b1Blob) -> Result<Vec<u8>> {
-    if blob.payload_len == 0 {
-        return Ok(Vec::new());
+fn bit_mapping_to_u8(m: BitMapping) -> u8 {
+    match m {
+        BitMapping::LowpassThresh => 1,
+        BitMapping::Geom => 2,
+        BitMapping::Hash => 3,
     }
+}
 
-    let tmp = TempDir::new().context("tempdir")?;
+fn residual_mode_to_u8(m: ResidualMode) -> u8 {
+    match m {
+        ResidualMode::Xor => 1,
+        ResidualMode::Sub => 2,
+    }
+}
 
+// FIX: make visible to merkle::unzip
+pub(super) fn reconstruct_blob(blob: &K8b1Blob) -> Result<Vec<u8>> {
+    let tmp = TempDir::new().context("TempDir")?;
     let recipe_path = tmp.path().join("recipe.k8r");
     let tm_path = tmp.path().join("tm.tm1");
-
-    // Key fix mirrored here: residual filename must carry the right extension for reconstruct to parse.
-    let res_ext = residual_ext_for_bits(blob.recon.bits_per_emission);
-    let res_path = tmp.path().join(format!("res.{res_ext}"));
-
+    let resid_path = tmp.path().join("resid.bf");
     let out_path = tmp.path().join("out.bin");
 
     std::fs::write(&recipe_path, &blob.recipe).context("write recipe")?;
     std::fs::write(&tm_path, &blob.timemap).context("write timemap")?;
-    std::fs::write(&res_path, &blob.residual).context("write residual")?;
+    std::fs::write(&resid_path, &blob.residual).context("write residual")?;
 
-    let bit_mapping = bit_mapping_from_u8(blob.recon.bit_mapping);
-    let residual_mode = residual_mode_from_u8(blob.recon.residual_mode);
-    let bit_tau_u16 = u16::try_from(blob.recon.bit_tau).unwrap_or(u16::MAX);
-
-    let r = ReconstructArgs {
+    // NOTE: ReconstructArgs no longer accepts payload_len/bitfield_residual/time_split/chunk_xform.
+    // Keep only the currently supported fields + cond_* fields.
+    let a = ReconstructArgs {
         recipe: recipe_path.to_string_lossy().to_string(),
         timemap: tm_path.to_string_lossy().to_string(),
-        residual: res_path.to_string_lossy().to_string(),
+        residual: resid_path.to_string_lossy().to_string(),
         out: out_path.to_string_lossy().to_string(),
 
         mode: ApplyMode::Rgbpair,
         map: MapMode::Bitfield,
 
+        max_ticks: blob.recon.max_ticks,
         map_seed: blob.recon.map_seed,
         map_seed_hex: None,
 
-        residual_mode,
-        max_ticks: blob.recon.max_ticks,
-
         bits_per_emission: blob.recon.bits_per_emission,
-        bit_mapping,
-        bit_tau: bit_tau_u16,
+        bit_mapping: u8_to_bit_mapping(blob.recon.bit_mapping),
+        bit_tau: blob.recon.bit_tau as u16,
         bit_smooth_shift: blob.recon.bit_smooth_shift,
+
+        residual_mode: u8_to_residual_mode(blob.recon.residual_mode),
 
         cond_tags: None,
         cond_tag_format: TagFormat::Byte,
@@ -448,43 +426,25 @@ pub fn reconstruct_blob(blob: &K8b1Blob) -> Result<Vec<u8>> {
     };
 
     let args = TimemapArgs {
-        cmd: TimemapCmd::Reconstruct(r),
+        cmd: TimemapCmd::Reconstruct(a),
     };
-    timemap_run(args).context("timemap reconstruct(bitfield)")?;
 
-    let out = std::fs::read(&out_path).context("read reconstructed output")?;
-    anyhow::ensure!(out.len() == blob.payload_len as usize, "reconstruct length mismatch");
+    timemap_run(args).context("timemap reconstruct")?;
+    let out = std::fs::read(&out_path).context("read reconstructed out")?;
     Ok(out)
 }
 
-fn bit_mapping_to_u8(v: BitMapping) -> u8 {
+fn u8_to_bit_mapping(v: u8) -> BitMapping {
     match v {
-        BitMapping::Geom => 0,
-        BitMapping::Hash => 1,
-        BitMapping::LowpassThresh => 2,
+        2 => BitMapping::Geom,
+        3 => BitMapping::Hash,
+        _ => BitMapping::LowpassThresh,
     }
 }
 
-fn bit_mapping_from_u8(v: u8) -> BitMapping {
+fn u8_to_residual_mode(v: u8) -> ResidualMode {
     match v {
-        0 => BitMapping::Geom,
-        1 => BitMapping::Hash,
-        2 => BitMapping::LowpassThresh,
-        _ => BitMapping::Geom,
-    }
-}
-
-fn residual_mode_to_u8(v: ResidualMode) -> u8 {
-    match v {
-        ResidualMode::Xor => 0,
-        ResidualMode::Sub => 1,
-    }
-}
-
-fn residual_mode_from_u8(v: u8) -> ResidualMode {
-    match v {
-        0 => ResidualMode::Xor,
-        1 => ResidualMode::Sub,
+        2 => ResidualMode::Sub,
         _ => ResidualMode::Xor,
     }
 }

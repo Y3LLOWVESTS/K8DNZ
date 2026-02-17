@@ -17892,3 +17892,461 @@ If you want the next instance to start with **code**, the highest-leverage first
 
 
 ### END NOTE - FEBRUARY 17 2026 - 10:05 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 12:00 CST
+
+
+Got it. Looking at the vision image: you’ve got **two independent orbiters (A and C)** on separate rings, and when their phases line up they “enter” **B (the frustum)** where the motion becomes **coupled/lockstep** and then you sample a **field on the rim** (the rainbow band). That picture is *not* “one PRNG stream used the same way for everything” — it’s **multiple phase domains + a coupling event + a sampling schedule**.
+
+### The working principle as a formula (faithful to the vision)
+
+Let:
+
+* ( \phi_A(t), \phi_C(t) \in [0,1) ) be the phases of orbiters A and C.
+* **Lock condition:** ( |\phi_A(t) - \phi_C(t) - \Delta| < \varepsilon ) (alignment window).
+* When locked, we traverse B (the frustum) with a progress coordinate ( r \in [0,1] ) (bottom→top).
+* The sampled “token” is a function of **(phase, radius, field)**:
+
+[
+e(t) = \mathcal{S}\Big(\mathcal{F}\big(\phi_A(t), \phi_C(t), r(t);\ \Theta\big)\Big)
+]
+
+Where:
+
+* ( \Theta ) = recipe parameters (your “geometry / field / quantization” knobs),
+* ( \mathcal{F} ) = field sampling (the rainbow surface),
+* ( \mathcal{S} ) = symbolization/packing (pack_byte, modulo alphabets, etc.).
+
+**Compression succeeds when** the decoder can regenerate the same emission schedule so that:
+
+[
+\text{patch_cost} \approx \sum_{\text{lanes }L} \text{mismatches}(L) \cdot \text{bits per patch} \quad \text{is small}
+]
+
+Right now, you’re seeing the opposite: mismatch rates are high, so patch cost explodes past 2KB.
+
+---
+
+## The missing variable (the one that matches the vision *and* your current failure mode)
+
+### **Missing variable: per-lane phase / emission offset schedule**
+
+Call it:
+
+[
+\Omega = {\omega_L}_{L \in \text{lanes}}
+]
+
+Meaning: **each lane samples the engine at a different phase (start emission index) or via an interleaving schedule**, instead of each lane restarting from emission 0.
+
+### Why I’m confident this is *the* missing piece
+
+Your current K8L1 v2 lane model does this (conceptually):
+
+* For each lane (class, kind, case, letter, digit, punct, raw):
+
+  * create a fresh Engine
+  * run emissions from the beginning
+  * map bytes → symbols
+
+That implies the predictor streams for all lanes are **the same prefix**, just pushed through different mod operations.
+
+But the vision shows **multiple orbiters** and **a coupled region** — that screams:
+
+* *different* phase origins per lane (A vs C vs “inside B”)
+* *one continuous traversal* rather than restarting the same movie for each lane
+
+So the “formula variable” you’re missing is not another alphabet split. It’s **the sampling schedule / phase plan** that says:
+
+> “Lane L reads emissions starting at (\omega_L), and consumes (n_L) symbols; lanes do not all start at 0.”
+
+Two equivalent ways to realize (\Omega) (both corpus-free, deterministic, no extra side info):
+
+1. **Single-run, sequential allocation (frustum traversal):** generate one long emission stream once, then *slice* it into lane segments in a fixed order.
+2. **Per-lane offset (multiple orbiters):** lane L uses `start_emission = f(lane_id)` (and possibly a stride), so each lane samples a different “orbit phase”.
+
+This is exactly the “lockstep into B then sample the field” idea: you don’t keep jumping back to the beginning of time for each lane — you move forward along the cone.
+
+### Why this matters for the numbers you’re seeing
+
+Your breakdown for 512 bytes:
+
+* `class_mismatches=330`
+* `other_mismatches=824`, with:
+
+  * kind=322
+  * case=114
+  * letter=369  ← one of the biggest offenders
+  * digit=4
+  * punct=15
+  * raw=0
+
+So your raw lane is already behaving nicely (for this sample it never even got used), and digits/punct aren’t killing you. The big cost is **letter/kind/class** — exactly the lanes where using “the same emission prefix” + modulo mapping is most likely to look random-ish relative to English structure.
+
+A proper (\Omega) schedule doesn’t magically give you an English model, but it fixes a structural mistake that’s *in conflict with the vision*: **you don’t have independent phase domains right now**.
+
+---
+
+# Carry-over notes (for next instance)
+
+## Where we are now (what works)
+
+* **Lane MVP pipeline is working and lossless** on tiny inputs:
+
+  * `encode2kb` → produces K8L1 artifact
+  * `decode2kb` → roundtrips correctly on “In the beginning\n”
+* Build is clean; warnings exist but not blockers.
+* For Genesis1, small slices work sometimes under budget; larger ones exceed budget.
+
+## Current observed performance (key datapoints)
+
+* `g1_512` (first 512 bytes of Genesis1):
+
+  * `artifact_bytes=2563` (OVER BUDGET vs 2048)
+  * `class_mismatches=330`
+  * `other_mismatches=824` broken down:
+
+    * kind=322, case=114, letter=369, digit=4, punct=15, raw=0
+  * `total_len=512`, `other_len=404`, `emissions_needed=1703`
+* `lane-sweep` shows artifact size grows ~linearly with input size; mismatch counts scale similarly.
+
+## The core problem (stated precisely)
+
+* K8L1 is fundamentally: **predict lanes + patch mismatches**.
+* Right now the predictors are too “random relative to the text lanes”, so patches dominate.
+* Even after lane factorization (kind/case/letter/digit/punct/raw), **patch volume is still too high** for 512 bytes → 2KB budget.
+
+## The “vision-consistent” missing variable
+
+**(\Omega) = emission schedule / per-lane phase offset plan.**
+
+### What’s wrong with the current implementation (conceptual)
+
+* Each lane predictor is generated by reinitializing the engine and consuming emissions from the start.
+* That means all lanes share the same emission prefix, just transformed — which contradicts the vision’s “multiple orbiters / phase domains / lockstep traversal”.
+
+### The fix direction (next-instance task)
+
+Implement a **deterministic emission allocation plan** so lanes do **not** all start at emission 0.
+
+Two candidate designs (both corpus-free, fully deterministic):
+
+1. **Single-engine run, sequential slicing (“frustum traversal”)**
+
+   * Generate one emission stream of length `sum(n_L)`.
+   * Allocate contiguous segments in a fixed order:
+
+     * class → kind → case → letter → digit → punct → raw
+   * Decoder can reproduce exactly because lane lengths are reconstructible (or derivable once earlier patches are applied).
+2. **Per-lane start offsets (“multiple orbiters”)**
+
+   * Define `start_emission = hash(lane_id) * K` (fixed K), or `lane_id * constant_stride`.
+   * Each lane consumes `n_L` from its own phase.
+   * Optional: different stride per lane.
+
+### Hypothesis to test
+
+* This should reduce structured mismatch inflation caused by reusing the same prefix for everything.
+* It’s the smallest “new variable” that matches the vision and doesn’t violate the “no corpus” constraint.
+
+## Next experiments to run immediately after (\Omega) lands
+
+* Re-run:
+
+  * `encode2kb` for `/tmp/g1_512.txt`
+  * `lane-sweep` for 64..1024
+* Compare mismatch breakdown before/after:
+
+  * We want **letter/kind/class mismatches per byte** to drop meaningfully.
+* If mismatch rates don’t budge much, the *next* missing ingredient is likely a second phase source (true A/C dual-stream emission) rather than one stream reused.
+
+---
+
+If you want, in the next instance we can use this as the explicit “formula patch” to the project narrative:
+
+> **Add (\Omega): the lane sampling phase schedule.**
+> Without (\Omega), all lanes sample the same orbit from the same starting phase, which collapses the vision into a single timeline and makes the patches explode.
+
+When you’re ready to resume coding next instance, this is the first change I’d drive.
+
+
+
+### END NOTE - FEBRUARY 17 2026 - 12:00 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 12:59 CST
+
+Yes — we’re making **real progress**, and it’s specifically progress **toward isolating Ω (the per-lane phase / emission offset schedule)** as the missing lever.
+
+### Are we progressing on the “missing piece”?
+
+**Yes, in two concrete ways:**
+
+1. **We now have a working K8L1 v2 lane pipeline that produces stable, comparable measurements** (encode works, decode/verify works when not budget-gated, lane-sweep prints clean CSV). That means Ω can now be tested experimentally instead of guessed.
+
+2. Your current failure mode is now **cleanly characterized**:
+
+* For a 512-byte sample, **artifact_bytes=2579 > 2048 budget**.
+* The breakdown shows **mismatch counts are still huge** (class + other patchlists dominate), which is exactly what Ω is meant to fix: the predictor streams aren’t “aligned” to the structure of each lane, so PatchLists are large.
+
+---
+
+## Re-iterate what’s in the image (put this into carry-over notes verbatim-ish)
+
+**The missing variable (the one that matches the vision and your current failure mode)**
+
+**Missing variable: per-lane phase / emission offset schedule**
+
+Call it:
+
+**Ω = { ω_L }_{L ∈ lanes}**
+
+Meaning: **each lane samples the engine at a different phase** (start emission index) **or via an interleaving schedule**, instead of each lane restarting from emission 0.
+
+Why this is likely the missing piece:
+
+* Current K8L1 v2 lane model (conceptually) does:
+
+  * for each lane (class, kind, case, letter, digit, punct, raw):
+
+    * create a fresh Engine
+    * run emissions from the beginning
+    * map bytes → symbols
+* That implies the predictor streams for all lanes are **the same prefix**, just pushed through different “mod operations” (mapping), which is a structural reason the predictor can stay “random-ish” with respect to each lane’s semantics.
+
+---
+
+## What we accomplished so far (carry-over notes)
+
+### 1) K8L1 v2 lane model exists + is measurable
+
+* Newline normalization
+* Lanes:
+
+  * class_lane over {OTHER, SPACE, NEWLINE}
+  * for OTHER positions: kind_lane over {LETTER, DIGIT, PUNCT, RAW}
+  * sublanes for case/letter/digit/punct/raw
+* Prediction uses Engine emissions mapped via **bucketing** (range partition), not modulo.
+* Mismatches stored as **PatchList per lane**.
+* K8L1 container format stays:
+
+  * magic “K8L1”, ver=1
+  * total_len, other_len, max_ticks (varint)
+  * recipe_len + recipe bytes
+  * class_patch_len + class_patch bytes
+  * other_patch_len + other_patch bytes (mini-container “K8P2”)
+
+### 2) Other patch mux format (K8P2)
+
+* MAGIC “K8P2”, VERSION 1
+* Holds 6 PatchLists (kind/case/letter/digit/punct/raw), each length-prefixed via varint
+* Current errors we hit earlier (mux len OOB / trailing bytes) were due to encoding/decoding mismatches; those are now resolved enough to run lane-sweep successfully.
+
+### 3) Recipe file size confirmed small
+
+* `./configs/tuned_validated.k8r` is **210 bytes**.
+* So the **budget failure is not recipe size** — it’s predictor quality → patchlist size.
+
+---
+
+## Current measured results (carry-over notes)
+
+### encode2kb 512-byte sample
+
+Commands used:
+
+```
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_512.txt \
+  --out /tmp/g1_512.k8l1 \
+  --verify
+```
+
+Output:
+
+* `class_mismatches=330`
+* `other_mismatches=832` split:
+
+  * kind=328
+  * case=116
+  * letter=370
+  * digit=6
+  * punct=12
+  * raw=0
+* Budget gate trips:
+
+  * `artifact_bytes=2579` vs `budget_bytes=2048`
+* Metadata:
+
+  * `total_len=512`
+  * `other_len=404`
+  * `emissions_needed=1703`
+
+### lane-sweep results (Genesis1.txt)
+
+Command:
+
+```
+cargo run -p k8dnz-cli --bin k8dnz-cli -- lane-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in text/Genesis1.txt \
+  --max-ticks 20000000 \
+  --sizes 64,128,256,512,1024
+```
+
+CSV:
+
+* 64  → artifact 528
+* 128 → artifact 850
+* 256 → artifact 1408
+* 512 → artifact 2579
+* 1024 → artifact 4844
+
+Patch growth is roughly linear with size → predictor not “locking in” to lane structure yet.
+
+---
+
+## Important gotcha from the terminal output
+
+You tried to parse `/tmp/g1_512.k8l1` with python and got `FileNotFoundError`.
+
+That’s expected because **encode2kb returns error when over budget**, and many CLIs don’t write the output file when they exit with an error. So the file often won’t exist unless:
+
+* you raise the budget high enough to pass, **or**
+* you modify encode2kb to “write anyway” (e.g., `--force-write`), **or**
+* you temporarily disable the gate for debugging.
+
+---
+
+## Are we currently doing Ω already?
+
+**Partially, but not fully.**
+
+* The image describes the bad situation: “each lane restarts at emission 0 with a fresh engine.”
+* Your *current* lane/mod.rs (as shown) includes the comment:
+
+> “We do NOT reinitialize Engine per lane. Callers pass a single &mut Engine so lanes consume a shared emission cursor in a deterministic order…”
+
+That’s already **a basic Ω**, but it’s the simplest form: **Ω = sequential lane concatenation**.
+
+What’s missing is the *powerful* Ω:
+
+* **per-lane offsets** (skip N emissions before sampling a lane),
+* **interleaving schedules** (stride / weave emissions between lanes),
+* **phase selection** driven by lane semantics (e.g., different ω for class vs letter),
+* and likely a way to *search* Ω cheaply.
+
+Right now, the numbers show sequential consumption alone is **not enough** to reduce PatchLists under budget.
+
+---
+
+## What remains (next instance plan)
+
+### Goal for next session
+
+Turn Ω into a first-class controllable variable, then sweep it like we sweep chunk-size/refine-topk elsewhere.
+
+### Minimal Ω experiment ladder (do in this order)
+
+1. **Disable budget gate for debugging**
+   Run encode2kb with a higher budget so it writes the artifact and verify passes:
+
+```
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_512.txt \
+  --out /tmp/g1_512.k8l1 \
+  --budget-bytes 10000 \
+  --verify
+```
+
+Now `/tmp/g1_512.k8l1` should exist for inspection tooling.
+
+2. **Add Ω controls**
+   Add a small Ω config for lane sampling, starting with the cheapest knobs:
+
+* `--omega-skip-class N`
+* `--omega-skip-kind N`
+* `--omega-skip-case N`
+* `--omega-skip-letter N`
+* etc.
+  Implementation idea (lowest disruption): before generating predictions for a lane, “burn” `skip` emissions from the shared engine cursor.
+
+3. **Then add interleaving (Ω stride)**
+   For example:
+
+* class lane consumes every 1 emission (dense)
+* letter lane consumes every 2nd or 4th emission (stride), etc.
+
+4. **Add Ω sweep mode**
+   Like lane-sweep, but sweeping offsets:
+
+* report artifact_bytes + mismatch breakdown vs Ω parameters.
+
+### Why this is the right next step
+
+Your failure is dominated by:
+
+* kind mismatches and letter mismatches (328 and 370 at 512 bytes)
+  That’s exactly where phase alignment/interleaving should help, because those lanes have strong structure (text is not random), but we’re sampling a stream that’s “out of phase” with their structure.
+
+---
+
+## Run commands (copy/paste set)
+
+### Build
+
+```
+cargo build
+```
+
+### Generate a 512-byte target
+
+```
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+```
+
+### Encode (debug budget so file is written)
+
+```
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_512.txt \
+  --out /tmp/g1_512.k8l1 \
+  --budget-bytes 10000 \
+  --verify
+```
+
+### Lane sweep baseline
+
+```
+cargo run -p k8dnz-cli --bin k8dnz-cli -- lane-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in text/Genesis1.txt \
+  --max-ticks 20000000 \
+  --sizes 64,128,256,512,1024
+```
+
+---
+
+## Bottom line
+
+* We are **absolutely progressing**: the lane system is now stable enough that Ω is the obvious knob left, and the mismatch/budget numbers are now reproducible.
+* The next breakthrough is to turn Ω from a concept into a **parameterized schedule** that we can **sweep**, exactly like your other search loops.
+
+When you start the next instance, paste:
+
+* the current `lane/mod.rs`,
+* the current `encode2kb.rs` (budget gate behavior matters),
+* and any new terminal output after running the “budget-bytes 10000” encode.
+
+
+### END NOTE - FEBRUARY 17 2026 - 12:59 CST

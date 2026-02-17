@@ -13,6 +13,11 @@ pub mod stats;
 // NEW
 pub mod orbexp;
 
+// NEW (Lane MVP)
+pub mod repr;
+pub mod symbol;
+pub mod lane;
+
 pub use crate::dynamics::engine::Engine;
 pub use crate::recipe::recipe::Recipe;
 pub use crate::signal::token::{PackedByte, PairToken};

@@ -36,7 +36,7 @@ fn atomic_write(path: &str, bytes: &[u8], default_name: &str) -> Result<()> {
 
     Ok(())
 }
-
+#[allow(dead_code)]
 pub fn write_tm1(path: &str, tm: &TimingMap) -> Result<()> {
     let bytes = tm.encode_tm1();
     atomic_write(path, &bytes, "timemap.tm1")
@@ -46,7 +46,7 @@ pub fn write_timemap_auto(path: &str, tm: &TimingMap) -> Result<()> {
     let bytes = tm.encode_auto();
     atomic_write(path, &bytes, "timemap.tm")
 }
-
+#[allow(dead_code)]
 pub fn read_tm1(path: &str) -> Result<TimingMap> {
     let bytes = std::fs::read(path).with_context(|| format!("read timemap {path}"))?;
     let tm = TimingMap::decode_tm1(&bytes)

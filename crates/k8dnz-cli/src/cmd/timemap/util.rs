@@ -47,7 +47,7 @@ pub fn var_u64_len(mut x: u64) -> usize {
     }
     n
 }
-
+#[allow(dead_code)]
 pub fn tm1_len_contig(start_pos: u64, n: usize) -> usize {
     let magic = 4usize;
     let count = var_u64_len(n as u64);

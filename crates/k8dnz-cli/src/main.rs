@@ -47,6 +47,15 @@ pub enum Commands {
 
     /// Orbital experiment engine (closed-form gear math)
     Orbexp(cmd::orbexp::OrbExpArgs),
+
+    /// Lane encoder (K8L1) with hard budget gate
+    Encode2kb(cmd::encode2kb::Encode2kbArgs),
+
+    /// Lane decoder (K8L1)
+    Decode2kb(cmd::decode2kb::Decode2kbArgs),
+
+    /// Lane sweep CSV (artifact bytes vs size)
+    LaneSweep(cmd::lane_sweep::LaneSweepArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -64,5 +73,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Recipe(args) => cmd::recipe::run(args),
         Commands::ArkKey(args) => cmd::arkkey::run(args),
         Commands::Orbexp(args) => cmd::orbexp::run(args),
+        Commands::Encode2kb(args) => cmd::encode2kb::run(args),
+        Commands::Decode2kb(args) => cmd::decode2kb::run(args),
+        Commands::LaneSweep(args) => cmd::lane_sweep::run(args),
     }
 }
