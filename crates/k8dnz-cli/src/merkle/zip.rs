@@ -29,13 +29,51 @@ pub fn merkle_zip_bytes(
         leaf_count
     );
 
-    // Leaves
+    let p = FitProfile {
+        bits_per_emission: profile.bits_per_emission,
+        bit_mapping: profile.bit_mapping,
+        residual_mode: profile.residual_mode,
+        objective: profile.objective,
+        zstd_level: profile.zstd_level,
+
+        lookahead: profile.lookahead,
+        refine_topk: profile.refine_topk,
+        search_emissions: profile.search_emissions,
+        scan_step: profile.scan_step,
+        start_emission: profile.start_emission,
+
+        trans_penalty: profile.trans_penalty,
+        max_chunks: 1,
+
+        bit_tau: profile.bit_tau,
+        bit_smooth_shift: profile.bit_smooth_shift,
+        bitfield_residual: profile.bitfield_residual,
+        chunk_xform: profile.chunk_xform,
+        time_split: profile.time_split,
+
+        max_ticks_start: profile.max_ticks_start,
+        max_ticks_cap: profile.max_ticks_cap,
+
+        verify_reconstruct: profile.verify_reconstruct,
+
+        lookahead_cap: profile.lookahead_cap,
+        search_emissions_cap: profile.search_emissions_cap,
+
+        max_attempts: profile.max_attempts,
+    };
+
     let mut level: Vec<Vec<u8>> = Vec::with_capacity(chunks.len());
     for (i, ch) in chunks.iter().enumerate() {
         let seed_i = derive_leaf_seed(map_seed, i as u64);
-        eprintln!("[arkc] LEAF {}/{} bytes={} seed=0x{:016x}", i + 1, chunks.len(), ch.len(), seed_i);
+        eprintln!(
+            "[arkc] LEAF {}/{} bytes={} seed=0x{:016x}",
+            i + 1,
+            chunks.len(),
+            ch.len(),
+            seed_i
+        );
 
-        let blob: K8b1Blob = compress_payload_to_blob(recipe_path, ch, profile, seed_i)
+        let blob: K8b1Blob = compress_payload_to_blob(recipe_path, ch, &p, seed_i)
             .with_context(|| format!("compress leaf payload i={}", i))?;
 
         let enc = blob.encode();
@@ -43,11 +81,15 @@ pub fn merkle_zip_bytes(
         level.push(enc);
     }
 
-    // Internal levels: pairwise K8P2 payloads, each compressed as a node blob.
     let mut rounds = 0u32;
     while level.len() > 1 {
         rounds += 1;
-        eprintln!("[arkc] ROUND {} nodes_in={} nodes_out={}", rounds, level.len(), level.len() / 2);
+        eprintln!(
+            "[arkc] ROUND {} nodes_in={} nodes_out={}",
+            rounds,
+            level.len(),
+            level.len() / 2
+        );
 
         let mut next: Vec<Vec<u8>> = Vec::with_capacity((level.len() + 1) / 2);
         let mut i = 0usize;
@@ -69,7 +111,7 @@ pub fn merkle_zip_bytes(
                 seed_n
             );
 
-            let node_blob = compress_payload_to_blob(recipe_path, &pair_payload, profile, seed_n)
+            let node_blob = compress_payload_to_blob(recipe_path, &pair_payload, &p, seed_n)
                 .with_context(|| format!("compress internal node payload r={} node={}", rounds, node_idx))?;
 
             let enc = node_blob.encode();
@@ -113,7 +155,6 @@ pub fn merkle_zip_bytes(
 }
 
 fn derive_leaf_seed(base: u64, idx: u64) -> u64 {
-    // SplitMix-like affine mix (deterministic, no RNG)
     base ^ idx.wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 

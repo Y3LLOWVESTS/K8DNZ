@@ -16424,3 +16424,544 @@ Once those two are corrected, we should get:
 
 
 ### END NOTE - FEBRUARY 16 2026 - 19:55 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 20:35 CST
+
+### CARRY-OVER NOTES — K8DNZ / Cadence Project (2026-02-16)
+
+**Topic:** `runner.rs` still “loops forever” during `arkc` merkle-zip; why it retries; what we fixed; what’s left; next-instance plan.
+
+---
+
+## 0) Current snapshot (what we achieved in THIS instance)
+
+### ✅ Build status
+
+* Project **builds clean** (release build succeeds; only harmless dead_code warnings).
+* We successfully compiled and ran:
+
+  * `cargo build --release`
+  * `target/release/arkc text/Genesis1.txt --out /tmp/genesis1.arkm`
+
+### ✅ We fixed multiple compile breakages
+
+* `FitXorChunkedArgs` field mismatch (it uses `residual`, not `residual_mode`).
+* `compress_payload_to_blob()` signature mismatches between `zip.rs` and `runner.rs`.
+* `zip.rs` bad import (`crate::merkle::k8b1::K8b1Blob` doesn’t exist; blob type is in `super::format`).
+
+### ✅ We have a deterministic fit pipeline that *does reconstruct*
+
+The timemap CLI prints lines like:
+
+* `reconstruct ok (bitfield): ... bytes=2048 ...`
+
+This is critical: it proves the timemap+residual output is self-consistent, at least within the timemap command’s own validation.
+
+---
+
+## 1) The blocker: `arkc` still “stuck in a loop” (runner keeps retrying)
+
+### Symptom
+
+When running `arkc`, you see:
+
+* `[runner] attempt 1/48 ...`
+* `fit-xor-chunked` runs
+* scoreboard prints
+* timemap prints `reconstruct ok`
+* then runner prints attempt 2/48, attempt 3/48, etc…
+* It keeps doubling:
+
+  * `max_ticks`: 200M → 400M → 800M → …
+  * `lookahead`: 400k → 800k → 1.6M → …
+  * `search_emissions`: 2M → 4M → 8M → …
+
+So even though timemap says reconstruct ok, **runner does not exit**.
+
+### What we expected
+
+Runner logic is supposed to stop on attempt 1 when:
+
+* `reconstruct_blob(&blob) == payload`
+
+But it doesn’t.
+
+---
+
+## 2) Most likely root cause (and it’s subtle but huge)
+
+### 🚨 KEY DISCOVERY: `chunk_size` in `fit-xor-chunked` is NOT bytes
+
+The timemap log shows:
+
+* `target_bytes=2048`
+* `target_symbols=16384`
+* It then reports:
+
+  * `chunk 0000 ... len_sym=2048`
+  * `chunk 0007 ...`
+  * (8 chunks total)
+
+That means the fit code is splitting the target into chunks using **symbols**, not bytes.
+
+For a 2048-byte payload:
+
+* `target_symbols = 16384` (2048 * 8 bits)
+* If `chunk_size = 2048`, then:
+
+  * 16384 / 2048 = 8 chunks
+    ✅ This exactly matches the observed `chunk 0000..0007`.
+
+### Why this causes the “loop” feeling
+
+Even if timemap’s internal reconstruct check says “ok”, runner’s wrapper logic is likely not aligned with what was just validated, because we’re not actually doing a clean “single chunk = payload” optimization per merkle leaf/node. We are effectively doing “8 internal chunks” every attempt, which:
+
+* is slow
+* makes retries expensive
+* may prevent runner’s external check from matching exactly (depending on how payload_len / residual framing / reconstruct args interact across multiple subchunks)
+
+**Bottom line:** We tried to “force single chunk” by setting `chunk_size = payload.len()`, but that’s wrong units. It must be `payload.len() * 8` (or more generally: `payload_symbols`, i.e., bytes→symbols conversion).
+
+---
+
+## 3) Why it keeps retrying even though “reconstruct ok” prints
+
+There are two separate reconstruction checks happening:
+
+1. **Timemap command’s internal check**
+   The timemap tool prints:
+
+   * `reconstruct ok (bitfield): ...`
+     This check is inside the timemap command and may:
+   * reconstruct per-chunk internally
+   * or validate a subset
+   * or use slightly different parameters than runner’s reconstruct wrapper
+
+2. **Runner’s external `reconstruct_blob()` check**
+   Runner rebuilds args and calls `TimemapCmd::Reconstruct`, then compares returned bytes to `payload`.
+
+If these two are not perfectly aligned (especially with the symbol/byte chunking mismatch), timemap can print “ok” while runner still fails its equality comparison, resulting in retries.
+
+**But we didn’t see runner’s mismatch diagnostics** in the pasted output because the runner file version at that moment didn’t print first-diff / hashes when mismatch occurred (or the user truncated output before mismatch lines). In next instance we should add strong mismatch diagnostics.
+
+---
+
+## 4) What we changed in this instance (important file-level state)
+
+### `crates/k8dnz-cli/src/merkle/runner.rs`
+
+* `compress_payload_to_blob(recipe_path, payload, profile, map_seed)` implemented.
+* Writes payload to temp file and passes that path to `FitXorChunkedArgs.target`.
+* Uses `FitXorChunkedArgs.residual` field.
+* Retries by doubling max_ticks/lookahead/search_emissions within caps and max_attempts.
+
+**But it still sets:**
+
+* `chunk_size = payload.len()` (WRONG UNITS — should be symbols)
+
+### `crates/k8dnz-cli/src/merkle/zip.rs`
+
+* Calls runner with correct signature.
+* We also discussed a POC approach: create local profile copy with `max_attempts=1`, `max_chunks=1`.
+  However, even that won’t fix the “8 chunks” issue unless `chunk_size` is corrected to symbols.
+
+---
+
+## 5) Concrete next-instance fix plan (do these in order)
+
+### Step A — Fix `chunk_size` units in runner
+
+**Goal:** Ensure one runner call fits exactly one payload chunk.
+
+We need to compute `chunk_size` in **symbols**, not bytes.
+
+We saw:
+
+* `target_symbols = target_bytes * 8`
+  So:
+  ✅ `chunk_size_symbols = payload.len() * 8`
+
+**Implement:**
+
+* In runner.rs, set:
+
+  * `chunk_size: payload.len() * 8`
+  * `max_chunks: 1` (if profile.max_chunks == 0, force 1)
+
+After this change, the timemap log should show:
+
+* only `chunk 0000` (one chunk)
+* `len_sym = target_symbols`
+* no `chunk 0001..0007`
+
+This single change is the highest-probability “stop the loop” fix.
+
+> If symbols are not bits but another unit depending on mode, we can derive `target_symbols` by reading the timemap util or by computing:
+>
+> * `target_symbols = payload.len() * 8` for bitfield mode (as evidenced by the log).
+>   Use the log as ground truth.
+
+---
+
+### Step B — Add mismatch diagnostics so we KNOW why runner retries
+
+In runner, after reconstruct mismatch, print:
+
+* `len(out)` vs `len(payload)`
+* sha256 or fast hash of both buffers (or at least first 32 bytes hex)
+* first differing index and a small hex window around it
+
+This gives immediate clarity:
+
+* is it a total mismatch?
+* is it off by one?
+* is it a prefix ok then diverges?
+* is it writing “K8P2” headers into output (wrong-level payload)?
+
+---
+
+### Step C — For proof-of-concept ARK key generation: add a “POC mode” switch
+
+User goal: **not perfection**, just small keys and proof-of-concept.
+
+Add option (or temporary code path):
+
+* If `verify_reconstruct == false`, accept attempt 1 blob.
+* Or cap `max_attempts = 1` when arkc is building.
+
+This makes merkle zip finish quickly even if full correctness isn’t guaranteed yet.
+
+However, best is Step A first because Step A makes it both correct AND fast.
+
+---
+
+## 6) Remaining known blocker after runner loop is fixed: `arku` output still likely wrong
+
+From earlier carryover evidence (previous instance):
+
+* output started with `K8P2` / `K8B1` / `K8R1` markers
+* indicates `arku` may be writing **internal node payloads** instead of fully merkle-unzipping.
+
+Next milestone after runner loop:
+
+* Fix `arku` to recursively:
+
+  * decode `Arkm1Root`
+  * decode root blob → reconstruct root payload (which is a `K8P2Pair`)
+  * recurse until leaf `K8B1Blob`
+  * concatenate leaf payload chunks
+  * truncate to original_len
+
+**Success test:**
+
+```bash
+cargo build --release
+target/release/arkc text/Genesis1.txt --out /tmp/genesis1.arkm
+target/release/arku /tmp/genesis1.arkm /tmp/genesis1.out
+cmp -s text/Genesis1.txt /tmp/genesis1.out && echo OK || echo MISMATCH
+xxd -l 16 /tmp/genesis1.out
+```
+
+---
+
+## 7) What we learned from the numbers (interpretation)
+
+For a 2048-byte chunk:
+
+* matches ~42–44%
+* tm_zstd_bytes ~ 18 (tiny)
+* resid_zstd_bytes ~ 770 (large-ish)
+* effective_bytes_no_recipe ~ 788 vs plain_zstd 737 (+51)
+* effective_bytes_with_recipe ~ 998 (+261)
+
+So the predictor quality is still low, but:
+
+* the pipeline is deterministic
+* reconstruction works (at least inside timemap)
+* so we can proceed with “proof-of-life” ARK behavior while improving compression later.
+
+---
+
+## 8) TL;DR for next instance
+
+**The loop is not “random”** — it’s almost certainly caused by a unit mismatch:
+
+* `chunk_size` is being provided in **bytes**, but fit engine interprets it as **symbols**.
+* That creates `8 chunks` per payload and makes runner retry logic behave horribly.
+* Fix `chunk_size = payload.len() * 8` (bitfield mode) and force `max_chunks=1`.
+* Add mismatch diagnostics to confirm runner’s compare path matches timemap’s “reconstruct ok”.
+
+Once runner is sane, move on to **arku merkle-unzip** correctness.
+
+---
+
+If you want, in the next instance paste:
+
+* the updated `runner.rs` after your current state
+* and the definition of `FitXorChunkedArgs` (fields + docs)
+  and I’ll give you the exact final patch with the symbol-based chunk sizing and the diagnostic prints.
+
+
+### END NOTE - FEBRUARY 16 2026 - 20:35 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 22:33 CST
+
+
+### How to fix the “no room for chunk … need 79960 syms, have 51427” so `arkc` completes
+
+This is a **capacity mismatch**: for big internal-node payloads, `bits_per_emission=1` requires too many symbols. Your failure case was:
+
+* payload_bytes=9995 → target_symbols=79960 at bpe=1
+* stream_symbols available ≈ 51427
+* so fit can’t even produce one chunk and returns “no output produced”
+
+You have 3 practical fixes; pick **A** first.
+
+#### Fix A (best): raise bits-per-emission for internal nodes (or for the whole run)
+
+If you use `bits_per_emission=4` or `8`, the required symbols drop by 4× or 8×:
+
+* bpe=4: 9995 bytes → 9995*8/4 ≈ 19,990 symbols ✅ fits under 51,427
+* bpe=8: 9995 bytes → 9995*8/8 = 9,995 symbols ✅ fits easily
+
+**Implementation approach (recommended for carry-over):**
+
+* Keep leaves at bpe=1 if you want that experiment
+* **Automatically bump bpe for internal nodes** when their payload would exceed stream capacity.
+
+**Rule:** choose `bpe` so `payload_bytes * 8 / bpe <= stream_symbols_cap`.
+
+You can do this deterministically with a tiny helper:
+
+* Compute `need_syms = payload_bytes * 8` (for bpe=1 baseline)
+* If `need_syms > stream_cap`, set `bpe = 2`, else if still too big set `bpe=4`, else `bpe=8`.
+* Enforce mapping compatibility: `LowpassThresh` currently requires bpe=1. So for bpe>1, switch mapping to `Geom` or `Hash` (whichever is already wired + stable).
+
+That’s the clean, “it always finishes” path.
+
+#### Fix B: increase stream capacity (max_ticks and/or search_emissions)
+
+Right now your generator yields about **51,427 symbols** for `max_ticks=200M`. You needed **79,960**.
+So a first brute-force attempt is:
+
+* `max_ticks` ~ 400M (or higher)
+* `search_emissions` high enough (it was 2,000,000; that’s not the limiting factor here—ticks were)
+
+This can work, but it’s slower and not as robust as Fix A.
+
+#### Fix C: chunk internal-node payloads instead of forcing 1 chunk
+
+You’re currently doing `max_chunks=1` and an effective huge `chunk_size` (target_symbols) for the internal node. You can allow multi-chunk timemaps for internal nodes:
+
+* split the internal payload into multiple chunks so each chunk’s `need_syms` fits within `stream_symbols`
+* store a TM with multiple segments (TM1 or extended TM0) and a residual that covers all chunks
+
+This is more work than Fix A, but it’s the “correct long-term” design.
+
+---
+
+# Comprehensive Carry-Over Notes (Next Instance) — K8DNZ / The Cadence Project (Feb 16, 2026)
+
+## 0) Current North Star (unchanged)
+
+We are building a deterministic, parameterized codec where a compact **ARK/Merkle container** can reconstruct data exactly. The “key” concept is: small programs (timemap + recipe + residual) that deterministically reproduce the payload. Long-term: cascading compression (ARKs inside ARKs), “merkle-zip / merkle-unzip” naming, and eventually pushing toward very small ARK keys.
+
+## 1) Major milestone achieved today: deterministic mismatch bug fixed
+
+### 1.1 Symptom (the old bug)
+
+* `arkc` runner would loop retries (doubling `max_ticks`) and always mismatch at `first_diff_at=1`.
+* Expected began with `31 20 49 6e...` (“1 In…”) but got had `31 00 49 6e...` (space became 0x00).
+* `cmp` showed exactly **one differing byte** at position 2 (1-based in `cmp -l`) — expected `0x20`, got `0x00`.
+
+### 1.2 What we proved
+
+* The mismatch was not random, not “ticks”, not corruption: it was a deterministic alignment/handling issue.
+* After fixes, `arkc` leaf runner now prints: **success: reconstruction matches payload** for leaf and internal nodes, and `arku` can round-trip `Genesis1.txt` byte-perfect.
+
+### 1.3 Verification evidence
+
+* Tiny test (`/tmp/tiny.bin` with “1 In the beginning”):
+
+  * `arkc` succeeded on attempt 1
+  * `arku /tmp/tiny.arkm /tmp/tiny.unpacked`
+  * `cmp` succeeded (byte-perfect).
+* `Genesis1.txt` (4201 bytes):
+
+  * `arkc text/Genesis1.txt --out /tmp/genesis1.arkm --chunk-bytes 2048` succeeded
+  * `arku /tmp/genesis1.arkm /tmp/genesis1.unpacked`
+  * `cmp -l text/Genesis1.txt /tmp/genesis1.unpacked` showed no diffs.
+
+## 2) CLI usage gotchas (important)
+
+### 2.1 `arkc` usage
+
+* Correct:
+
+  ```bash
+  target/release/arkc <INPUT> --out <ROOT_PATH> --chunk-bytes 2048
+  ```
+* Incorrect: providing output as a positional arg (causes “unexpected argument … found”).
+
+### 2.2 `arku` usage
+
+* `arku` takes two positionals:
+
+  ```bash
+  target/release/arku <ROOT_PATH> <OUT_PATH>
+  ```
+* `--out` is not a flag for `arku`.
+
+## 3) New big test: TheBookOfGenesis.txt (~250KB) exposed a *capacity* failure
+
+### 3.1 What happened
+
+* `arkc` progressed through many leaves (user saw “leaf 58 out of 128” → padded leaf count is power-of-two for Merkle tree).
+* It failed while compressing an **internal node payload**:
+
+From terminaldump2 last lines:
+
+* `payload_bytes=9995` → `target_symbols=79960` (bpe=1)
+* stream had only `51427` symbols
+* fitter: “no room for chunk 0 (need 79960 syms, have 51427); stopping”
+* then `arkc` aborts: “compress internal node payload r=2 node=0”
+* because `arkc` never finished, `/tmp/genesis_full.arkm` was not created, so `arku` failed “No such file”.
+
+### 3.2 Root cause of this new failure (not the old mismatch)
+
+**bits_per_emission=1 blows up symbol requirements for large payloads.**
+
+* Required symbols ≈ `payload_bytes * 8 / bpe`.
+* With bpe=1, internal nodes quickly exceed the maximum symbol stream produced within current `max_ticks`.
+
+This is an expected scaling wall for 1-bit mode.
+
+## 4) “How to fix so run completes” (action plan)
+
+### 4.1 Immediate fix (recommended): adaptive bits-per-emission for internal nodes
+
+Goal: ensure `need_symbols <= stream_symbols_cap`.
+
+**Deterministic policy:**
+
+1. Compute `need_syms_bpe1 = payload_bytes * 8`.
+2. Let `cap = stream_symbols` you can realistically produce (currently ~51k at 200M ticks).
+3. Choose:
+
+   * if `need_syms_bpe1 <= cap` → use bpe=1
+   * else if `need_syms_bpe1/2 <= cap` → bpe=2
+   * else if `need_syms_bpe1/4 <= cap` → bpe=4
+   * else → bpe=8 (or increase ticks)
+
+**Mapping constraint:**
+
+* `LowpassThresh` requires bpe=1.
+* Therefore:
+
+  * bpe=1 → allow `LowpassThresh`
+  * bpe>1 → switch mapping to `Geom` or `Hash` for that node type.
+
+**Outcome:**
+
+* Your 9995-byte internal node:
+
+  * bpe=4 ⇒ ~19,990 symbols ✅ fits
+  * bpe=8 ⇒ 9,995 symbols ✅ fits easily
+
+This makes big-file runs finish without needing huge tick budgets.
+
+### 4.2 Alternative: raise max_ticks (brute force)
+
+* Increase `max_ticks` until stream_symbols >= need_syms.
+* For the shown failure, need ~80k symbols vs 51k; try 400M ticks first.
+* Downside: slower, still may fail on even larger nodes later.
+
+### 4.3 Long-term correct fix: allow multi-chunk internal node encoding
+
+* Remove/relax `max_chunks=1` for internal nodes.
+* Split internal payload into multiple chunks, each chunk fits within stream capacity.
+* Requires TM that can represent multiple chunks (TM1 or multi-segment TM0) + residual spans all chunks.
+* This is the scalable design for arbitrarily large payloads.
+
+## 5) Current best-known working settings (baseline)
+
+* `map=bitfield`
+* `mode=rgbpair`
+* `bit_mapping=lowpass-thresh`
+* `bits_per_emission=1`
+* `bit_tau=128`
+* `bit_smooth_shift=3`
+* residual: `xor`
+* objective: `zstd`
+* zstd-level: `3`
+* chunk-bytes: `2048`
+* lookahead: `400000`
+* refine-topk: `2048`
+* search-emissions: `2000000`
+* max-ticks: `200000000`
+* trans-penalty: `1`
+
+Works for:
+
+* tiny payload
+* Genesis1.txt
+  Fails for:
+* large file due to internal-node payload symbol requirements (scaling wall).
+
+## 6) Next-step checklist (do in next instance)
+
+### A) Make `arkc` finish on big files (primary objective)
+
+1. Implement adaptive bpe for internal nodes (or global bpe bump for big-file test).
+2. Ensure mapping switches off `LowpassThresh` for bpe>1 (use Geom/Hash).
+3. Re-run:
+
+   ```bash
+   cargo build --release
+   target/release/arkc text/TheBookOfGenesis.txt --out /tmp/genesis_full.arkm --chunk-bytes 2048
+   target/release/arku /tmp/genesis_full.arkm /tmp/genesis_full.unpacked
+   cmp -s text/TheBookOfGenesis.txt /tmp/genesis_full.unpacked && echo "OK" || echo "MISMATCH"
+   ```
+
+### B) Confirm Merkle rounds/padding expectations
+
+* “leaf 58 out of 128” means padded leaves to a power-of-two for tree building.
+* Keep an eye on internal-node payload sizes; those are the scaling bottleneck.
+
+### C) Re-evaluate compression “effective bytes”
+
+* For many nodes you’re still around plain_zstd + ~30–50 bytes (no recipe) or + ~240 (with recipe).
+* That’s okay for now; milestone is correctness + scalability.
+* Later, we’ll work on predictor quality and residual shrink.
+
+## 7) Project naming + functions
+
+* Cascading ARK chaining: `merkle-zip`
+* Unchaining: `merkle-unzip`
+
+## 8) Quick “what we accomplished vs what remains”
+
+### Accomplished
+
+* Deterministic encode/reconstruct works for leaf and internal nodes (Genesis1 roundtrip).
+* `arkc`/`arku` workflow validated; CLI pitfalls identified.
+* Bitfield lowpass-thresh pipeline works and reconstruct invariants hold.
+
+### Remaining
+
+* Scalability: finish large files (250KB+) by fixing symbol-capacity constraints.
+* Decide best policy: adaptive bpe vs multi-chunk internals (likely both).
+* After scalability, return to the bigger goal: residual reduction and short ARK key strategy (time-splitting, 1-bit vs multi-bit tradeoffs, formula-driven alignment).
+
+---
+
+If you want, paste the `arkc` source files that choose the runner params for leaves vs internal nodes (the place where it sets `bits_per_emission`, mapping, max_chunks), and I’ll give you the **exact drop-in code** to implement adaptive bpe/mapping so TheBookOfGenesis completes in one run.
+
+
+
+### END NOTE - FEBRUARY 16 2026 - 22:33 CST

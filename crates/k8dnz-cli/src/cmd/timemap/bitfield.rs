@@ -393,8 +393,6 @@ pub(crate) fn map_symbol_bitfield(
             let x = intensity_u8_from_rgb6(rgb6);
             let y = lowpass_iir_update(lp_state, x, bit_smooth_shift);
 
-            // NOTE: bit_tau is u16 so it can exceed 255 (your requirement).
-            // y is still 0..255; compare in u16 space to avoid truncation.
             let bit = if (y as u16) >= bit_tau { 1u8 } else { 0u8 };
             bit & mask
         }
@@ -1177,28 +1175,32 @@ pub fn cmd_reconstruct_bitfield(a: ReconstructArgs) -> anyhow::Result<()> {
 
     let mut lp_state = LowpassState::new();
 
+    // FIX: LowpassThresh is STATEFUL. We must advance lp_state on every emission,
+    // not only when tm.indices selects a symbol, otherwise recon diverges from fit
+    // whenever tm starts after emission 0 (common case).
     while engine.stats.ticks < a.max_ticks && (engine.stats.emissions as u64) <= max_idx {
         if let Some(tok) = engine.step() {
             let em = (engine.stats.emissions - 1) as u64;
 
-            while i < tm.indices.len() && tm.indices[i] == em {
-                let rgb6 = tok.to_rgb_pair().to_bytes();
-                let pred0 = map_symbol_bitfield(
-                    a.bit_mapping,
-                    seed,
-                    em,
-                    &rgb6,
-                    a.bits_per_emission,
-                    a.bit_tau,
-                    a.bit_smooth_shift,
-                    &mut lp_state,
-                ) & mask;
+            // Always compute pred0 once per emission to keep lp_state synchronized.
+            let rgb6 = tok.to_rgb_pair().to_bytes();
+            let pred0_all = map_symbol_bitfield(
+                a.bit_mapping,
+                seed,
+                em,
+                &rgb6,
+                a.bits_per_emission,
+                a.bit_tau,
+                a.bit_smooth_shift,
+                &mut lp_state,
+            ) & mask;
 
+            while i < tm.indices.len() && tm.indices[i] == em {
                 let pred = if let (Some(cs), Some(ref ks)) = (bf_chunk_size, bf_chunk_addk.as_ref()) {
                     let ci = i / cs;
-                    apply_chunk_addk(pred0, ks[ci], mask)
+                    apply_chunk_addk(pred0_all, ks[ci], mask)
                 } else {
-                    pred0
+                    pred0_all
                 };
 
                 let sym = apply_residual_symbol(a.residual_mode, pred, resid_syms[i] & mask, mask);
