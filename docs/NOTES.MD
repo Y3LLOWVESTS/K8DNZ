@@ -16131,3 +16131,296 @@ If you want, next message: tell me whether you want the root artifact to be **(A
 
 
 ### END - BUILDING GENESIS ARK KEY NOTES - FEBRUARY 16 2026 - 18:10 CST
+
+
+### BEGIN NOTE - FEBRUARY 16 2026 - 19:55 CST
+
+Yes — we’re on the right path **and** we’ve now isolated two very “fixable” issues:
+
+1. **The “infinite loop”** is real (it keeps doubling `max_ticks`) and it’s happening because the runner is using the wrong success condition.
+2. **The “garbled Genesis output”** is not random corruption — it’s extremely consistent with **writing an internal node payload (`K8P2…`) to disk instead of fully merkle-unzipping to leaf chunks**.
+
+Below is a comprehensive carry-over pack you can paste into the next instance and immediately continue.
+
+---
+
+# K8DNZ / Cadence Project — Carry-Over Notes (2026-02-16)
+
+## 0) Where we are right now (snapshot)
+
+### ✅ Big wins we’ve proven
+
+* **Release build is clean** (only harmless dead_code warnings).
+* **`arkc` successfully builds an ARKM container** via `merkle_zip_bytes`:
+
+  * Genesis1.txt is **4201 bytes**
+  * chunk_bytes = **2048**
+  * real_leaves = 3 → padded_leaves = 4 (pow2)
+  * rounds = 2
+  * root_bytes ~ **6291** (so overhead is real, but the structure works)
+* **Fit loop is stable and deterministic per chunk**:
+
+  * map=bitfield, bits_per_emission=1, bit_mapping=LowpassThresh, tau=128, smooth_shift=3, residual=Xor
+  * typical matches ~42–44% for 2048-byte chunk
+  * `timemap` compresses tiny (tm_zstd ~ 18 bytes)
+  * residual is ~payload-sized-ish, but **not exactly payload sized**
+
+### ❌ Current blockers
+
+1. **Runner infinite loop**
+
+   * Observed behavior: runner keeps re-running `fit-xor-chunked` while **doubling max_ticks**:
+
+     * 200M → 400M → 800M → 1.6B → 3.2B → 6.4B … (keeps going)
+   * Why: `runner.rs` currently treats success as:
+
+     * `if resid.len() == payload.len() { success }`
+   * But actual residual file sizes show e.g.:
+
+     * payload = 2048
+     * `resid_raw_bytes = 2072` (or other >payload values)
+   * So the equality check is **never true**, even though reconstruction can succeed → **loop never terminates**.
+
+2. **“Garbled text inserted into Genesis output”**
+
+   * `cmp` and SHA256 show mismatch even though output length is 4201.
+   * User opened output and saw “garbled sections”.
+   * Crucial evidence: the uploaded `/mnt/data/genesis1.out` begins with **binary headers** like:
+
+     * `K8P2 ... K8B1 ... K8R1 ...`
+   * That strongly indicates the output file is **not Genesis text** — it’s **a serialized internal structure** (pair payload / node blob payload) being written out.
+
+---
+
+## 1) Root cause analysis (what’s actually happening)
+
+### 1.1 Infinite loop cause (runner success condition is wrong)
+
+* In bitfield “packed” residual mode, the residual on disk can include:
+
+  * alignment/padding,
+  * packed bitplanes,
+  * metadata framing,
+  * etc.
+* So `resid.len()` is not a reliable success criterion.
+* The **only correct criterion** is:
+
+  * “If reconstruct(payload) matches original bytes, accept and stop.”
+
+**Fix direction:** change `compress_payload_to_blob()` to:
+
+* After each `timemap_run(FitXorChunked)`:
+
+  * read tm/residual
+  * build blob
+  * **attempt reconstruct**
+  * if reconstructed bytes == payload → SUCCESS
+  * else keep doubling max_ticks
+
+This automatically handles:
+
+* residual sizes ≠ payload size
+* correctness vs incorrectness
+* no more looping forever
+
+### 1.2 Garbled Genesis cause (arku is not fully unzipping the merkle tree)
+
+Based on the evidence, `arku` is likely doing something like:
+
+* decode root → get `root_blob`
+* reconstruct root blob payload (which is a `K8P2Pair` serialized payload)
+* then either:
+
+  * write it directly to the output, OR
+  * truncate it to original_len (4201)
+* That yields an output file that:
+
+  * has the right length,
+  * contains recognizable “texty” regions sometimes,
+  * but begins with `K8P2` and contains lots of binary/garbage.
+
+**Fix direction:** `arku` must:
+
+* read `Arkm1Root`
+* call **`merkle_unzip_bytes()`** (recursive):
+
+  * reconstruct root blob payload → decode as `K8P2Pair`
+  * recurse on `a` and `b`
+  * when leaf node reached: decode leaf `K8B1Blob` → reconstruct payload bytes (chunk)
+  * concatenate leaf chunks in order
+  * truncate to `original_len`
+* Only *that* produces exact Genesis bytes.
+
+---
+
+## 2) Concrete next steps (what to do next instance)
+
+### Step A — Fix runner loop termination (must-do first)
+
+**Goal:** stop infinite max_ticks doubling.
+
+Implement this change in `runner.rs`:
+
+* Remove / stop relying on: `if resid.len() == payload.len()`
+* Replace with:
+
+  1. read tm/resid
+  2. build blob
+  3. if `verify_reconstruct`:
+
+     * reconstruct_blob(&blob)
+     * if matches payload → return Ok(blob)
+     * else continue loop with higher max_ticks
+  4. if not verifying, still accept blob (but for now keep verify on)
+
+**Key point:** Even if resid is 2072 bytes, reconstruction can still yield exact 2048 bytes — and that should be success.
+
+> This one change should eliminate the “it never finishes” behavior immediately.
+
+### Step B — Fix arku to fully merkle-unzip (the garbled output fix)
+
+**Goal:** `cmp -s` returns OK.
+
+Actions:
+
+* Find where `arku` currently writes output bytes.
+* Ensure it’s calling a recursive unzip routine:
+
+  * either implement new `merkle_unzip_bytes(root_bytes, recipe_path?)`
+  * or if it exists, ensure `arku` uses it instead of reconstructing only root blob.
+
+**Success test:**
+
+```bash
+cargo build --release
+target/release/arkc text/Genesis1.txt --out /tmp/genesis1.arkm
+target/release/arku /tmp/genesis1.arkm /tmp/genesis1.out
+cmp -s text/Genesis1.txt /tmp/genesis1.out && echo OK || echo MISMATCH
+shasum -a 256 text/Genesis1.txt /tmp/genesis1.out
+```
+
+### Step C — Add a hard “no-infinite-loops” guard
+
+Even after Step A, add safety:
+
+* cap max_ticks (already exists)
+* also cap attempts, and log attempt count
+* print why attempt failed (reconstruct mismatch) with first differing index if easy
+
+---
+
+## 3) What we learned from the numbers (important interpretation)
+
+### 3.1 The model quality is still low (~42–44% matches)
+
+That’s expected at this stage. It means:
+
+* residual looks noise-ish
+* zstd can’t compress residual well
+* so effective bytes remain above plain zstd for now (delta ~ +50 bytes no-recipe; +260 with recipe)
+
+**But**: this doesn’t block correctness. It only blocks “wow compression”.
+
+### 3.2 Merkle-zip overhead is significant (for small files)
+
+For Genesis1 (4201 bytes), the container ended up ~6.1KB.
+This is fine for now because:
+
+* this is structural proof-of-life
+* later improvements will focus on:
+
+  * smaller recipe representation
+  * better predictor quality (reduce residual)
+  * time-split and 1-bit experiments
+
+---
+
+## 4) Immediate debugging aids to add (recommended)
+
+### 4.1 Print what arku is writing
+
+Add a debug log right before writing output:
+
+* first 16 bytes as hex
+* if it starts with `K8P2` → you’re writing an internal payload, not plaintext output
+
+### 4.2 Validate leaf ordering
+
+When unzipping:
+
+* confirm you always traverse `a` then `b`
+* confirm you concatenate leaves in the exact original order
+* then truncate to `original_len`
+
+---
+
+## 5) Next experiments after correctness is restored (do not do until cmp OK)
+
+Once the two blockers are fixed:
+
+### 5.1 Resume the strategic path
+
+* **time_split = true** experiment (00/01/10/11 timelines)
+* **bits_per_emission = 1** stays the focus
+* compare residual compressibility:
+
+  * xor vs sub
+  * packed vs other residual encodings
+  * tau / smooth_shift sweeps
+* measure:
+
+  * matches %
+  * resid zstd bytes
+  * effective bytes vs plain zstd baseline
+
+### 5.2 Keep the “formula-driven” direction
+
+We want deterministic, structured, low-dimensional controls:
+
+* not random seed wandering
+* tunable knobs that align with the “color wall / gamut / distance” vision:
+
+  * tau / smoothing (low-pass)
+  * mapping semantics
+  * time-splitting as “separate walls”
+
+---
+
+## 6) What to paste / keep handy next instance
+
+### Known-good command sequence
+
+```bash
+cargo build --release
+target/release/arkc text/Genesis1.txt --out /tmp/genesis1.arkm
+ls -lh /tmp/genesis1.arkm
+target/release/arku /tmp/genesis1.arkm /tmp/genesis1.out
+cmp -s text/Genesis1.txt /tmp/genesis1.out && echo OK || echo MISMATCH
+shasum -a 256 text/Genesis1.txt /tmp/genesis1.out
+```
+
+### Signature that output is WRONG
+
+* output starts with `K8P2` / `K8B1` / `K8R1` → you wrote encoded structures, not Genesis.
+
+### The two must-fix items (don’t proceed until done)
+
+1. Runner success criterion = reconstruct match, not resid length.
+2. arku must recursively merkle-unzip, not just reconstruct root blob payload.
+
+---
+
+## 7) Bottom line status
+
+* **We are close.**
+* The “garbled output” is almost certainly **a wrong-level output (node payload) being written**, not true corruption.
+* The “infinite loop” is almost certainly **the resid-length equality check**, which will never pass in packed residual mode.
+
+Once those two are corrected, we should get:
+
+* `cmp OK`
+* stable runtime (no runaway doubling)
+* and we can confidently proceed to time_split + 1-bit optimization work.
+
+
+### END NOTE - FEBRUARY 16 2026 - 19:55 CST

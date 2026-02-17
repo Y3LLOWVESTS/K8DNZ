@@ -1,5 +1,7 @@
 # K8DNZ / The Cadence Project (Rust)
 
+# NOTE: I AM WORKING ON THE INFINITE LOOP ISSUE WITH ARKC RIGHT NOW IT SHOULD BE FIXED VERY SOON
+
 **Last updated:** 2026-02-16
 **Status:** Experimental — but we now have a proven “time-indexed reconstruction” pipeline, a vision-aligned structured-bit mapping (`lowpass-thresh`), and (new) a **byte-perfect merkle-style cascading compression + decompression proof** (“merkle-zip / merkle-unzip”). This establishes the core closure property we need for ARK-of-ARKs composition.
 
