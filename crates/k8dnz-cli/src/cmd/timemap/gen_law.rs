@@ -36,7 +36,11 @@ fn tm_format_from_bytes(bytes: &[u8]) -> &'static str {
 fn circ_dist_turn32(a: u32, b: u32) -> u32 {
     let d1 = a.wrapping_sub(b);
     let d2 = b.wrapping_sub(a);
-    if d1 < d2 { d1 } else { d2 }
+    if d1 < d2 {
+        d1
+    } else {
+        d2
+    }
 }
 
 fn law_jump_u64(
@@ -77,10 +81,14 @@ fn apply_chunk_addk(pred: u8, k: u8, mask: u8) -> u8 {
 }
 
 fn tri_wave_i64(k: u64, period: u64, phi: u64) -> i64 {
-    if period == 0 { return 0; }
+    if period == 0 {
+        return 0;
+    }
     let u = (k.wrapping_add(phi)) % period;
     let half = period / 2;
-    if half == 0 { return 0; }
+    if half == 0 {
+        return 0;
+    }
     let r = if u < half { u } else { period - u };
     let v = (r as i64) - (half as i64 / 2);
     v
@@ -99,17 +107,23 @@ fn closed_form_start_offset(
     g2: i64,
     phi2: u64,
 ) -> usize {
-    if window_len == 0 { return 0; }
+    if window_len == 0 {
+        return 0;
+    }
 
     let kk = k as i64;
 
     let tri1 = if p1 != 0 && g1 != 0 {
         g1.saturating_mul(tri_wave_i64(k, p1, phi1))
-    } else { 0 };
+    } else {
+        0
+    };
 
     let tri2 = if p2 != 0 && g2 != 0 {
         g2.saturating_mul(tri_wave_i64(k, p2, phi2))
-    } else { 0 };
+    } else {
+        0
+    };
 
     let quad = c.saturating_mul(kk.saturating_mul(kk.saturating_sub(1)) / 2);
 
@@ -121,8 +135,22 @@ fn closed_form_start_offset(
 
     let wl = window_len as i64;
     let mut m = raw % wl;
-    if m < 0 { m += wl; }
+    if m < 0 {
+        m += wl;
+    }
     (m as u64 % window_len) as usize
+}
+
+/// Maintain last K candidates; keep most-recent at the end.
+fn push_candidate_ring(ring: &mut Vec<usize>, k: usize, val: usize) {
+    if k <= 1 {
+        return;
+    }
+    ring.push(val);
+    if ring.len() > k {
+        let overflow = ring.len() - k;
+        ring.drain(0..overflow);
+    }
 }
 
 pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
@@ -146,6 +174,18 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
     }
     if a.law_type == LawType::JumpWalk && a.law_max_jump == 0 {
         anyhow::bail!("--law-max-jump must be >= 1 (jump-walk)");
+    }
+
+    // Choice knobs validation (JumpWalk only, but validate here to avoid surprises)
+    if a.choice_k == 0 {
+        anyhow::bail!("--choice-k must be >= 1");
+    }
+    if a.choice_rank >= a.choice_k {
+        anyhow::bail!(
+            "--choice-rank {} must be < --choice-k {}",
+            a.choice_rank,
+            a.choice_k
+        );
     }
 
     let recipe = recipe_file::load_k8r(&a.recipe)?;
@@ -215,7 +255,7 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 em,
                 &rgb6,
                 a.bits_per_emission,
-                a.bit_tau, // u16, now supported by map_symbol_bitfield
+                a.bit_tau,
                 a.bit_smooth_shift,
                 &mut lp_state,
             );
@@ -261,6 +301,12 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
             let mut offset_total: u64 = 0;
             let sym_u64 = sym_count as u64;
 
+            // NEW: collect lock-derived candidate start offsets
+            let k_keep: usize = a.choice_k.max(1) as usize;
+            let rank: usize = a.choice_rank as usize;
+            let mut locked_events: u64 = 0;
+            let mut candidates: Vec<usize> = Vec::new();
+
             for i in 0..sym_u64 {
                 phase_a = phase_a.wrapping_add(a.law_v_a);
                 phase_c = phase_c.wrapping_sub(a.law_v_c);
@@ -269,6 +315,7 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 let locked = dist <= a.law_epsilon;
 
                 if locked {
+                    locked_events += 1;
                     phase_l = phase_a.wrapping_add(a.law_delta);
                     phase_l = phase_l.wrapping_add(a.law_v_l);
                 } else {
@@ -288,9 +335,24 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                     a.law_lock_div,
                 );
                 offset_total = offset_total.wrapping_add(jump);
+
+                // candidate: offset_total projected into [0, window_len)
+                if locked && k_keep > 1 {
+                    let cand = (offset_total % window_len) as usize;
+                    push_candidate_ring(&mut candidates, k_keep, cand);
+                }
             }
 
-            let start_offset: usize = (offset_total % window_len) as usize;
+            let start_offset_default: usize = (offset_total % window_len) as usize;
+            let start_offset: usize = if k_keep > 1 && !candidates.is_empty() {
+                // rank=0 picks most recent lock
+                let idx_from_end = rank;
+                let pick = candidates[candidates.len() - 1 - idx_from_end];
+                pick
+            } else {
+                start_offset_default
+            };
+
             let start_pos: u64 = base_emission + (start_offset as u64);
 
             for i in 0..sym_count {
@@ -369,10 +431,15 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
             eprintln!("search_emissions_cap       = {}", a.search_emissions);
             eprintln!("produced_emissions_end     = {}", produced_emissions_end_excl);
             eprintln!("max_ticks                  = {}", a.max_ticks);
+
             eprintln!("window_len(starts)         = {}", window_len);
             eprintln!("offset_total               = {}", offset_total);
             eprintln!("start_offset               = {}", start_offset);
             eprintln!("start_pos(emission)        = {}", start_pos);
+            eprintln!("locked_events              = {}", locked_events);
+            eprintln!("choice_k                   = {}", a.choice_k);
+            eprintln!("choice_rank                = {}", a.choice_rank);
+
             eprintln!(
                 "matches                    = {}/{} ({:.2}%)",
                 matches,
@@ -515,6 +582,7 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
             eprintln!("produced_emissions_end     = {}", produced_emissions_end_excl);
             eprintln!("max_ticks                  = {}", a.max_ticks);
             eprintln!("window_len(typical)        = {}", window_len);
+
             eprintln!("cf_b                       = {}", a.law_cf_b);
             eprintln!("cf_a                       = {}", a.law_cf_a);
             eprintln!("cf_c                       = {}", a.law_cf_c);
@@ -526,6 +594,7 @@ pub fn cmd_gen_law(a: GenLawArgs) -> anyhow::Result<()> {
                 "cf_p2/cf_g2/cf_phi2         = {}/{}/{}",
                 a.law_cf_p2, a.law_cf_g2, a.law_cf_phi2
             );
+
             eprintln!(
                 "matches                    = {}/{} ({:.2}%)",
                 matches,

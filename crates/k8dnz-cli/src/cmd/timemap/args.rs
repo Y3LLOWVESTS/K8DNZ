@@ -490,6 +490,15 @@ pub struct GenLawArgs {
     #[arg(long, default_value_t = 4)]
     pub law_lock_div: u32,
 
+    /// NEW: keep the last K alignment-derived candidate offsets (JumpWalk only).
+    /// 1 = disable candidate selection (default behavior).
+    #[arg(long, default_value_t = 1)]
+    pub choice_k: u32,
+
+    /// NEW: select which candidate offset to use (0 = most recent lock, 1 = previous, ...). JumpWalk only.
+    #[arg(long, default_value_t = 0)]
+    pub choice_rank: u32,
+
     // ---- ClosedForm params (formula-driven per-chunk start_pos(k)) ----
     /// Closed-form offset b (start phase). Used only for --law-type closedform.
     #[arg(long, default_value_t = 0)]

@@ -56,6 +56,16 @@ pub enum Commands {
 
     /// Lane sweep CSV (artifact bytes vs size)
     LaneSweep(cmd::lane_sweep::LaneSweepArgs),
+
+    /// Ω sweep CSV (fast skip/stride scan for one lane)
+    OmegaSweep(cmd::omega_sweep::OmegaSweepArgs),
+
+    /// Ω hillclimb (multi-lane skip/stride tuning across rounds)
+    OmegaHillclimb(cmd::omega_hillclimb::OmegaHillclimbArgs),
+
+    /// ApexTrace generator / fitter
+    #[command(name = "apextrace")]
+    ApexTrace(cmd::apextrace::ApexTraceArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -76,5 +86,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Encode2kb(args) => cmd::encode2kb::run(args),
         Commands::Decode2kb(args) => cmd::decode2kb::run(args),
         Commands::LaneSweep(args) => cmd::lane_sweep::run(args),
+        Commands::OmegaSweep(args) => cmd::omega_sweep::run(args),
+        Commands::OmegaHillclimb(args) => cmd::omega_hillclimb::run(args),
+        Commands::ApexTrace(args) => cmd::apextrace::run(args),
     }
 }

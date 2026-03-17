@@ -12,19 +12,39 @@
 //     raw_lane: raw bytes length = n_raw
 //
 // Prediction:
-// - lanes consume a shared emission cursor from Engine (Ω schedule)
+// - lanes consume a shared emission cursor from Engine (Ω schedule / Ω program)
 // - map pack_byte into lane symbol using BUCKETING (range partition), not modulo
 // - store sparse mismatches as PatchList per lane
 //
-// Container K8L1 stays unchanged:
+// Container K8L1:
 //   magic: 4 bytes "K8L1"
-//   version: u8 (1)
-//   total_len: varint
-//   other_len: varint
-//   max_ticks: varint
-//   recipe_len: varint, recipe bytes
-//   class_patch_len: varint, class_patch_bytes
-//   other_patch_len: varint, other_patch_bytes
+//   version: u8
+//
+//   v1 layout (legacy):
+//     total_len: varint
+//     other_len: varint
+//     max_ticks: varint
+//     recipe_len: varint, recipe bytes
+//     class_patch_len: varint, class_patch_bytes
+//     other_patch_len: varint, other_patch_bytes
+//
+//   v2 layout (adds Ω bytes, backward compatible decode):
+//     total_len: varint
+//     other_len: varint
+//     max_ticks: varint
+//     recipe_len: varint, recipe bytes
+//     omega_len: varint, omega bytes   (OmegaSchedule, fixed-order lanes)
+//     class_patch_len: varint, class_patch_bytes
+//     other_patch_len: varint, other_patch_bytes
+//
+//   v3 layout (Ω program with segments, frustum climb):
+//     total_len: varint
+//     other_len: varint
+//     max_ticks: varint
+//     recipe_len: varint, recipe bytes
+//     omega_len: varint, omega bytes   (OmegaProgram, versioned)
+//     class_patch_len: varint, class_patch_bytes
+//     other_patch_len: varint, other_patch_bytes
 //
 // IMPORTANT: other_patch_bytes is a mux container holding multiple PatchList blobs:
 //   varint n
@@ -33,6 +53,8 @@
 //
 // Public API contract (matches k8dnz-cli expectations):
 //   encode_k8l1(input, recipe_bytes, max_ticks) -> (artifact_bytes, stats)
+//   encode_k8l1_with_omega(input, recipe_bytes, max_ticks, omega) -> (artifact_bytes, stats)
+//   encode_k8l1_with_omega_prog(input, recipe_bytes, max_ticks, omega_prog) -> (artifact_bytes, stats)
 //   decode_k8l1(bytes) -> decoded bytes
 
 use crate::error::{K8Error, Result};
@@ -43,11 +65,320 @@ use crate::symbol::varint;
 use crate::{Engine, Recipe};
 
 pub const MAGIC_K8L1: [u8; 4] = *b"K8L1";
-pub const K8L1_VERSION: u8 = 1;
+pub const K8L1_VERSION_V1: u8 = 1;
+pub const K8L1_VERSION_V2: u8 = 2;
+pub const K8L1_VERSION_V3: u8 = 3;
+
+// Default version we emit going forward (v2 unless segmented Ω requires v3).
+pub const K8L1_VERSION: u8 = K8L1_VERSION_V2;
 
 // -------------------- punctuation alphabet (fixed, corpus-free) --------------------
 
 const PUNCT_ALPH: &[u8] = b".,;:?!'\"()-";
+
+// -------------------- Ω schedule (v2) --------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LaneOmega {
+    pub skip: u64,
+    pub stride: u64,
+}
+
+impl Default for LaneOmega {
+    fn default() -> Self {
+        Self { skip: 0, stride: 1 }
+    }
+}
+
+impl LaneOmega {
+    fn validate(&self) -> Result<()> {
+        if self.stride == 0 {
+            return Err(K8Error::Validation("omega: stride must be >= 1".to_string()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OmegaSchedule {
+    pub class: LaneOmega,
+    pub kind: LaneOmega,
+    pub caseb: LaneOmega,
+    pub letter: LaneOmega,
+    pub digit: LaneOmega,
+    pub punct: LaneOmega,
+    pub raw: LaneOmega,
+}
+
+impl Default for OmegaSchedule {
+    fn default() -> Self {
+        Self {
+            class: LaneOmega::default(),
+            kind: LaneOmega::default(),
+            caseb: LaneOmega::default(),
+            letter: LaneOmega::default(),
+            digit: LaneOmega::default(),
+            punct: LaneOmega::default(),
+            raw: LaneOmega::default(),
+        }
+    }
+}
+
+impl OmegaSchedule {
+    pub fn validate(&self) -> Result<()> {
+        self.class.validate()?;
+        self.kind.validate()?;
+        self.caseb.validate()?;
+        self.letter.validate()?;
+        self.digit.validate()?;
+        self.punct.validate()?;
+        self.raw.validate()?;
+        Ok(())
+    }
+
+    pub fn encode_bytes(&self) -> Vec<u8> {
+        // Fixed order, no magic (length is carried by container).
+        // Order: class, kind, case, letter, digit, punct, raw.
+        let mut out = Vec::new();
+
+        fn put_lane(out: &mut Vec<u8>, o: LaneOmega) {
+            varint::put_u64(o.skip, out);
+            varint::put_u64(o.stride, out);
+        }
+
+        put_lane(&mut out, self.class);
+        put_lane(&mut out, self.kind);
+        put_lane(&mut out, self.caseb);
+        put_lane(&mut out, self.letter);
+        put_lane(&mut out, self.digit);
+        put_lane(&mut out, self.punct);
+        put_lane(&mut out, self.raw);
+
+        out
+    }
+
+    pub fn decode_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let mut i = 0usize;
+
+        fn get_lane(bytes: &[u8], i: &mut usize) -> Result<LaneOmega> {
+            if *i >= bytes.len() {
+                return Ok(LaneOmega::default());
+            }
+            let skip = varint::get_u64(bytes, i)?;
+            if *i >= bytes.len() {
+                return Ok(LaneOmega { skip, stride: 1 });
+            }
+            let stride = varint::get_u64(bytes, i)?;
+            let o = LaneOmega { skip, stride };
+            o.validate()?;
+            Ok(o)
+        }
+
+        let class = get_lane(bytes, &mut i)?;
+        let kind = get_lane(bytes, &mut i)?;
+        let caseb = get_lane(bytes, &mut i)?;
+        let letter = get_lane(bytes, &mut i)?;
+        let digit = get_lane(bytes, &mut i)?;
+        let punct = get_lane(bytes, &mut i)?;
+        let raw = get_lane(bytes, &mut i)?;
+
+        Ok(Self {
+            class,
+            kind,
+            caseb,
+            letter,
+            digit,
+            punct,
+            raw,
+        })
+    }
+}
+
+// -------------------- Ω program (v3) --------------------
+// This is the frustum-climb variant: each lane can have N segments (MVP: N=1 or 2).
+// Segment selection is deterministic based on the lane index i:
+//   seg = floor(i * nseg / lane_len)
+// Semantics:
+// - When entering a segment, burn `skip` once.
+// - Then for each symbol: take 1 emission, burn (stride-1).
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneOmegaProg {
+    pub segs: Vec<LaneOmega>, // length >= 1
+}
+
+impl Default for LaneOmegaProg {
+    fn default() -> Self {
+        Self {
+            segs: vec![LaneOmega::default()],
+        }
+    }
+}
+
+impl LaneOmegaProg {
+    pub fn validate(&self) -> Result<()> {
+        if self.segs.is_empty() {
+            return Err(K8Error::Validation("omega_prog: segs must be non-empty".to_string()));
+        }
+        for s in &self.segs {
+            s.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn is_singleton_defaultish(&self) -> bool {
+        self.segs.len() == 1
+    }
+
+    pub fn singleton(o: LaneOmega) -> Self {
+        Self { segs: vec![o] }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OmegaProgram {
+    pub class: LaneOmegaProg,
+    pub kind: LaneOmegaProg,
+    pub caseb: LaneOmegaProg,
+    pub letter: LaneOmegaProg,
+    pub digit: LaneOmegaProg,
+    pub punct: LaneOmegaProg,
+    pub raw: LaneOmegaProg,
+}
+
+impl Default for OmegaProgram {
+    fn default() -> Self {
+        Self {
+            class: LaneOmegaProg::default(),
+            kind: LaneOmegaProg::default(),
+            caseb: LaneOmegaProg::default(),
+            letter: LaneOmegaProg::default(),
+            digit: LaneOmegaProg::default(),
+            punct: LaneOmegaProg::default(),
+            raw: LaneOmegaProg::default(),
+        }
+    }
+}
+
+impl OmegaProgram {
+    pub fn validate(&self) -> Result<()> {
+        self.class.validate()?;
+        self.kind.validate()?;
+        self.caseb.validate()?;
+        self.letter.validate()?;
+        self.digit.validate()?;
+        self.punct.validate()?;
+        self.raw.validate()?;
+        Ok(())
+    }
+
+    pub fn all_singleton(&self) -> bool {
+        self.class.is_singleton_defaultish()
+            && self.kind.is_singleton_defaultish()
+            && self.caseb.is_singleton_defaultish()
+            && self.letter.is_singleton_defaultish()
+            && self.digit.is_singleton_defaultish()
+            && self.punct.is_singleton_defaultish()
+            && self.raw.is_singleton_defaultish()
+    }
+
+    pub fn to_schedule_if_singleton(&self) -> Option<OmegaSchedule> {
+        if !self.all_singleton() {
+            return None;
+        }
+        Some(OmegaSchedule {
+            class: self.class.segs[0],
+            kind: self.kind.segs[0],
+            caseb: self.caseb.segs[0],
+            letter: self.letter.segs[0],
+            digit: self.digit.segs[0],
+            punct: self.punct.segs[0],
+            raw: self.raw.segs[0],
+        })
+    }
+
+    // v3 omega bytes: versioned
+    // format:
+    //   varint omega_ver (=2)
+    //   for each lane in fixed order: varint nseg, then nseg*(skip,stride)
+    pub fn encode_bytes_v3(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        varint::put_u64(2, &mut out);
+
+        fn put_lane(out: &mut Vec<u8>, lp: &LaneOmegaProg) {
+            varint::put_u64(lp.segs.len() as u64, out);
+            for &seg in &lp.segs {
+                varint::put_u64(seg.skip, out);
+                varint::put_u64(seg.stride, out);
+            }
+        }
+
+        put_lane(&mut out, &self.class);
+        put_lane(&mut out, &self.kind);
+        put_lane(&mut out, &self.caseb);
+        put_lane(&mut out, &self.letter);
+        put_lane(&mut out, &self.digit);
+        put_lane(&mut out, &self.punct);
+        put_lane(&mut out, &self.raw);
+
+        out
+    }
+
+    pub fn decode_bytes_v3(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() {
+            return Ok(Self::default());
+        }
+        let mut i = 0usize;
+        let ver = varint::get_u64(bytes, &mut i)?;
+        if ver != 2 {
+            return Err(K8Error::Validation(format!("omega_prog: bad ver {ver}")));
+        }
+
+        fn get_lane(bytes: &[u8], i: &mut usize) -> Result<LaneOmegaProg> {
+            let nseg = varint::get_u64(bytes, i)? as usize;
+            if nseg == 0 {
+                return Err(K8Error::Validation("omega_prog: nseg=0".to_string()));
+            }
+            let mut segs = Vec::with_capacity(nseg);
+            for _ in 0..nseg {
+                let skip = varint::get_u64(bytes, i)?;
+                let stride = varint::get_u64(bytes, i)?;
+                let o = LaneOmega { skip, stride };
+                o.validate()?;
+                segs.push(o);
+            }
+            Ok(LaneOmegaProg { segs })
+        }
+
+        let class = get_lane(bytes, &mut i)?;
+        let kind = get_lane(bytes, &mut i)?;
+        let caseb = get_lane(bytes, &mut i)?;
+        let letter = get_lane(bytes, &mut i)?;
+        let digit = get_lane(bytes, &mut i)?;
+        let punct = get_lane(bytes, &mut i)?;
+        let raw = get_lane(bytes, &mut i)?;
+
+        if i != bytes.len() {
+            return Err(K8Error::Validation("omega_prog: trailing bytes".to_string()));
+        }
+
+        let prog = Self {
+            class,
+            kind,
+            caseb,
+            letter,
+            digit,
+            punct,
+            raw,
+        };
+        prog.validate()?;
+        Ok(prog)
+    }
+}
 
 // -------------------- helpers --------------------
 
@@ -229,7 +560,6 @@ fn mux_other_patches(
     raw: &[u8],
 ) -> Vec<u8> {
     // Always emit all 6 in fixed order (simple + deterministic).
-    // CLI ignores unknown ids; missing ids are treated as empty patchlists there.
     let mut out = Vec::new();
     varint::put_u64(6, &mut out);
 
@@ -275,9 +605,7 @@ fn demux_other_patches(bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u
             PATCH_DIGIT => digit = chunk,
             PATCH_PUNCT => punct = chunk,
             PATCH_RAW => raw = chunk,
-            _ => {
-                // ignore unknown ids for forward compatibility
-            }
+            _ => {}
         }
     }
 
@@ -290,23 +618,81 @@ fn demux_other_patches(bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u
 
 // -------------------- predictor stream (Engine emissions) --------------------
 
-// Ω / emission schedule fix:
-//
-// We do NOT reinitialize Engine per lane.
-// Lanes consume a shared emission cursor in deterministic order:
-// class → kind → case → letter → digit → punct → raw.
-fn gen_pred_stream(eng: &mut Engine, symbols: u64, max_ticks: u64) -> Result<Vec<u8>> {
-    let toks = eng.run_emissions(symbols, max_ticks);
-    if toks.len() != symbols as usize {
+fn burn_emissions(eng: &mut Engine, k: u64, max_ticks: u64) -> Result<()> {
+    if k == 0 {
+        return Ok(());
+    }
+    let toks = eng.run_emissions(k, max_ticks);
+    if toks.len() != k as usize {
         return Err(K8Error::Validation(format!(
-            "engine: insufficient emissions (need {symbols}, got {}) within max_ticks={max_ticks}",
+            "engine: insufficient emissions (need {k}, got {}) within max_ticks={max_ticks}",
             toks.len()
         )));
     }
+    Ok(())
+}
+
+fn gen_pred_stream_with_omega(eng: &mut Engine, symbols: u64, max_ticks: u64, omega: LaneOmega) -> Result<Vec<u8>> {
+    omega.validate()?;
+
+    burn_emissions(eng, omega.skip, max_ticks)?;
+
     let mut out = Vec::with_capacity(symbols as usize);
-    for t in toks {
-        out.push(t.pack_byte());
+    for ix in 0..symbols {
+        let toks = eng.run_emissions(1, max_ticks);
+        if toks.len() != 1 {
+            return Err(K8Error::Validation(format!(
+                "engine: insufficient emissions (need 1, got {}) within max_ticks={max_ticks}",
+                toks.len()
+            )));
+        }
+        out.push(toks[0].pack_byte());
+
+        if ix + 1 != symbols && omega.stride > 1 {
+            burn_emissions(eng, omega.stride - 1, max_ticks)?;
+        }
     }
+
+    Ok(out)
+}
+
+fn gen_pred_stream_with_prog(eng: &mut Engine, symbols: u64, max_ticks: u64, prog: &LaneOmegaProg) -> Result<Vec<u8>> {
+    prog.validate()?;
+
+    if symbols == 0 {
+        return Ok(Vec::new());
+    }
+
+    let nseg = prog.segs.len() as u64;
+    let mut cur_seg: Option<u64> = None;
+
+    let mut out = Vec::with_capacity(symbols as usize);
+
+    for ix in 0..symbols {
+        let seg = if nseg == 1 { 0 } else { (ix * nseg) / symbols };
+
+        if cur_seg != Some(seg) {
+            cur_seg = Some(seg);
+            let o = prog.segs[seg as usize];
+            burn_emissions(eng, o.skip, max_ticks)?;
+        }
+
+        let o = prog.segs[seg as usize];
+
+        let toks = eng.run_emissions(1, max_ticks);
+        if toks.len() != 1 {
+            return Err(K8Error::Validation(format!(
+                "engine: insufficient emissions (need 1, got {}) within max_ticks={max_ticks}",
+                toks.len()
+            )));
+        }
+        out.push(toks[0].pack_byte());
+
+        if ix + 1 != symbols && o.stride > 1 {
+            burn_emissions(eng, o.stride - 1, max_ticks)?;
+        }
+    }
+
     Ok(out)
 }
 
@@ -314,10 +700,12 @@ fn gen_pred_stream(eng: &mut Engine, symbols: u64, max_ticks: u64) -> Result<Vec
 
 #[derive(Clone, Debug)]
 struct K8L1Artifact {
+    ver: u8,
     total_len: usize,
     other_len: usize,
     max_ticks: u64,
     recipe_bytes: Vec<u8>,
+    omega_bytes: Vec<u8>, // v2/v3 only; empty means default Ω
     class_patch_bytes: Vec<u8>,
     other_patch_bytes: Vec<u8>,
 }
@@ -326,7 +714,7 @@ impl K8L1Artifact {
     fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&MAGIC_K8L1);
-        out.push(K8L1_VERSION);
+        out.push(self.ver);
 
         varint::put_u64(self.total_len as u64, &mut out);
         varint::put_u64(self.other_len as u64, &mut out);
@@ -334,6 +722,11 @@ impl K8L1Artifact {
 
         varint::put_u64(self.recipe_bytes.len() as u64, &mut out);
         out.extend_from_slice(&self.recipe_bytes);
+
+        if self.ver == K8L1_VERSION_V2 || self.ver == K8L1_VERSION_V3 {
+            varint::put_u64(self.omega_bytes.len() as u64, &mut out);
+            out.extend_from_slice(&self.omega_bytes);
+        }
 
         varint::put_u64(self.class_patch_bytes.len() as u64, &mut out);
         out.extend_from_slice(&self.class_patch_bytes);
@@ -352,9 +745,6 @@ impl K8L1Artifact {
             return Err(K8Error::Validation("K8L1 bad magic".to_string()));
         }
         let ver = bytes[4];
-        if ver != K8L1_VERSION {
-            return Err(K8Error::Validation(format!("K8L1 bad version {ver}")));
-        }
 
         let mut i = 5usize;
 
@@ -369,16 +759,30 @@ impl K8L1Artifact {
         let recipe_bytes = bytes[i..i + rlen].to_vec();
         i += rlen;
 
+        let omega_bytes = if ver == K8L1_VERSION_V2 || ver == K8L1_VERSION_V3 {
+            let olen = varint::get_u64(bytes, &mut i)? as usize;
+            if bytes.len() < i + olen {
+                return Err(K8Error::Validation("K8L1 omega OOB".to_string()));
+            }
+            let ob = bytes[i..i + olen].to_vec();
+            i += olen;
+            ob
+        } else if ver == K8L1_VERSION_V1 {
+            Vec::new()
+        } else {
+            return Err(K8Error::Validation(format!("K8L1 bad version {ver}")));
+        };
+
         let clen = varint::get_u64(bytes, &mut i)? as usize;
         if bytes.len() < i + clen {
-            return Err(K8Error::Validation("K8L1 class patch OOB".to_string()));
+            return Err(K8Error::Validation("K8L1 class_patch OOB".to_string()));
         }
         let class_patch_bytes = bytes[i..i + clen].to_vec();
         i += clen;
 
         let olen = varint::get_u64(bytes, &mut i)? as usize;
         if bytes.len() < i + olen {
-            return Err(K8Error::Validation("K8L1 other patch OOB".to_string()));
+            return Err(K8Error::Validation("K8L1 other_patch OOB".to_string()));
         }
         let other_patch_bytes = bytes[i..i + olen].to_vec();
         i += olen;
@@ -388,17 +792,19 @@ impl K8L1Artifact {
         }
 
         Ok(Self {
+            ver,
             total_len,
             other_len,
             max_ticks,
             recipe_bytes,
+            omega_bytes,
             class_patch_bytes,
             other_patch_bytes,
         })
     }
 }
 
-// -------------------- encode / decode (public API) --------------------
+// -------------------- public encode/decode --------------------
 
 #[derive(Clone, Debug, Default)]
 pub struct LaneEncodeStats {
@@ -421,6 +827,35 @@ pub struct LaneEncodeStats {
 }
 
 pub fn encode_k8l1(input: &[u8], recipe_bytes: &[u8], max_ticks: u64) -> Result<(Vec<u8>, LaneEncodeStats)> {
+    encode_k8l1_with_omega(input, recipe_bytes, max_ticks, OmegaSchedule::default())
+}
+
+pub fn encode_k8l1_with_omega(
+    input: &[u8],
+    recipe_bytes: &[u8],
+    max_ticks: u64,
+    omega: OmegaSchedule,
+) -> Result<(Vec<u8>, LaneEncodeStats)> {
+    let prog = OmegaProgram {
+        class: LaneOmegaProg::singleton(omega.class),
+        kind: LaneOmegaProg::singleton(omega.kind),
+        caseb: LaneOmegaProg::singleton(omega.caseb),
+        letter: LaneOmegaProg::singleton(omega.letter),
+        digit: LaneOmegaProg::singleton(omega.digit),
+        punct: LaneOmegaProg::singleton(omega.punct),
+        raw: LaneOmegaProg::singleton(omega.raw),
+    };
+    encode_k8l1_with_omega_prog(input, recipe_bytes, max_ticks, prog)
+}
+
+pub fn encode_k8l1_with_omega_prog(
+    input: &[u8],
+    recipe_bytes: &[u8],
+    max_ticks: u64,
+    omega: OmegaProgram,
+) -> Result<(Vec<u8>, LaneEncodeStats)> {
+    omega.validate()?;
+
     let norm = text_norm::normalize_newlines(input);
     let lanes = TextLanesV2::split(&norm)?;
 
@@ -435,37 +870,37 @@ pub fn encode_k8l1(input: &[u8], recipe_bytes: &[u8], max_ticks: u64) -> Result<
     let mut eng = Engine::new(recipe.clone())?;
 
     // class
-    let pred_class_raw = gen_pred_stream(&mut eng, total_len_u, max_ticks)?;
+    let pred_class_raw = gen_pred_stream_with_prog(&mut eng, total_len_u, max_ticks, &omega.class)?;
     let pred_class: Vec<u8> = pred_class_raw.iter().map(|&b| bucket_u8(b, 3)).collect();
     let class_patch = PatchList::from_pred_actual(&pred_class, &lanes.class_lane)?;
     let class_patch_bytes = class_patch.encode();
 
     // kind
-    let pred_kind_raw = gen_pred_stream(&mut eng, other_len_u, max_ticks)?;
+    let pred_kind_raw = gen_pred_stream_with_prog(&mut eng, other_len_u, max_ticks, &omega.kind)?;
     let pred_kind: Vec<u8> = pred_kind_raw.iter().map(|&b| bucket_u8(b, 4)).collect();
     let kind_patch = PatchList::from_pred_actual(&pred_kind, &lanes.kind_lane)?;
     let kind_bytes = kind_patch.encode();
 
     // case
-    let pred_case_raw = gen_pred_stream(&mut eng, n_letters_u, max_ticks)?;
+    let pred_case_raw = gen_pred_stream_with_prog(&mut eng, n_letters_u, max_ticks, &omega.caseb)?;
     let pred_case: Vec<u8> = pred_case_raw.iter().map(|&b| bucket_u8(b, 2)).collect();
     let case_patch = PatchList::from_pred_actual(&pred_case, &lanes.case_lane)?;
     let case_bytes = case_patch.encode();
 
     // letter
-    let pred_letter_raw = gen_pred_stream(&mut eng, n_letters_u, max_ticks)?;
+    let pred_letter_raw = gen_pred_stream_with_prog(&mut eng, n_letters_u, max_ticks, &omega.letter)?;
     let pred_letter: Vec<u8> = pred_letter_raw.iter().map(|&b| bucket_u8(b, 26)).collect();
     let letter_patch = PatchList::from_pred_actual(&pred_letter, &lanes.letter_lane)?;
     let letter_bytes = letter_patch.encode();
 
     // digit
-    let pred_digit_raw = gen_pred_stream(&mut eng, n_digits_u, max_ticks)?;
+    let pred_digit_raw = gen_pred_stream_with_prog(&mut eng, n_digits_u, max_ticks, &omega.digit)?;
     let pred_digit: Vec<u8> = pred_digit_raw.iter().map(|&b| bucket_u8(b, 10)).collect();
     let digit_patch = PatchList::from_pred_actual(&pred_digit, &lanes.digit_lane)?;
     let digit_bytes = digit_patch.encode();
 
     // punct
-    let pred_punct_raw = gen_pred_stream(&mut eng, n_punct_u, max_ticks)?;
+    let pred_punct_raw = gen_pred_stream_with_prog(&mut eng, n_punct_u, max_ticks, &omega.punct)?;
     let pred_punct: Vec<u8> = pred_punct_raw
         .iter()
         .map(|&b| bucket_u8(b, PUNCT_ALPH.len() as u8))
@@ -474,20 +909,28 @@ pub fn encode_k8l1(input: &[u8], recipe_bytes: &[u8], max_ticks: u64) -> Result<
     let punct_bytes = punct_patch.encode();
 
     // raw
-    let pred_raw = gen_pred_stream(&mut eng, n_raw_u, max_ticks)?;
+    let pred_raw = gen_pred_stream_with_prog(&mut eng, n_raw_u, max_ticks, &omega.raw)?;
     let raw_patch = PatchList::from_pred_actual(&pred_raw, &lanes.raw_lane)?;
     let raw_bytes = raw_patch.encode();
 
-    // MUST be mux format (matches CLI demux_other_patches)
-    let other_patch_bytes = mux_other_patches(&kind_bytes, &case_bytes, &letter_bytes, &digit_bytes, &punct_bytes, &raw_bytes);
+    let other_patch_bytes =
+        mux_other_patches(&kind_bytes, &case_bytes, &letter_bytes, &digit_bytes, &punct_bytes, &raw_bytes);
 
     let recipe_bytes_owned = recipe_to_bytes(&recipe)?;
 
+    let (ver, omega_bytes_owned) = if let Some(sched) = omega.to_schedule_if_singleton() {
+        (K8L1_VERSION_V2, sched.encode_bytes())
+    } else {
+        (K8L1_VERSION_V3, omega.encode_bytes_v3())
+    };
+
     let art = K8L1Artifact {
+        ver,
         total_len: lanes.total_len,
         other_len: lanes.kind_lane.len(),
         max_ticks,
         recipe_bytes: recipe_bytes_owned,
+        omega_bytes: omega_bytes_owned,
         class_patch_bytes,
         other_patch_bytes,
     };
@@ -503,12 +946,8 @@ pub fn encode_k8l1(input: &[u8], recipe_bytes: &[u8], max_ticks: u64) -> Result<
     let punct_mismatches = punct_patch.entries.len();
     let raw_mismatches = raw_patch.entries.len();
 
-    let other_mismatches = kind_mismatches
-        + case_mismatches
-        + letter_mismatches
-        + digit_mismatches
-        + punct_mismatches
-        + raw_mismatches;
+    let other_mismatches =
+        kind_mismatches + case_mismatches + letter_mismatches + digit_mismatches + punct_mismatches + raw_mismatches;
 
     let emissions_needed =
         (total_len_u + other_len_u + n_letters_u + n_letters_u + n_digits_u + n_punct_u + n_raw_u) as usize;
@@ -540,11 +979,26 @@ pub fn decode_k8l1(bytes: &[u8]) -> Result<Vec<u8>> {
     let recipe = recipe_from_bytes(&art.recipe_bytes)?;
     let mut eng = Engine::new(recipe.clone())?;
 
+    let omega_prog = if art.ver == K8L1_VERSION_V3 {
+        OmegaProgram::decode_bytes_v3(&art.omega_bytes)?
+    } else {
+        let sched = OmegaSchedule::decode_bytes(&art.omega_bytes)?;
+        OmegaProgram {
+            class: LaneOmegaProg::singleton(sched.class),
+            kind: LaneOmegaProg::singleton(sched.kind),
+            caseb: LaneOmegaProg::singleton(sched.caseb),
+            letter: LaneOmegaProg::singleton(sched.letter),
+            digit: LaneOmegaProg::singleton(sched.digit),
+            punct: LaneOmegaProg::singleton(sched.punct),
+            raw: LaneOmegaProg::singleton(sched.raw),
+        }
+    };
+
     let total_len_u = art.total_len as u64;
     let other_len_u = art.other_len as u64;
 
     // class
-    let pred_class_raw = gen_pred_stream(&mut eng, total_len_u, art.max_ticks)?;
+    let pred_class_raw = gen_pred_stream_with_prog(&mut eng, total_len_u, art.max_ticks, &omega_prog.class)?;
     let mut pred_class: Vec<u8> = pred_class_raw.iter().map(|&b| bucket_u8(b, 3)).collect();
     let class_patch = PatchList::decode(&art.class_patch_bytes)?;
     class_patch.apply_to_pred(&mut pred_class)?;
@@ -553,7 +1007,7 @@ pub fn decode_k8l1(bytes: &[u8]) -> Result<Vec<u8>> {
     let (kind_b, case_b, letter_b, digit_b, punct_b, raw_b) = demux_other_patches(&art.other_patch_bytes)?;
 
     // kind (needed to derive downstream lane lengths)
-    let pred_kind_raw = gen_pred_stream(&mut eng, other_len_u, art.max_ticks)?;
+    let pred_kind_raw = gen_pred_stream_with_prog(&mut eng, other_len_u, art.max_ticks, &omega_prog.kind)?;
     let mut pred_kind: Vec<u8> = pred_kind_raw.iter().map(|&b| bucket_u8(b, 4)).collect();
     let kind_patch = if kind_b.is_empty() { PatchList::new() } else { PatchList::decode(&kind_b)? };
     kind_patch.apply_to_pred(&mut pred_kind)?;
@@ -575,25 +1029,25 @@ pub fn decode_k8l1(bytes: &[u8]) -> Result<Vec<u8>> {
     }
 
     // case
-    let pred_case_raw = gen_pred_stream(&mut eng, n_letters as u64, art.max_ticks)?;
+    let pred_case_raw = gen_pred_stream_with_prog(&mut eng, n_letters as u64, art.max_ticks, &omega_prog.caseb)?;
     let mut pred_case: Vec<u8> = pred_case_raw.iter().map(|&b| bucket_u8(b, 2)).collect();
     let case_patch = if case_b.is_empty() { PatchList::new() } else { PatchList::decode(&case_b)? };
     case_patch.apply_to_pred(&mut pred_case)?;
 
     // letter
-    let pred_letter_raw = gen_pred_stream(&mut eng, n_letters as u64, art.max_ticks)?;
+    let pred_letter_raw = gen_pred_stream_with_prog(&mut eng, n_letters as u64, art.max_ticks, &omega_prog.letter)?;
     let mut pred_letter: Vec<u8> = pred_letter_raw.iter().map(|&b| bucket_u8(b, 26)).collect();
     let letter_patch = if letter_b.is_empty() { PatchList::new() } else { PatchList::decode(&letter_b)? };
     letter_patch.apply_to_pred(&mut pred_letter)?;
 
     // digit
-    let pred_digit_raw = gen_pred_stream(&mut eng, n_digits as u64, art.max_ticks)?;
+    let pred_digit_raw = gen_pred_stream_with_prog(&mut eng, n_digits as u64, art.max_ticks, &omega_prog.digit)?;
     let mut pred_digit: Vec<u8> = pred_digit_raw.iter().map(|&b| bucket_u8(b, 10)).collect();
     let digit_patch = if digit_b.is_empty() { PatchList::new() } else { PatchList::decode(&digit_b)? };
     digit_patch.apply_to_pred(&mut pred_digit)?;
 
     // punct
-    let pred_punct_raw = gen_pred_stream(&mut eng, n_punct as u64, art.max_ticks)?;
+    let pred_punct_raw = gen_pred_stream_with_prog(&mut eng, n_punct as u64, art.max_ticks, &omega_prog.punct)?;
     let mut pred_punct: Vec<u8> = pred_punct_raw
         .iter()
         .map(|&b| bucket_u8(b, PUNCT_ALPH.len() as u8))
@@ -602,7 +1056,7 @@ pub fn decode_k8l1(bytes: &[u8]) -> Result<Vec<u8>> {
     punct_patch.apply_to_pred(&mut pred_punct)?;
 
     // raw
-    let mut pred_raw = gen_pred_stream(&mut eng, n_raw as u64, art.max_ticks)?;
+    let mut pred_raw = gen_pred_stream_with_prog(&mut eng, n_raw as u64, art.max_ticks, &omega_prog.raw)?;
     let raw_patch = if raw_b.is_empty() { PatchList::new() } else { PatchList::decode(&raw_b)? };
     raw_patch.apply_to_pred(&mut pred_raw)?;
 

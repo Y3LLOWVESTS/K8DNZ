@@ -18350,3 +18350,2085 @@ When you start the next instance, paste:
 
 
 ### END NOTE - FEBRUARY 17 2026 - 12:59 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 13:45 CST
+
+### CARRY-OVER NOTES — K8DNZ / The Cadence Project
+
+**Date:** Feb 17, 2026 (end of session)
+**Timezone:** America/New_York (for future reference)
+
+---
+
+## 0) What we’re doing (current mission)
+
+We’re continuing the **K8L1 v2 lane-based 2KB artifact** pipeline (encode/decode/verify + lane-sweep measurements) as the “user-friendly” front door for demonstrating the Cadence codec.
+
+**Immediate goal:** get `encode2kb` running end-to-end again so we can collect stable mismatch / patchlist breakdowns and then move to the **Ω (omega) phase schedule** experiments.
+
+---
+
+## 1) What we accomplished in this instance
+
+### 1.1 Build issues fixed (CLI side)
+
+We fixed multiple compilation blockers in `k8dnz-cli`:
+
+* `recipe_file::read` didn’t exist → the code now uses `recipe_file::load_k8r_bytes(...)`.
+* `PatchList` does **not** have `items`; it has **`entries`** → fixed `p.items.len()` → `p.entries.len()` in both:
+
+  * `crates/k8dnz-cli/src/cmd/encode2kb.rs`
+  * `crates/k8dnz-cli/src/cmd/lane_sweep.rs`
+
+### 1.2 Cargo run usage clarified
+
+Because the crate exposes multiple binaries (`arkc`, `arku`, `k8dnz-cli`), you must run:
+
+* `cargo run -p k8dnz-cli --bin k8dnz-cli -- ...`
+
+### 1.3 We discovered the container formats have evolved (major)
+
+During runtime, we hit a sequence of format-mismatch errors that reveal the artifact wire format is **not what our CLI inspector assumes**:
+
+* First: `Error: k8l1: unsupported version 2`
+  → K8L1 artifacts being produced are **version 2**, not version 1.
+
+* Next: `Error: k8l1: trailing bytes 1690`
+  → K8L1 v2 contains an **extension tail** after the fields we assumed were “end-of-file” (or the field layout is different).
+
+* After loosening the “must consume all bytes” requirement, we now hit:
+  **`Error: k8p2: bad magic`**
+  → the `other_patch` payload we are trying to parse as `K8P2` **is not actually `K8P2`** (or we are slicing it wrong due to v2 layout differences).
+
+This is a **real, concrete blocker**: our CLI-side breakdown/inspection logic is out of sync with the core’s current container encoding.
+
+---
+
+## 2) Current hard blocker (what is failing right now)
+
+### Repro terminal output (latest)
+
+Commands:
+
+```
+cargo build
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --out /tmp/g1_512.k8l1 --budget-bytes 10000 --verify
+```
+
+Result:
+
+```
+Running `target/debug/k8dnz-cli encode2kb ...`
+Error: k8p2: bad magic
+```
+
+### What this means
+
+`encode2kb` calls a CLI “inspector” that tries to parse the produced artifact:
+
+* Parse K8L1 header → pull out `other_patch` bytes
+* Parse `other_patch` as `K8P2` mux container
+* Demux kind/case/letter/digit/punct/raw patchlists
+* Count patch mismatches to print breakdown
+
+But now:
+
+* K8L1 is v2 and/or has extra fields
+* The slice we call `other_patch` is not actually `K8P2` (or is not aligned)
+* So `K8P2` magic check fails
+
+**Important gotcha:** since the inspector runs *before writing*, `encode2kb` can fail and never write `/tmp/g1_512.k8l1`—so we can’t hexdump the file unless we force writing.
+
+---
+
+## 3) What is actually “the missing piece” still (project-level)
+
+At the algorithm level, the big remaining lever is still:
+
+### Ω = per-lane phase / emission offset schedule
+
+We believe patchlist size is dominated by “predictor stream out of phase with lane structure,” so Ω should be made first-class:
+
+* per-lane skip (burn N emissions)
+* stride / interleaving schedules
+* lane-specific phase offsets
+
+But we **cannot** start Ω sweeps cleanly until the current artifact parsing and debugging pipeline is stable again.
+
+Right now we’re blocked at *format / introspection mismatch*, not at Ω itself.
+
+---
+
+## 4) Diagnosis of the `K8P2 bad magic` failure (most likely causes)
+
+One of these is true:
+
+### Hypothesis A — K8L1 v2 field layout changed
+
+Our CLI assumes v1-like layout:
+
+```
+"K8L1" + ver
+total_len varint
+other_len varint
+max_ticks varint
+recipe_len + recipe
+class_patch_len + class_patch
+other_patch_len + other_patch
+[EOF]
+```
+
+But v2 might be:
+
+* additional header fields inserted before patch lengths
+* different order of patch sections
+* multiple “frames” with ids (like a TLV)
+* checksums or indexes inserted between sections
+* compression wrapper applied to `other_patch`
+
+So we may be reading the wrong varint as `other_patch_len`, producing a slice that does **not** start with `K8P2`.
+
+### Hypothesis B — `other_patch` is no longer K8P2
+
+Even if K8L1 parsing is correct, v2 might have replaced `K8P2` with:
+
+* `K8P3` or another magic
+* raw patchlists without mux
+* mux that uses frame ids but no magic
+* zstd-wrapped mux
+* “packed” mux format
+
+So our demux logic is simply outdated.
+
+### Hypothesis C — The CLI inspector should not parse at all
+
+We might be trying to duplicate parsing logic in CLI when the correct approach is:
+
+* expose a **core** helper that returns the patch bytes / mismatch counts
+* or add a “debug decode” API in core to inspect patchlists safely
+
+This would prevent format drift from constantly breaking CLI.
+
+---
+
+## 5) Next instance plan (do this in order, no detours)
+
+### Step 1 — Ensure artifact gets written even if inspector fails
+
+Right now encode2kb fails before writing, so we can’t inspect the produced bytes.
+
+**Make encode2kb write the artifact first**, then do breakdown optionally.
+
+Two options:
+
+1. **Quick hack:** move `std::fs::write(&args.out, &artifact)?;` *above* `inspect_breakdown`.
+2. Add a flag like `--force-write` so output is always written even on breakdown error.
+
+This is essential for debugging.
+
+### Step 2 — Hexdump the produced artifact and locate the real other_patch section
+
+Once `/tmp/g1_512.k8l1` actually exists, run:
+
+```
+ls -l /tmp/g1_512.k8l1
+xxd -l 256 /tmp/g1_512.k8l1
+xxd -s -256 /tmp/g1_512.k8l1
+```
+
+We are looking for:
+
+* `K8L1` header
+* any embedded magic sequences (`K8P2`, `K8P3`, etc.)
+* whether `K8P2` appears anywhere at all
+
+### Step 3 — Align CLI parser with the **real** core format
+
+Do not guess. The correct source of truth is in **k8dnz-core**.
+
+In next instance, open the core encoder/decoder for K8L1 v2 and copy the exact spec:
+
+* Find where `MAGIC_K8L1` and `VERSION` are defined in core
+* Find how the sections are written (order, lengths, frames)
+* Find what `other_patch` really contains (magic? frame ids? compression?)
+
+Then update CLI inspector accordingly.
+
+### Step 4 — Make inspector resilient to version drift
+
+Once we match v2, harden it:
+
+* parse by **frames** / ids instead of relying on positional order
+* accept extension tails
+* accept unknown future frames by skipping them safely
+
+This prevents future “format bump → CLI breaks”.
+
+### Step 5 — Restore measurements + begin Ω experiments
+
+Once encode2kb prints breakdown again:
+
+* rerun 512 baseline with `--budget-bytes 10000 --verify`
+* rerun lane-sweep CSV
+
+Then implement Ω knobs:
+
+* `--omega-skip-class N`
+* `--omega-skip-kind N`
+* `--omega-skip-letter N`
+* etc.
+
+and add an `omega-sweep` mode similar to lane-sweep.
+
+---
+
+## 6) Concrete commands to run first next instance
+
+### A) Build + reproduce
+
+```
+cargo build
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --out /tmp/g1_512.k8l1 --budget-bytes 10000 --verify
+```
+
+### B) After force-write fix, inspect bytes
+
+```
+ls -l /tmp/g1_512.k8l1
+xxd -l 256 /tmp/g1_512.k8l1
+xxd -s -256 /tmp/g1_512.k8l1
+```
+
+### C) Search for mux magic inside artifact
+
+(If `rg` isn’t installed, skip.)
+
+```
+strings /tmp/g1_512.k8l1 | head
+```
+
+---
+
+## 7) What to paste into the next instance immediately
+
+To fix this fast, next instance should include:
+
+1. The core K8L1 writer/reader source file(s) that define v2 layout (from `k8dnz-core`)
+2. The latest versions of:
+
+   * `crates/k8dnz-cli/src/cmd/encode2kb.rs`
+   * `crates/k8dnz-cli/src/cmd/lane_sweep.rs`
+3. The hexdump output of `/tmp/g1_512.k8l1` once we force-write it
+
+---
+
+## 8) Bottom line status
+
+* The project is now large (~12k LOC) and maturing.
+* We are **not blocked on the cadence engine** right now.
+* We are blocked because **CLI introspection logic is out of sync with core’s v2 container format**.
+* Fixing this is high leverage: once `encode2kb` can decode/inspect reliably, we can resume the real work: **Ω schedules to reduce patchlists under 2KB**.
+
+---
+
+
+### END NOTE - FEBRUARY 17 2026 - 13:45 CST
+
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 14:00 CST
+
+
+**Project:** K8DNZ / The Cadence Project
+**Focus:** K8L1 v2 “lane-based 2KB artifact” pipeline + Ω (omega) per-lane phase scheduling
+**Timezone:** America/New_York (keep consistent for future logs)
+
+---
+
+## 0) Mission recap (what we are doing right now)
+
+We are building a **deterministic, user-friendly “front door” demo** for the Cadence codec:
+
+* `encode2kb`: takes an input sample (starting with Genesis1 excerpts), a tuned recipe, and emits a **K8L1 artifact** that can be decoded/verified.
+* `lane-sweep`: generates stable telemetry across input sizes (256, 512, etc.) so we can see which “lanes” are failing and why.
+* Next: make Ω (omega) a **first-class lever** to reduce patchlist sizes and drive the artifact toward **≤ 2048 bytes** (2KB goal), starting with **512-byte targets** and scaling.
+
+**Immediate objective:** Cut the 512B artifact from **2594 → ≤ 2048** by reducing patch mismatches (especially letter/kind/class) via Ω per-lane phase offsets (skip/burn, stride).
+
+---
+
+## 1) What we accomplished (this session, concrete wins)
+
+### 1.1 We fixed the K8L1 v2 container introspection drift (major unblock)
+
+Previously, CLI inspection failed (`k8p2: bad magic`, `varint: eof`) because:
+
+* K8L1 is **v2**, with an **omega frame** inserted after recipe bytes.
+* `other_patch` is not `K8P2`; core uses a **simple mux stream**.
+* Our first demux attempt incorrectly treated the mux as “frames until EOF” and forgot the mux’s leading count field.
+
+We fixed the pipeline by aligning CLI parsing to the real core format:
+
+* **K8L1 v2 view parser** now correctly skips `omega_len + omega_bytes` before reading patches.
+* **other_patch demux** now correctly reads:
+
+  * `varint n` (frame count)
+  * then repeats `n` times: `varint id`, `varint len`, `payload[len]`
+
+Also: we changed behavior so **encode2kb writes the artifact before doing inspection**, ensuring artifacts exist for hexdump/debug even if breakdown fails later.
+
+Result: **encode2kb and lane-sweep are operational again** and produce reliable mismatch telemetry.
+
+---
+
+## 2) Proof that the plumbing is now correct: clean telemetry
+
+We ran:
+
+```
+cargo build
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --out /tmp/g1_512.k8l1 --budget-bytes 10000 --verify
+cargo run -p k8dnz-cli --bin k8dnz-cli -- lane-sweep --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --sizes 256,512
+```
+
+### 2.1 encode2kb output (512B sample)
+
+* `note: K8L1 v2 omega bytes=14`
+* `ok encode2kb: ... artifact_bytes=2594 ...`
+
+**Mismatch breakdown:**
+
+* artifact_bytes = **2594**
+* total_len = **512**
+* other_len = **404**
+* emissions_needed = **1703**
+* class_mismatches = **330**
+* other_mismatches = **832**
+
+  * kind_mismatches = **328**
+  * case_mismatches = **116**
+  * letter_mismatches = **370**  ← biggest lane
+  * digit_mismatches = **6**
+  * punct_mismatches = **12**
+  * raw_mismatches = **0** (excellent)
+
+### 2.2 lane-sweep CSV output
+
+```
+256,1423,167,410,166,53,182,2,7,0,256,202,852
+512,2594,330,832,328,116,370,6,12,0,512,404,1703
+```
+
+**Interpretation:**
+
+* The pipeline is stable and deterministic again.
+* Scaling 256 → 512 roughly doubles mismatches and size as expected.
+* We now have trustworthy signal for optimization.
+
+---
+
+## 3) God-tier insight from the telemetry (this is the turning point)
+
+### 3.1 “Perfect — the plumbing is fixed again…”
+
+Now we have **clean, trustworthy mismatch telemetry**, so we can stop guessing and start steering.
+
+### 3.2 What the 512-byte numbers really mean
+
+**Artifact size:** 2594 bytes
+**Goal:** ≤ 2048 bytes
+**Gap:** ~**546 bytes** we must eliminate (by reducing mismatch patchlists / patch overhead).
+
+Mismatch concentration:
+
+* letter (370) + kind (328) + class (330) dominate
+* case (116) secondary
+* digit (6), punct (12), raw (0) are already near-perfect
+
+**Key insight:** digits/punct/raw lanes are already almost “solved.”
+The remaining overage is almost entirely **letter + kind + class**.
+
+### 3.3 Omega existence confirms the plan
+
+K8L1 v2 already includes an omega frame and it’s tiny (**14 bytes** here).
+That means:
+
+* Ω is already part of the artifact format
+* It’s cheap to encode
+* It’s the correct knob to turn
+
+---
+
+## 4) The “missing piece” is now actionable: Ω per-lane phase schedule
+
+### 4.1 Problem (current failure mode)
+
+Right now, all lanes are effectively sampling the **same emission stream prefix** (or near it).
+This causes:
+
+* high correlation across lanes
+* predictable “out-of-phase” behavior for certain lanes (especially letter/kind/class)
+* patchlists become huge because the predictor and lane mapping are not phase-aligned
+
+### 4.2 What Ω should do (core idea)
+
+Ω = per-lane emission schedule parameters, minimally:
+
+* **skip/burn**: “start this lane at emission N”
+* **stride/interleave**: “advance this lane by step size S” (optional at first)
+
+This matches the original vision conceptually:
+
+* dots “lock in” but each lane sees the field at different phases / offsets
+* lanes become complementary rather than redundant
+
+### 4.3 Why this is almost certainly the right lever
+
+We’ve proven:
+
+* determinism works
+* reconstruction works
+* container plumbing works
+* some lanes are already near-perfect
+
+That pattern is exactly what you’d expect if **phase alignment** is wrong for only certain symbolic lanes.
+
+---
+
+## 5) Concrete near-term goal
+
+### 5.1 What success looks like for 512 bytes
+
+We need to close a ~546-byte artifact gap.
+
+Practical target reductions that likely get us ≤ 2048:
+
+* letter mismatches: **-80**
+* kind mismatches: **-60**
+* class mismatches: **-40**
+
+That’s not “magic”; it’s a plausible phase-alignment improvement.
+
+We do not need to solve everything—just knock down the biggest three buckets.
+
+---
+
+## 6) Next steps (do this in order, no detours)
+
+### Step 1 — Add Ω knobs to `encode2kb`
+
+Add a `--omega` argument that (when provided) causes:
+
+* `encode2kb` to call `lane::encode_k8l1_with_omega(...)`
+* otherwise it calls the current default `lane::encode_k8l1(...)`
+
+Ω string format should be deterministic and simple.
+
+Target example:
+
+```
+encode2kb ... --omega "class:skip=0,stride=1;kind:skip=113,stride=1;case:skip=37,stride=1;letter:skip=251,stride=1;digit:skip=0,stride=1;punct:skip=0,stride=1;raw:skip=0,stride=1"
+```
+
+MVP rules:
+
+* only support `skip` and `stride` per lane
+* default for omitted lanes = skip 0, stride 1
+* strict parsing (fail early if malformed)
+* encode into the exact omega representation core expects
+
+### Step 2 — Add a new `omega-sweep` command (fast experimental harness)
+
+We need the ability to sweep one parameter and print CSV.
+
+Example:
+
+* `--lane letter`
+* `--skip-from 0 --skip-to 2048 --skip-step 17`
+* stride fixed at 1
+
+CSV should include at least:
+
+* skip
+* artifact_bytes
+* class mismatches
+* other mismatches
+* per-lane mismatches
+
+Format idea:
+
+`skip,artifact_bytes,class_m,other_m,kind_m,case_m,letter_m,digit_m,punct_m,raw_m,emissions_needed`
+
+This will tell us in minutes if Ω-phase sweeps produce sharp minima.
+
+### Step 3 — Sweep in the correct priority order
+
+Based on telemetry, aim order is:
+
+1. letter
+2. kind
+3. class
+4. case (secondary)
+
+Do not waste cycles on digit/punct/raw right now.
+
+Suggested sweep procedure:
+
+1. Sweep **letter.skip** in [0..2048] step 17 (or 31), all others skip 0 stride 1
+2. Pick the best 2–5 skips (lowest artifact_bytes)
+3. Sweep **kind.skip** around that (same range or a narrower band)
+4. Optionally sweep **class.skip** after letter/kind are improved
+5. Re-run the 512B baseline and confirm stable improvement
+6. Then extend to 1024B, 2048B targets.
+
+### Step 4 — Update README + NOTES only after Ω sweep proves signal
+
+Once Ω sweep shows improvement, we update project docs to emphasize:
+
+* “phase schedule is the main predictor quality lever”
+* demonstrate a reproducible sweep command and a best-known omega schedule
+
+---
+
+## 7) Known-good commands for next instance
+
+### 7.1 Baseline repro (already working)
+
+```
+cargo build
+head -c 512 text/Genesis1.txt > /tmp/g1_512.txt
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --out /tmp/g1_512.k8l1 --budget-bytes 10000 --verify
+cargo run -p k8dnz-cli --bin k8dnz-cli -- lane-sweep --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --sizes 256,512
+```
+
+### 7.2 Next-instance target (after implementing Ω)
+
+Example single-run with omega:
+
+```
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --out /tmp/g1_512_omega.k8l1 --budget-bytes 10000 --verify --omega "letter:skip=251,stride=1"
+```
+
+Example sweep:
+
+```
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --lane letter --skip-from 0 --skip-to 2048 --skip-step 17
+```
+
+---
+
+## 8) Current best-known state (facts that must carry forward)
+
+* K8L1 artifacts are **v2**
+
+* K8L1 v2 includes `omega_len + omega_bytes` after recipe
+
+* `omega bytes=14` in the working 512B run (so omega storage overhead is small)
+
+* Working 512B baseline stats (copy/paste canonical):
+
+  * artifact_bytes=2594
+  * class_mismatches=330
+  * other_mismatches=832
+
+    * kind=328
+    * case=116
+    * letter=370
+    * digit=6
+    * punct=12
+    * raw=0
+
+* Working lane-sweep lines:
+
+  * 256 → 1423 bytes, class 167, other 410 (kind 166, case 53, letter 182, digit 2, punct 7, raw 0)
+  * 512 → 2594 bytes, class 330, other 832 (kind 328, case 116, letter 370, digit 6, punct 12, raw 0)
+
+---
+
+## 9) What remains in the project (big picture roadmap, compressed)
+
+### 9.1 MVP “wow demo” milestone for K8DNZ
+
+* A newcomer can run:
+
+  * `arkc <file>` → outputs a single ARK/K8L1 artifact
+  * `arku <artifact>` → reconstructs original file
+* Minimal steps, deterministic output, reproducible results.
+* Demonstrate **cascading compression** (merkle-zip / merkle-unzip) once the single-leaf K8L1 path is competitive.
+
+### 9.2 Current frontier: predictor quality, not container plumbing
+
+We have a functional pipeline.
+The remaining barrier is:
+
+* improving the predictor so residual / patchlists shrink
+
+Ω is the most coherent lever because it:
+
+* matches the original vision
+* is deterministic
+* has tiny encoding overhead
+* directly targets the observed mismatch distribution
+
+---
+
+## 10) Exact “next-instance work request” checklist
+
+When the next instance starts, do these in order:
+
+1. Implement `--omega` on encode2kb → call `encode_k8l1_with_omega`
+2. Add new `omega-sweep` CLI subcommand
+3. Run `omega-sweep` for letter.skip [0..2048] step 17
+4. Record best 5 results (artifact_bytes + mismatch breakdown)
+5. Narrow sweep around the best region; then sweep kind.skip
+6. Re-run baseline and confirm we can approach ≤2048 for 512B
+
+---
+
+### END NOTE - FEBRUARY 17 2026 - 14:00 CST
+
+
+
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 17:07 CST
+
+## Strategy: make “field wave” granular in a way that matches the vision *and* shrinks artifacts
+
+You already proved the missing piece is real: **Ω scheduling changes artifact bytes with sharp minima** (2594 → 2491 on 512B) without touching recipe/container. That means we’re no longer guessing—there’s *structure* we can steer.
+
+Now we turn “field wave” from “skip offsets” into an actual **phase-program** that matches your vision:
+
+### Vision mapping → implementation levers
+
+**Vision** (orbit → alignment window ε → lockstep on frustum → spiral → sample field → emit pair token)
+
+**Codec levers** (all deterministic, fixed-point, no floats):
+
+1. **Where we sample (phase)**
+   → Ω schedule: skip / stride / segment switches / lane coupling
+2. **What we sample (field)**
+   → field = deterministic waveform over (turn, radius, lane, maybe tag), sampled at emission index
+3. **How we interpret samples (emission mapping)**
+   → mapping from sampled field values to lane symbol predictions
+
+Right now you only have (1) in the weakest form: `skip, stride=1`.
+
+The “God-tier” next step is to implement **granularity along the spiral**: not one Ω for the whole lane, but **Ω as a piecewise program that changes as the frustum climb progresses** (exactly like the lockstep spiral and “color field wave” on the frustum).
+
+---
+
+## The “field wave” implementation plan (minimal risk, maximal signal)
+
+### Phase 1 — Ω v1.1: add stride sweeps and make ω search actually useful
+
+**Goal:** Confirm we can get *another* large jump just by adding stride.
+
+**Add to omega spec**:
+
+* support per-lane `stride != 1` (already parsed, but now sweep it)
+* add `omega-sweep2` that can sweep **two dimensions** (skip + stride) for one lane (coarse grid)
+
+**Why this matters:** stride changes which emissions a lane sees (decimation). If skip is “phase offset,” stride is “phase velocity sampling.” This is the closest direct analogue to “different orbit speeds.”
+
+**Expected outcome:** much larger minima than skip-only.
+
+**Practical sweep (fast):**
+
+* letter: skip step 31 or 64; stride in {1,2,3,5,7,11}
+* kind, class, case afterwards
+
+---
+
+### Phase 2 — Ω v2: piecewise Ω segments (the frustum climb)
+
+**Goal:** make Ω match “spiral up the frustum” by changing sampling policy over the message length.
+
+Implement:
+
+* Each lane gets **N segments** (start with N=2; later 3 or 4)
+* Segment selection is based on position index within that lane stream:
+
+  * `seg = floor(i * N / lane_len)` (integer math)
+* Each segment has its own `(skip, stride)`.
+
+So a lane schedule becomes:
+
+* `[(skip0,stride0),(skip1,stride1)]`
+
+**Why this matches the vision:** as the pair spirals upward, the field you sample changes. This is the “frustum wave” in code.
+
+**Why this should compress better:** natural language has changing local statistics (headers, names, punctuation clusters, etc.). A single global phase is suboptimal; 2 segments can catch two regimes cheaply.
+
+**Encoding cost:** tiny if you varint encode segment count and the tuples.
+
+---
+
+### Phase 3 — Ω v3: lane coupling (opposite-side lockstep)
+
+**Goal:** bake “two dots opposite sides Δ=0.5 turns” into the schedule.
+
+Add a small number of global parameters and derive lane schedules from them instead of storing all lane numbers:
+
+* `base_skip`
+* `lane_k` multiplier
+* modulo `P` (or wrap)
+* e.g. `skip_lane = base_skip + lane_id * lane_k`
+
+Or: define two “dot” phases A and C and derive lanes as projections:
+
+* some lanes sample A-biased phase, others C-biased phase
+
+**Why this matters:** it makes Ω smaller *and* more structured. If the field wave is real, structured coupling should generalize better to larger inputs.
+
+---
+
+### Phase 4 — Field granularity: make the field truly “wave-like” (without blowing determinism)
+
+This is the risky part, so we do it only after Ω proves strong.
+
+**Keep core invariant:** fixed-point turns, no floats, no π, deterministic.
+
+Add controlled complexity to the field:
+
+* treat the frustum as:
+
+  * `turn` (0..1)
+  * `radius` (small→large rim over lockstep progress)
+  * `lane_id`
+* compute field as a sum of 2–3 simple integer wave components:
+
+Examples (integer-only):
+
+* sawtooth/triangular wave over turn
+* low-frequency “band” term over radius (segment index)
+* lane-dependent phase offset
+
+Then sample it and map to prediction bits.
+
+**The rule:** every additional term must be:
+
+* deterministic
+* cheap
+* have a clear purpose (introduce controllable periodicity / band structure)
+
+---
+
+## What the telemetry is telling us (the real meaning of your current results)
+
+You reached:
+
+**Baseline 512B:** 2594 bytes
+**Best so far:** 2491 bytes
+
+You shaved **103 bytes** mainly by reducing:
+
+* other_mismatches 812 → 801
+* case mismatches 111 → 103
+* modest changes elsewhere
+
+But the core tax is still:
+
+* letter ~ 360+
+* kind ~ 316+
+* class ~ 308+
+
+So the current Ω v1 (skip-only) is **not expressive enough**. It moves things, but it can’t “reshape” the predictor distribution.
+
+That’s why the next steps should be **stride** and then **segments**.
+
+---
+
+## The practical “next session” runbook
+
+We should do these in the next instance, in order:
+
+1. **Genesis1 baseline + best-Ω**
+
+* run `encode2kb` on Genesis1 with:
+
+  * no omega
+  * current best omega (`letter=323; kind=68; class=374; case=1802`)
+* compare artifact_bytes + mismatch breakdown
+
+2. **Stride sweep (letter first)**
+
+* add a command or extend `omega-sweep` to iterate stride set
+* find best `(skip,stride)` for letter at 512B and then Genesis1
+
+3. **2-segment Ω prototype**
+
+* implement piecewise schedule for a single lane first (letter)
+* sweep only the second segment’s skip/stride while keeping first fixed
+* check if artifact drops significantly
+
+---
+
+# COMPREHENSIVE CARRY-OVER NOTES (paste into next instance)
+
+### BEGIN NOTE — FEBRUARY 17 2026 (late) — K8DNZ / Cadence Project
+
+**Project:** K8DNZ / The Cadence Project
+**Focus:** K8L1 v2 lane-based artifacts + Ω (omega) phase scheduling as the “missing piece”
+**Timezone to use for future logs:** America/Chicago (user’s system instructions); previous note said America/New_York—standardize on Chicago going forward.
+
+---
+
+## 0) Where we are / mission recap
+
+We are building a deterministic codec prototype driven by the “vision mechanism”:
+
+* dots A and C free-orbit opposite directions
+* alignment window ε triggers lockstep
+* lockstep climbs a frustum, sampling a deterministic color/field
+* sampled emissions become tokens that reconstruct input
+* goal: lossless artifacts that shrink toward a **2KB budget** for meaningful inputs
+
+**Current workstream:** K8L1 v2 “lane-based 2KB artifact” pipeline + Ω scheduling per lane.
+
+**Key insight:** The predictor quality lever isn’t container plumbing anymore — it is **phase alignment**, i.e., Ω schedules that decide which emissions each lane consumes.
+
+---
+
+## 1) State of the codebase & tooling (what is working)
+
+### 1.1 K8L1 v2 plumbing is correct
+
+* K8L1 artifacts are **v2** and include an **omega frame** after recipe bytes:
+
+  * `recipe_bytes`
+  * `omega_len + omega_bytes`
+  * then patches (including “other_patch” mux stream)
+* CLI introspection/parsing drift was previously fixed; encoding/decoding is stable and deterministic.
+
+### 1.2 New CLI harness exists and works
+
+Commands in active use:
+
+* `encode2kb` (produces a K8L1 artifact, verifies decode, prints mismatch breakdown)
+* `lane-sweep` (CSV: artifact bytes vs size)
+* `omega-sweep` (CSV sweep of skip parameter for a chosen lane; supports baseline omega and overriding one lane)
+
+Omega string format in use:
+
+* `"letter:skip=323,stride=1;kind:skip=68,stride=1;..."`
+
+---
+
+## 2) Baselines and canonical telemetry (must preserve)
+
+### 2.1 Baseline 512B sample (no omega)
+
+Command used:
+
+* `head -c 512 text/Genesis1.txt > /tmp/g1_512.txt`
+* `encode2kb ... --verify`
+
+Output (canonical baseline):
+
+* artifact_bytes=2594
+* class_mismatches=330
+* other_mismatches=832
+
+  * kind=328
+  * case=116
+  * letter=370
+  * digit=6
+  * punct=12
+  * raw=0
+* total_len=512
+* other_len=404
+* emissions_needed=1703
+* K8L1 v2 omega bytes=14
+
+### 2.2 Omega improvements found so far (skip-only sweeps)
+
+We did sequential sweeps and composed a “best so far” schedule.
+
+**Letter sweep (skip step 17):**
+
+* best region found around skip=323 (artifact 2577 at letter-only)
+
+**Kind sweep with letter fixed:**
+
+* good candidate kind skip=68
+
+**Class sweep with letter+kind fixed:**
+
+* best class skip=374 (artifact 2520)
+
+**Case sweep with letter+kind+class fixed:**
+
+* best case skip=1802 (artifact 2491)
+
+Final composed omega:
+
+* `letter:skip=323,stride=1;kind:skip=68,stride=1;class:skip=374,stride=1;case:skip=1802,stride=1`
+
+### 2.3 Best result achieved (512B)
+
+Command:
+
+* `encode2kb ... --omega "letter:skip=323,stride=1;kind:skip=68,stride=1;class:skip=374,stride=1;case:skip=1802,stride=1" --verify`
+
+Output:
+
+* artifact_bytes=2491
+* class_mismatches=308
+* other_mismatches=801
+
+  * kind=316
+  * case=103
+  * letter=362
+  * digit=6
+  * punct=14
+  * raw=0
+* omega bytes=17
+
+**Net improvement vs baseline:** 2594 → 2491 (−103 bytes)
+
+---
+
+## 3) What we learned (God-tier interpretation)
+
+### 3.1 The “missing piece” is real: phase minima exist
+
+* Omega sweeps show **non-random, repeatable minima** where artifact_bytes drops.
+* This means field sampling *does* have structure that can be exploited.
+
+### 3.2 Skip-only Ω is not expressive enough
+
+Even at best:
+
+* letter ~ 360 mismatches
+* kind ~ 316
+* class ~ 308
+
+So skip-only moves the needle but cannot deliver the 2KB goal alone.
+
+### 3.3 Next leverage must increase granularity of “field wave”
+
+To align with the vision (different speeds, spiral climb, field modulation), Ω must become a richer schedule:
+
+* **stride ≠ 1** (decimation / phase-velocity sampling)
+* **piecewise segments** (Ω changes over the message as it “climbs the frustum”)
+* **lane coupling** (structured derivation resembling opposite-side lockstep)
+
+---
+
+## 4) Problems we hit and what was fixed
+
+### 4.1 Earlier hangs / unusable pipeline symptoms
+
+* Some earlier `omega-sweep | awk` attempts were interrupted with `^C` because the pipeline waited for full sweep completion.
+* Also saw “insufficient emissions” errors when `--max-ticks` was set too low.
+
+### 4.2 Omega sweep reliability
+
+* `omega-sweep` now prints “BEST” lines and can write `--out-csv`.
+* It also supports `auto_ticks` retries for insufficient emissions, with cap.
+
+### 4.3 User error: placeholder values
+
+* Using `"REPLACE_ME"` in omega spec causes parse errors (“invalid digit found in string”). Must use actual integers.
+
+---
+
+## 5) What remains (the roadmap)
+
+### 5.1 Immediate next objective
+
+Stop optimizing only `skip`. Implement more granular field-wave controls that still stay deterministic and cheap.
+
+### 5.2 Next technical steps (do in order)
+
+**Step A — Run Genesis1.txt with best omega**
+We must test generalization:
+
+1. Genesis1 baseline (no omega)
+2. Genesis1 with best omega above
+   Compare artifact_bytes and mismatch breakdown.
+
+**Step B — Add stride sweeps**
+Implement either:
+
+* extend `omega-sweep` to also sweep stride (grid), or
+* add `omega-sweep2` for `(skip,stride)` on one lane.
+
+Start with:
+
+* lane=letter
+* strides: {1,2,3,5,7,11}
+* skip step: 31 or 64 for speed
+  Then repeat for kind/class/case after letter improves.
+
+**Step C — Implement Ω segments (piecewise schedule)**
+Implement per lane:
+
+* 2 segments initially: `[(skip0,stride0),(skip1,stride1)]`
+  Segment selection by index `i`:
+* `seg = (i * nseg) / lane_len` (integer)
+  This is the code analogue of “spiral up the frustum.”
+
+Add a CLI spec extension like:
+
+* `letter:seg2=skip0:stride0|skip1:stride1`
+  (or any deterministic parseable format)
+
+Then create a “segment sweep” harness that only sweeps segment1 while keeping segment0 fixed.
+
+**Step D — Lane coupling (structured omega)**
+Reduce degrees of freedom by deriving lane skips from a small set of global parameters:
+
+* `skip_lane = base_skip + lane_id*k`
+  This matches lockstep/opposite-side structure and may generalize better.
+
+---
+
+## 6) Current best-known commands (copy/paste)
+
+Create 512 sample:
+
+* `head -c 512 text/Genesis1.txt > /tmp/g1_512.txt`
+
+Best known 512 encode:
+
+* `cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --out /tmp/g1_512_best.k8l1 --budget-bytes 10000 --verify --omega "letter:skip=323,stride=1;kind:skip=68,stride=1;class:skip=374,stride=1;case:skip=1802,stride=1"`
+
+Case sweep example:
+
+* `cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep --recipe ./configs/tuned_validated.k8r --in /tmp/g1_512.txt --lane case --skip-from 0 --skip-to 2048 --skip-step 17 --omega "letter:skip=323,stride=1;kind:skip=68,stride=1;class:skip=374,stride=1" --out-csv /tmp/case_sweep.csv`
+
+Sort results:
+
+* `sort -t, -k2,2n /tmp/case_sweep.csv | head -n 25`
+
+---
+
+## 7) Key conclusion to carry forward
+
+We have confirmed:
+
+* The codec is deterministic and functional.
+* Ω scheduling produces real improvements with identifiable minima.
+* To reach meaningful compression, Ω must become a granular “field-wave program”:
+
+  * stride
+  * segments
+  * lane coupling
+  * then (later) richer field terms.
+
+The “missing piece” is not plumbing — it is building this structured, vision-aligned field-wave schedule and giving ourselves sweep tools to find good settings fast.
+
+### END NOTE — FEBRUARY 17 2026
+
+---
+
+If you want, next instance we can start by: **Genesis1 baseline vs best-Ω**, then immediately implement **stride sweeps** (that’s the fastest likely jump).
+
+
+### END NOTE - FEBRUARY 17 2026 - 17:07 CST
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 18:30 CST
+
+
+## Carry-over Notes — K8DNZ / Cadence Project (next instance handoff)
+
+### 0) Current state in one line
+
+**Build is green; K8L1 lane codec works end-to-end; Ω (omega) parsing + sweeps are functional; biggest win this session was switching patch encoding to a dense/bitfield form which dropped the 4.2KB Genesis1 artifact from ~19KB to ~11.5KB without improving predictor quality yet. Next step is to run faster Ω sweeps on a fixed 4201-byte sample, but our CLI flag for verify is a boolean switch (no `false` value).**
+
+---
+
+## 1) What we accomplished in this instance
+
+### A) Fixed the Ω type split (Schedule vs Program) + got the project building
+
+We had repeated compile errors caused by mixing:
+
+* `OmegaSchedule` (v2, singleton lanes: skip/stride)
+* `OmegaProgram` (v3, segmented per lane: multiple segments)
+
+We updated `omega_sweep.rs` so it consistently uses the right type flow:
+
+* `parse_omega_spec(...)` returns an **OmegaProgram**
+* `omega_with_lane(...)` returns an **OmegaProgram** (overrides one lane)
+* encoding uses `encode_k8l1_with_omega_prog(...)`
+
+✅ `cargo build` now succeeds.
+
+---
+
+### B) Ω sweeps are producing results (and we extracted candidate skips)
+
+You ran sweeps on **full Genesis1.txt** (4201 bytes) for:
+
+* `--lane letter`
+* `--lane case`
+* `--lane kind`
+
+Examples of “best so far” rows you saw:
+
+* **letter sweep best seen:** `skip=147` (artifact ~19117)
+* **case sweep best seen:** `skip=140` (artifact ~19101)
+* **kind sweep best seen:** `skip=140` (artifact ~19085)
+
+Then you combined multiple lane skips into one omega string and tested via `encode2kb`.
+
+---
+
+### C) encode2kb with omega works and verifies successfully
+
+Command you ran:
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb \
+  --recipe ./configs/tuned_validated.k8r \
+  --in text/Genesis1.txt \
+  --out /tmp/g1_omega_best_so_far.k8l1 \
+  --budget-bytes 30000 \
+  --verify \
+  --omega "kind:skip=140,stride=1;letter:skip=147,stride=1;class:skip=374,stride=1;case:skip=1802,stride=1"
+```
+
+Result:
+
+* retries due to insufficient emissions until **max_ticks=80,000,000**
+* K8L1 v2 omega bytes around **18**
+* output artifact ~**19,078 bytes** (pre-dense patch win)
+
+✅ Verified decode == normalized input.
+
+---
+
+### D) Huge win: patch encoding overhead was reduced dramatically
+
+We inspected bytes and then observed a major drop:
+
+Earlier BYTES line (before improvement):
+
+* **total=19078**
+* recipe=210, omega=18, header_overhead=20
+* class_patch=5344
+* other_patch=13486
+* lane_bytes: kind=5344, case=1662, letter=6128, digit=97, punct=237, raw=1
+
+Later BYTES line (after improvement):
+
+* **total=11522**
+* recipe=210, omega=18, header_overhead=20
+* class_patch=3214
+* other_patch=8060
+* lane_bytes: kind=3106, case=1243, letter=3476, digit=69, punct=148, raw=1
+
+**Important:** mismatch counts stayed the same in the printed stats (still around class_m=2671, other_m=6730), meaning:
+
+* predictor quality didn’t improve yet
+* but the cost-per-mismatch got way cheaper (dense bitmask style)
+
+This is exactly the “reduce overhead first” path we discussed: **patch representation matters a lot when mismatches are still dense.**
+
+---
+
+## 2) What we learned / key conclusions
+
+### A) Does the earlier “missing piece” still hold?
+
+Yes — the *concept* still holds:
+
+* Ω is intended to change *where each lane samples the emission stream* so lane predictors are not just the same prefix viewed through different bucketings.
+* That should reduce mismatch counts once we find better offsets / schedules, especially for **kind** and **letter**.
+
+But we also discovered a second bottleneck:
+
+* even with current mismatch rates, **patch encoding choice alone can halve+ artifact size** (19KB → 11.5KB).
+
+So we now have **two additive levers**:
+
+1. **Prediction quality** (Ω / field-wave / better mapping semantics) → fewer mismatches
+2. **Patch coding** (dense vs varint list, better muxing, possible entropy coding) → cheaper mismatches
+
+These combine multiplicatively in practice.
+
+---
+
+### B) Are we “compressing” yet?
+
+Not on Genesis1 4201 bytes:
+
+* artifact is still **larger** than the input (11.5KB vs 4.2KB), so it’s expansion.
+* But the direction is correct: we reduced a big structural overhead and now the artifact is far more sensitive to predictor improvements.
+
+---
+
+### C) Where bytes still come from (current dominant costs)
+
+From the latest BYTES breakdown:
+
+* **kind + letter** are still the big rocks.
+* class_patch is also sizable.
+* digit/punct/raw are tiny comparatively.
+
+So future sweeps and model work should prioritize:
+
+1. kind lane
+2. letter lane
+3. class lane
+   (case matters, but smaller leverage than kind+letter)
+
+---
+
+### D) Why sweeps are slow now
+
+* Engine often needs **80M ticks** to satisfy emissions.
+* Sweeps run many full encodes; verify makes it slower (but we can disable verify during sweep).
+
+---
+
+## 3) What broke right at the end (and how to fix it)
+
+You tried:
+
+```bash
+... --verify false
+```
+
+and got:
+
+> error: unexpected argument 'false' found
+
+This is because Clap boolean flags work like:
+
+* `--verify` means true
+* absence means false
+  (Unless we explicitly define it as a value-taking bool, which we did not.)
+
+✅ Fix: **remove `false` entirely**.
+
+So run:
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane kind --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000
+```
+
+And if you want verify ON:
+
+```bash
+... --verify
+```
+
+---
+
+## 4) Next-step plan (do this first in the next instance)
+
+### Step 1 — lock the sweep target to 4201 bytes
+
+You already did:
+
+```bash
+head -c 4201 text/Genesis1.txt > /tmp/g1_4201.txt
+```
+
+Keep using this for sweeps.
+
+### Step 2 — run fast sweeps (no verify) for the high-leverage lanes
+
+Run in this order:
+
+**A) kind**
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane kind --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000 \
+  --out-csv /tmp/omega_kind_4201.csv
+```
+
+**B) letter**
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane letter --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000 \
+  --out-csv /tmp/omega_letter_4201.csv
+```
+
+**C) class**
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane class --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000 \
+  --out-csv /tmp/omega_class_4201.csv
+```
+
+### Step 3 — combine best skips into one omega and run encode2kb (verify ON)
+
+Take best rows from each CSV and combine into:
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- encode2kb \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --out /tmp/g1_combo_best.k8l1 \
+  --budget-bytes 30000 \
+  --verify \
+  --omega "kind:skip=...,stride=1;letter:skip=...,stride=1;class:skip=...,stride=1;case:skip=...,stride=1"
+```
+
+We are explicitly looking for:
+
+* **mismatch count drops** (especially kind_mismatches, letter_mismatches)
+* AND/OR artifact_bytes drop below the current ~11.5KB
+
+### Step 4 — confirm which patch encoding mode is active
+
+You shared `PatchList` code that is still “varint delta list”. But your output clearly indicates a dense mode exists/was turned on elsewhere.
+
+So in the next instance we should:
+
+* identify where the dense encoding lives (likely behind `PatchList::encode()` changes or another patch type)
+* make sure we didn’t accidentally print mismatch counts from the old stat path while encoding a new patch format (possible mismatch between “count” and “bytes”).
+
+---
+
+## 5) Important files / context snapshot
+
+### A) lane codec implementation
+
+* `crates/k8dnz-core/src/lane/mod.rs`
+
+  * supports K8L1 v1/v2/v3
+  * v2 embeds `OmegaSchedule` bytes
+  * v3 embeds `OmegaProgram` bytes with segment support
+  * encoding uses `gen_pred_stream_with_prog(...)`
+
+### B) encode2kb command
+
+* `crates/k8dnz-cli/src/cmd/encode2kb.rs`
+
+  * uses `parse_omega_spec` (OmegaProgram)
+  * calls `encode_k8l1_with_omega_prog`
+  * retries auto_ticks on “insufficient emissions”
+  * prints breakdown; can show BYTES line
+
+### C) omega sweep command
+
+* `crates/k8dnz-cli/src/cmd/omega_sweep.rs`
+
+  * now builds + runs
+  * `--verify` is a bool flag (no “false” arg)
+  * outputs CSV if specified
+
+### D) patch list code (as provided)
+
+* `crates/k8dnz-core/src/symbol/patch.rs`
+
+  * sparse mismatch list encoding (varints)
+  * note: current observed behavior suggests a denser encoding exists somewhere; we need to reconcile.
+
+---
+
+## 6) Current best observed artifact (most important numeric checkpoint)
+
+On Genesis1 4201 bytes, with omega:
+
+* artifact_bytes ≈ **11,522**
+* recipe=210, omega=18, header=20
+* class_patch=3214
+* other_patch=8060
+* lane_bytes: kind=3106, case=1243, letter=3476, digit=69, punct=148, raw=1
+
+This is our baseline to beat next.
+
+---
+
+## 7) Open questions / what remains
+
+1. **Why mismatch counts stayed identical** while bytes dropped hard:
+
+   * either we changed patch coding only (expected), or
+   * we are measuring mismatches on a different representation than the encoded one.
+2. **Can Ω actually reduce kind+letter mismatches** on this engine, or do we need a stronger change (segmented omega / new field mapping semantics)?
+3. **Is the heavy tick requirement (80M) masking speed of experimentation?**
+
+   * may need a quicker “ticks estimator” or a smaller sweep cap for rapid iteration.
+
+---
+
+## 8) Copy/paste “starting commands” for the next instance
+
+```bash
+head -c 4201 text/Genesis1.txt > /tmp/g1_4201.txt
+
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane kind --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000 \
+  --out-csv /tmp/omega_kind_4201.csv
+
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane letter --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000 \
+  --out-csv /tmp/omega_letter_4201.csv
+
+cargo run -p k8dnz-cli --bin k8dnz-cli -- omega-sweep \
+  --recipe ./configs/tuned_validated.k8r \
+  --in /tmp/g1_4201.txt \
+  --lane class --skip-from 0 --skip-to 2000 --skip-step 7 --stride 1 \
+  --max-ticks 20000000 --auto-ticks --auto-ticks-cap 160000000 \
+  --out-csv /tmp/omega_class_4201.csv
+```
+
+
+
+### END NOTE - FEBRUARY 17 2026 - 18:30 CST
+
+
+
+
+### BEGIN NOTE - FEBRUARY 17 2026 - 19:40 CST
+
+## K8DNZ / Cadence Project — Carry-Over Notes (for next instance)
+
+**Date:** 2026-02-17 (America/Chicago)
+**Focus:** Timemap “gen-law” experiments, predictor quality, residual compression, and pipeline correctness (engine-forward reconstruction).
+
+---
+
+## 0) The one-line truth (don’t lose this)
+
+We are **not “reversing data through the engine.”** The codec remains:
+
+> **Run engine forward → generate predicted stream → store tiny timemap + residual → reconstruct by running engine forward again and inverting residual.**
+
+Residual mode is currently **XOR**, so decode is: `target = pred XOR resid` and encode is: `resid = pred XOR target`.
+
+This is central. Everything we do is about improving **predictor match rate** so the residual stops looking like noise and compresses well.
+
+---
+
+## 1) Where we are right now (current objective & status)
+
+### Primary short-term goal
+
+* Demonstrate a **real win** on a **4KB target** (Genesis1 sample ~4201 bytes; earlier scoreboard confusion came from using `head -c 512`).
+* “Win” means: **effective bytes (timemap + residual + minimal overhead) < plain zstd bytes**, ideally substantially.
+
+### Current blocker (still the blocker)
+
+* Predictor quality is stuck around **~48–58% matches** in many experiments → residual stays too random → zstd can’t compress it well.
+* Timemap program (TM0/TM1) is tiny (often tens of bytes zstd), so the **residual dominates**.
+
+---
+
+## 2) What we accomplished so far (proven foundations)
+
+### A) Deterministic reconstruction pipeline works
+
+* We have end-to-end **reconstructability**: given recipe + timemap + residual, we can reproduce the exact target (when the pipeline is wired correctly and budgets are sufficient).
+* We have the “time-indexed reconstruction” concept validated: timemap is a compact program describing where/when to sample.
+
+### B) Timemap itself compresses extremely well
+
+* In many runs: `tm_raw_bytes` single digits; `tm_zstd_bytes` ~ teens.
+* This means the **program/plan is not the cost**; residual is the cost.
+
+### C) We falsified one approach
+
+* “conditioning-as-XOR-mask” (scrambling bytes) was found to harm fit (turns signal into noise).
+
+### D) Tau > 255 was implemented
+
+* We added/validated support for tau beyond 255 earlier. Now we’re actively running tau=256 in lowpass-thresh.
+
+---
+
+## 3) Latest experiments (IMPORTANT: capture this exact run & findings)
+
+### Command used (looped law_seed 1..10, then choice_rank 0..3)
+
+You ran:
+
+```bash
+for LS in 0 1 2 3 4 5 6 7 8 9; do
+  cargo run -p k8dnz-cli --bin k8dnz-cli -- timemap gen-law \
+    --recipe ./configs/tuned_validated.k8r \
+    --target /tmp/g1_512.bin \
+    --out-timemap /tmp/g1_512_tau256_ls${LS}.tm1 \
+    --out-residual /tmp/g1_512_tau256_ls${LS}.bf \
+    --map bitfield --mode rgbpair --bits-per-emission 1 \
+    --bit-mapping lowpass-thresh --bit-tau 256 --bit-smooth-shift 3 \
+    --bitfield-residual packed --chunk-size 128 \
+    --law-type jump-walk --law-epsilon 100000000 \
+    --start-emission 0 --search-emissions 2000000 --max-ticks 20000000 \
+    --residual xor --zstd-level 3 \
+    --choice-k 4 --choice-rank 0 \
+    --law-seed $((LS+1))
+done
+```
+
+Then:
+
+```bash
+for R in 0 1 2 3; do
+  cargo run -p k8dnz-cli --bin k8dnz-cli -- timemap gen-law \
+    --recipe ./configs/tuned_validated.k8r \
+    --target /tmp/g1_512.bin \
+    --out-timemap /tmp/g1_512_tau256_r${R}.tm1 \
+    --out-residual /tmp/g1_512_tau256_r${R}.bf \
+    --map bitfield --mode rgbpair --bits-per-emission 1 \
+    --bit-mapping lowpass-thresh --bit-tau 256 --bit-smooth-shift 3 \
+    --bitfield-residual packed --chunk-size 128 \
+    --law-type jump-walk --law-epsilon 100000000 \
+    --start-emission 0 --search-emissions 2000000 --max-ticks 20000000 \
+    --residual xor --zstd-level 3 \
+    --choice-k 4 --choice-rank $R
+done
+```
+
+### Observed result (the key insight)
+
+Across **all law seeds** and **all choice ranks**, the output was effectively invariant:
+
+* `target_bytes = 512`
+* `symbols = 4096` (512 bytes * 8 bits)
+* `chunk_size = 128`, `chunks = 32`
+* `bit_mapping = LowpassThresh`
+* `bit_tau = 256`, `bit_smooth_shift = 3`
+* `search_emissions_cap = 2000000`
+* `produced_emissions_end = 5143`
+* `window_len(starts) = 1048`
+* **matches = 2365/4096 (57.74%)** *(same every time)*
+
+Compression stats roughly constant:
+
+* `plain_zstd_bytes = 272`
+* `tm_zstd_bytes = 17–18`
+* `residual_container_zstd_bytes = 291`
+* `effective_no_recipe_tm_zstd = 308–309` (**worse than plain zstd by +36–37 bytes**)
+* `effective_with_recipe_tm_zstd = 518–519` (**worse by +246–247 bytes**)
+
+Only small values changed:
+
+* `start_offset`, `start_pos`, `offset_total`, `locked_events`, `tm_raw_bytes 8–9`.
+
+### Interpretation (don’t lose this)
+
+This invariance strongly suggests **one of three things**:
+
+1. **Seed/rank is not actually affecting the selection** (bug / seed not threaded into the RNG used for JumpWalk / choice logic not applied), **or**
+2. Parameter regime causes collapse to essentially the same solution:
+
+   * **`law_epsilon = 100000000`** is *huge* and likely makes acceptance nearly unconditional, destroying the value of randomized search, **or**
+3. The law search is not exploring degrees of freedom that change the predictor stream; it’s mainly selecting `start_pos` while the underlying predicted stream remains effectively the same quality.
+
+Either way: **we’re not seeing the exploration we expected** from “gen-law.”
+
+---
+
+## 4) Current warnings / code hygiene notes
+
+Repeated build warning:
+
+* `gen_pred_stream_with_omega` is never used in `crates/k8dnz-core/src/lane/mod.rs:635`
+
+This is not blocking, but indicates the “omega” hook exists and is unused. It might become relevant if we want to introduce structured degrees of freedom (see next section).
+
+---
+
+## 5) The state of the “big dream” goal (and why the plan was adjusted)
+
+### Reality wall (important consensus)
+
+* A self-contained ~2KB file expanding to ~247KB **without allowing a known corpus/model baked into decoder** is blocked by basic information theory / Kolmogorov complexity in the general case.
+* So we shifted to a **credible demonstrable win**:
+
+  * **4KB → ~1KB** is already a major success if truly lossless.
+  * Cascading compression (merkle-zip) with multiple ark keys → one ark key is a “wow demo” milestone even if final sizes aren’t yet tiny.
+
+---
+
+## 6) What remains (next concrete tasks)
+
+### Task A — Prove whether seeds/rank truly matter (fast diagnostic)
+
+We need to determine if “gen-law” is actually varying outputs or not.
+
+Run these comparisons:
+
+```bash
+ls -l /tmp/g1_512_tau256_ls*.tm1 /tmp/g1_512_tau256_ls*.bf
+cmp /tmp/g1_512_tau256_ls0.tm1 /tmp/g1_512_tau256_ls1.tm1 || echo "tm differs"
+cmp /tmp/g1_512_tau256_ls0.bf  /tmp/g1_512_tau256_ls1.bf  || echo "bf differs"
+```
+
+If they’re identical (or nearly), then **seed influence is broken or irrelevant**.
+
+Also compare choice rank outputs:
+
+```bash
+cmp /tmp/g1_512_tau256_r0.tm1 /tmp/g1_512_tau256_r1.tm1 || echo "tm differs"
+cmp /tmp/g1_512_tau256_r0.bf  /tmp/g1_512_tau256_r1.bf  || echo "bf differs"
+```
+
+### Task B — Validate reconstruction explicitly (never skip this)
+
+Pick one run and roundtrip:
+
+```bash
+cargo run -p k8dnz-cli -- timemap reconstruct \
+  --recipe ./configs/tuned_validated.k8r \
+  --timemap /tmp/g1_512_tau256_ls0.tm1 \
+  --residual /tmp/g1_512_tau256_ls0.bf \
+  --out /tmp/g1_512_recon.bin
+
+cmp /tmp/g1_512.bin /tmp/g1_512_recon.bin && echo "ROUNDTRIP OK"
+```
+
+*(Adjust command names/flags to whatever the CLI currently uses; goal is “cmp clean.”)*
+
+This confirms the pipeline is still correct while we tweak search.
+
+### Task C — Fix the exploration collapse: reduce `law_epsilon` dramatically
+
+Right now `law_epsilon=100000000` likely makes the lock/window acceptance so permissive that randomness does not matter.
+
+Run a sweep:
+
+* Try: `--law-epsilon 1000`, `10000`, `100000`, `1000000`
+* Keep everything else constant.
+* Record:
+
+  * matches %
+  * residual_container_zstd_bytes
+  * effective_no_recipe_tm_zstd
+  * produced_emissions_end
+  * locked_events
+
+If lowering epsilon changes match rate or residual size, we’re back in business.
+
+### Task D — Verify that `law_seed` threads into the RNG actually used
+
+If `cmp` shows files don’t change across seeds even when epsilon is small, that implies a bug.
+
+Where to look:
+
+* `timemap gen-law` implementation in `k8dnz-cli`
+* the law generator / JumpWalk implementation
+* any RNG creation where a seed is accepted but not used (or seed overwritten by constant)
+
+We want:
+
+* `law_seed` → deterministic RNG → influences candidate selection path
+* `choice_rank` → actually selects among top K candidates deterministically
+
+### Task E — Stop spending time only on start-position shuffling
+
+Even if law search works, if it only chooses alignment start points, predictor quality won’t jump.
+
+We need degrees of freedom that alter prediction stream structure, not just alignment:
+
+* Multi-variant mapping choices by tag/region (not XOR scrambling)
+* “Omega” style parameterization (that unused function may be a hook)
+* Chunk transforms that produce more predictable bitfields (reversible preprocessing)
+* Residual modes beyond XOR (e.g., `sub` residual sometimes compresses better depending on symbolization)
+
+---
+
+## 7) Key numbers to remember from the latest run
+
+For `/tmp/g1_512.bin` with tau=256 lowpass-thresh:
+
+* **Matches:** `57.74%`
+* **Plain zstd:** `272 bytes`
+* **Residual zstd container:** `291 bytes`
+* **Timemap zstd:** `17–18 bytes`
+* **Effective (no recipe):** `308–309 bytes` (**+36–37 vs zstd**)
+* **Effective (with recipe):** `518–519 bytes` (**+246–247 vs zstd**)
+* **Produced emissions end:** `5143`
+* **Symbols:** `4096`
+* **Chunks:** `32` (chunk_size=128)
+
+Interpretation: this config is **close-ish** but still not winning; we need better predictor or different residual semantics/representation.
+
+---
+
+## 8) Project invariants (keep these sacred)
+
+* **No baked-in corpus** in the decoder for the “general” claim.
+* Determinism must hold:
+
+  * same inputs → byte-identical outputs
+  * same recipe + timemap + residual → reconstruct exact original
+* Keep a canonical target file (Genesis1) and note the exact byte length used each run.
+* When comparing results, always compare against:
+
+  * `plain_zstd_bytes` at same zstd level
+  * “effective_no_recipe” and “effective_with_recipe”
+  * include recipe bytes separately (we ultimately need a story for recipe amortization)
+
+---
+
+## 9) What to paste first thing next instance (so we can move fast)
+
+1. Output of:
+
+   * `ls -l /tmp/g1_512_tau256_ls*.tm1 /tmp/g1_512_tau256_ls*.bf`
+   * `cmp` results across seeds and ranks
+2. A single run with **smaller `law_epsilon`** and its full scoreboard block
+3. Roundtrip `cmp` result for one timemap+residual pair
+
+That will let us immediately decide whether:
+
+* we’re in a “parameter collapse” regime (epsilon too big), or
+* there’s a seed plumbing bug, or
+* gen-law is exploring but only in a low-impact dimension.
+
+---
+
+## 10) Strategic direction (the “final sprint” framing)
+
+We’re not missing “more search.” We’re missing **a new lever that increases match rate**.
+
+The core path to a win is:
+
+> Increase predictable structure in the predicted bitstream (model improvement)
+> OR reduce residual entropy via smarter residual coding / transforms
+> OR both.
+
+Until match rate rises or residual coding improves, the timemap being tiny won’t matter.
+
+---
+
+If you paste the `cmp` results + one epsilon-sweep run next time, we can quickly choose whether the next move is **parameter tuning**, **seed plumbing bugfix**, or **new predictor degrees-of-freedom** (the real unlock).
+
+
+### END NOTE - FEBRUARY 17 2026 - 19:40 CST
+
+
+
+### BEGIN NOTE - MARCH 17 2026 - 14:45 CST
+
+Here are the carry-over notes for the next instance.
+
+## K8DNZ carry-over notes — ApexTrace fold-in checkpoint
+
+### 0) Executive snapshot
+
+K8DNZ is now in a stronger place than before this ApexTrace detour. The workspace is green, `k8dnz-apextrace` is integrated as a sibling crate, `k8dnz-cli` exposes `apextrace` commands, and the repo now contains a deterministic quaternary generator/fitter plus a 90° pyramid renderer. The core project direction remains the same: the real breakthrough still depends on making the data become algorithmically simple under the generator so the residual collapses, not on better packaging alone. ApexTrace now exists inside the repo as a candidate representation/predictor primitive that can be tested against that thesis.  
+
+### 1) What K8DNZ already was before this session
+
+The standing doctrine remains intact:
+
+* K8DNZ is a deterministic fixed-point codec project built around the cadence machine: free orbit, alignment, lockstep frustum, deterministic field, emission.
+* Core math should use turns/fixed-point, not floats, and determinism is non-negotiable.
+* The honest compression path is shortest deterministic recipe plus minimal residual, not “magic” general compression of arbitrary data.
+* The strongest blueprint direction is a representation shift toward structured lanes and sparse residuals.   
+
+### 2) What we accomplished in this instance
+
+#### A) ApexTrace was folded into K8DNZ, not kept as a separate repo
+
+The workspace now includes:
+
+* `crates/k8dnz-apextrace`
+* `crates/k8dnz-cli`
+* `crates/k8dnz-core`
+
+and the file tree confirms ApexTrace is fully present as its own crate inside the repo, with `dibit.rs`, `fit.rs`, `generator.rs`, `key.rs`, `law.rs`, `render.rs`, and tests. The CLI has a dedicated `apextrace.rs` command module wired in. 
+
+#### B) ApexTrace v0 primitive is implemented
+
+The current ApexTrace implementation inside K8DNZ includes:
+
+* canonical quaternary alphabet `{1,2,3,4}`
+* direct dibit mapping
+* `.atk` ApexKey format
+* QDL-1 law
+* deterministic generation
+* brute-force fitting against byte samples
+* render/export layer for the 90° pyramid lattice and traced paths. 
+
+#### C) Tests are green
+
+You built the repo successfully and ran ApexTrace tests successfully:
+
+* determinism
+* key roundtrip
+* render tests
+
+This means the integration hurdle is cleared. ApexTrace is now a real, tested part of the K8DNZ workspace rather than a sketch. 
+
+#### D) First real ApexTrace fit results exist
+
+You ran raw-byte-to-dibit fitting experiments on Genesis1 windows.
+
+For a 64-byte sample:
+
+* best observed fit reached about **38.28% quaternary matches** at `98 / 256`
+
+For a 16-byte sample:
+
+* best observed fit reached **53.125% quaternary matches** at `34 / 64`
+
+This is well above the naive random quaternary baseline of about 25%, which means ApexTrace is not dead noise. It has real non-random controllability. But it is not yet close to exact raw-byte reconstruction on ordinary text. This supports the existing K8DNZ thesis that the correct move is to predict structured representations, not raw bytes directly.  
+
+### 3) The most important new interpretation from this session
+
+#### A) ApexTrace is alive, but QDL-1 is weak on raw text
+
+The law is clearly doing better than random, but the search improvements plateaued fast when moving from smaller to much larger seed sweeps. That strongly suggests the main bottleneck is no longer search budget alone. The representation and/or law family is the bigger issue on raw text. This matches the broader K8DNZ blueprint: the right fight is representation shift plus sparse residual, not brute force over a weak family. 
+
+#### B) ApexTrace may be more useful locally than globally
+
+The 16-byte sample jumping to 53.125% while the 64-byte sample stayed around 38% is a meaningful clue. It suggests some short windows may be much more law-like under ApexTrace than longer windows. This does not prove compression, but it strongly suggests a local-window or subtree-conditioned use may be better than asking one global ApexKey to explain a longer byte stream. That aligns with the lane/chunkwise direction already present in the K8DNZ blueprint.  
+
+### 4) What the 90° lattice output really showed
+
+You rendered the fitted 16-byte sample into the 90° pyramid lattice and got:
+
+* row/slot coordinates
+* visit counts
+* leaf spans
+* path traces
+* base labels
+
+The key discovery is that the raw `visits` counts are mostly a **combinatorial baseline**, not yet a data-specific secret pattern. The row counts follow Pascal/binomial structure because they reflect traversal of all leaves in the projected lattice. So the lattice is real and useful, but raw visit counts themselves should not be mistaken for a discovered compression law. The useful signal will be in **deviations from that baseline**, not the baseline itself. This is the most important interpretive correction from the session. 
+
+### 5) Folded-in diagnostic layer for next instance
+
+This is the biggest thing to carry forward.
+
+The next diagnostic layer should be implemented and treated as high priority.
+
+#### Goal
+
+Stop looking only at:
+
+* total match%
+* prefix
+* raw lattice visits
+
+Start measuring where the matches and symbol biases live **inside the pyramid**.
+
+#### Recommended new diagnostic output
+
+Add a new ApexTrace stats/diagnostic command, conceptually something like:
+
+* `apextrace render-stats`
+* or extend `render` with a stats mode
+
+For every node `(row, k)`, output:
+
+* `row`
+* `k`
+* `x`
+* `y`
+* `subtree_size`
+* `leaf_range_start`
+* `leaf_range_end`
+* `target_hist_1`
+* `target_hist_2`
+* `target_hist_3`
+* `target_hist_4`
+* `pred_hist_1`
+* `pred_hist_2`
+* `pred_hist_3`
+* `pred_hist_4`
+* `matches`
+* `mismatches`
+* `match_rate`
+* `match_excess_vs_random`
+* `purity`
+* `entropy`
+
+This will tell us whether certain pyramid subtrees are symbol-pure, match-heavy, or branch-biased.
+
+#### Why this matters
+
+If certain subtrees have strong symbol purity or strong match excess above the 25% random baseline, then the pyramid may be useful as:
+
+* a routing/partition structure
+* a local predictor scaffold
+* a lane-aware control surface
+
+rather than as one monolithic whole-block compressor.
+
+That would fit K8DNZ’s existing direction of structured lanes and sparse-first residuals extremely well.  
+
+### 6) Additional diagnostics that are now worth adding
+
+Beyond subtree stats, the next instance should add:
+
+* longest exact run anywhere, not just prefix
+* exact byte matches count
+* target and predicted symbol histograms
+* per-position mismatch profile
+* true leafline base output separate from merged sketch projection
+
+That last point matters because the current sketch-style projection merges many leaf paths into shared visible lattice coordinates. That is good for geometric visualization, but not enough for algorithm design. We need both:
+
+* merged sketch bottom for intuition
+* strict left-to-right leafline for actual modeling work. 
+
+### 7) Current best interpretation of ApexTrace inside K8DNZ
+
+ApexTrace should currently be treated as:
+
+* a **deterministic quaternary generator**
+* a **possible local or lane predictor**
+* a **geometric partitioning diagnostic**
+* not yet a standalone compressor
+* not yet a proven answer for raw text
+
+This is a useful and honest place to be. It keeps the work aligned with the older Cadence doctrine: recipe + residual, deterministic modeling, and structured prediction rather than magical claims.  
+
+### 8) What remains unfinished
+
+#### A) ApexTrace is not yet connected to the real lane pipeline
+
+The repo already has:
+
+* `repr/text_norm.rs`
+* `repr/ws_lanes.rs`
+* `lane/mod.rs`
+* `symbol/patch.rs`
+* `encode2kb`
+* `lane_sweep`
+
+The crucial next step is not more standalone ApexTrace curiosity alone. It is to test whether ApexTrace helps **when applied to simpler representations**, especially per-lane alphabets. The big open question is whether ApexTrace can improve match quality or residual sparsity on lanes like whitespace, punctuation, case, and letters.  
+
+#### B) No residual-aware ApexTrace integration exists yet
+
+ApexTrace currently does:
+
+* generate
+* fit
+* render
+
+It does not yet:
+
+* produce sparse patch lists
+* measure residual list size directly
+* plug into the K8L1 / encode2kb budgeting surface
+* compete head-to-head against existing lane predictors in terms of residual bytes
+
+That comparison layer is still missing.
+
+#### C) The big K8DNZ target remains unchanged
+
+The real breakthrough target remains:
+
+* a general-purpose decoder
+* no baked-in corpus
+* deterministic artifact
+* total bytes under the hard budget
+
+The blueprint is explicit that this only happens if residual collapses under the right representation. That is still the mountain. ApexTrace is now a new route up the mountain, not the summit. 
+
+### 9) Recommended next experiments in order
+
+#### 1. Add subtree-conditioned diagnostic stats
+
+This is now the highest-value next instrumentation.
+
+#### 2. Sweep adjacent 16-byte windows of Genesis1
+
+Measure whether 53.125% was:
+
+* common
+* rare
+* clustered
+
+Log per-window:
+
+* match%
+* longest run
+* byte-exact count
+* best root seed/quadrant
+* subtree hot nodes
+
+#### 3. Test ApexTrace on trivially structured targets
+
+Examples:
+
+* all zero bytes
+* all `0xFF`
+* repeating `0xAA`
+* repeating `0x55`
+* repeated ASCII templates
+
+This determines whether QDL-1 is fundamentally decent on structured patterns.
+
+#### 4. Move ApexTrace into the lane world
+
+Follow the blueprint’s lane ladder:
+
+1. whitespace lane only
+2. whitespace + punctuation
+3. add case
+4. add letters
+
+At each step record:
+
+* match% per lane
+* residual entries count
+* residual raw bytes
+* residual packed bytes
+* best total bytes
+
+This is straight from the current breakthrough blueprint and remains the cleanest scientific path. 
+
+### 10) Current repo shape to remember
+
+The latest codebundle confirms the repo now contains:
+
+* `k8dnz-core`
+* `k8dnz-cli`
+* `k8dnz-apextrace`
+
+with ApexTrace files in place and CLI wiring added under `cmd/apextrace.rs`. This matters because the next instance should build on the integrated workspace, not recreate this work. 
+
+### 11) Practical next-instance starting point
+
+Start next instance by doing these in order:
+
+1. inspect current `crates/k8dnz-apextrace/src/render.rs`, `law.rs`, and `fit.rs`
+2. add subtree stats structures and CSV/TXT output
+3. run a 16-byte moving-window scan across the beginning of Genesis1
+4. identify whether certain windows or subtrees are consistently strong
+5. then begin the first lane-level ApexTrace experiment
+
+That keeps momentum and prevents getting lost in more speculative redesign before the next diagnostic layer exists.
+
+### 12) Bottom-line carry-forward statement
+
+The cleanest summary for the next instance is:
+
+> K8DNZ now has ApexTrace integrated as a deterministic quaternary pyramid primitive. It is demonstrably better than random and can hit 53.125% quaternary matches on at least one short Genesis1 window, but its raw lattice visit counts are mostly combinatorial baseline, not the signal. The next serious move is to measure subtree-conditioned match and symbol statistics so we can see whether the pyramid partitions the stream into exploitable local structure, then test that structure on simpler lanes where K8DNZ already expects collapse to happen.   
+
+For reference, the latest uploaded codebundle snapshot is here: 
+
+
+### END NOTE - MARCH 17 2026 - 14:45 CST

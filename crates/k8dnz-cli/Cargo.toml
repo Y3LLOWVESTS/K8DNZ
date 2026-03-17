@@ -10,4 +10,5 @@ anyhow = { workspace = true }
 crc32fast = { workspace = true }
 zstd = { workspace = true }
 k8dnz-core = { path = "../k8dnz-core" }
+k8dnz-apextrace = { path = "../k8dnz-apextrace" }
 tempfile = "3"

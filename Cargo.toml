@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/k8dnz-core",
   "crates/k8dnz-cli",
+  "crates/k8dnz-apextrace",
 ]
 
 [workspace.package]

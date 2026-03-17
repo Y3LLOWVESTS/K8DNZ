@@ -7,7 +7,6 @@ use k8dnz_core::lane;
 use k8dnz_core::symbol::patch::PatchList;
 use k8dnz_core::symbol::varint;
 
-// ids (must match k8dnz-core lane/mod.rs mux ids)
 const PATCH_KIND: u64 = 1;
 const PATCH_CASE: u64 = 2;
 const PATCH_LETTER: u64 = 3;
@@ -15,25 +14,22 @@ const PATCH_DIGIT: u64 = 4;
 const PATCH_PUNCT: u64 = 5;
 const PATCH_RAW: u64 = 6;
 
-// K8L1 container constants
 const MAGIC_K8L1: &[u8; 4] = b"K8L1";
-const K8L1_VERSION: u8 = 1;
+const K8L1_VERSION_MIN: u8 = 1;
+const K8L1_VERSION_MAX: u8 = 2;
+const K8L1_VERSION_V2: u8 = 2;
 
 #[derive(Args)]
 pub struct LaneSweepArgs {
-    /// Recipe path (.k8r)
     #[arg(long)]
     pub recipe: String,
 
-    /// Input file path
     #[arg(long = "in")]
     pub r#in: String,
 
-    /// Comma-separated sizes in bytes (e.g. 256,512,1024,2048,4096)
     #[arg(long, default_value = "256,512,1024,2048,4096")]
     pub sizes: String,
 
-    /// Max ticks guard for cadence emissions
     #[arg(long, default_value_t = 20_000_000)]
     pub max_ticks: u64,
 }
@@ -57,6 +53,10 @@ fn parse_sizes(s: &str) -> anyhow::Result<Vec<usize>> {
 struct K8L1View {
     class_patch: Vec<u8>,
     other_patch: Vec<u8>,
+    #[allow(dead_code)]
+    omega_len: usize,
+    #[allow(dead_code)]
+    trailing_len: usize,
 }
 
 fn decode_k8l1_view(bytes: &[u8]) -> anyhow::Result<K8L1View> {
@@ -72,89 +72,98 @@ fn decode_k8l1_view(bytes: &[u8]) -> anyhow::Result<K8L1View> {
 
     let ver = bytes[i];
     i += 1;
-    if ver != K8L1_VERSION {
+    if !(K8L1_VERSION_MIN..=K8L1_VERSION_MAX).contains(&ver) {
         anyhow::bail!("k8l1: unsupported version {}", ver);
     }
 
-    // total_len, other_len, max_ticks
-    let _total_len = varint::get_u64(bytes, &mut i)?;
-    let _other_len = varint::get_u64(bytes, &mut i)?;
+    let _total_len = varint::get_u64(bytes, &mut i)? as usize;
+    let _other_len = varint::get_u64(bytes, &mut i)? as usize;
     let _max_ticks = varint::get_u64(bytes, &mut i)?;
 
-    // recipe
     let recipe_len = varint::get_u64(bytes, &mut i)? as usize;
     if i + recipe_len > bytes.len() {
-        anyhow::bail!("k8l1: recipe len oob");
+        anyhow::bail!("k8l1: recipe oob");
     }
     i += recipe_len;
 
-    // class_patch
+    let mut omega_len: usize = 0;
+    if ver == K8L1_VERSION_V2 {
+        omega_len = varint::get_u64(bytes, &mut i)? as usize;
+        if i + omega_len > bytes.len() {
+            anyhow::bail!("k8l1: omega oob");
+        }
+        i += omega_len;
+    }
+
     let class_patch_len = varint::get_u64(bytes, &mut i)? as usize;
     if i + class_patch_len > bytes.len() {
-        anyhow::bail!("k8l1: class patch len oob");
+        anyhow::bail!("k8l1: class_patch oob");
     }
     let class_patch = bytes[i..i + class_patch_len].to_vec();
     i += class_patch_len;
 
-    // other_patch
     let other_patch_len = varint::get_u64(bytes, &mut i)? as usize;
     if i + other_patch_len > bytes.len() {
-        anyhow::bail!("k8l1: other patch len oob");
+        anyhow::bail!("k8l1: other_patch oob");
     }
     let other_patch = bytes[i..i + other_patch_len].to_vec();
     i += other_patch_len;
 
-    if i != bytes.len() {
-        anyhow::bail!("k8l1: trailing bytes");
-    }
+    let trailing_len = bytes.len().saturating_sub(i);
 
-    Ok(K8L1View { class_patch, other_patch })
+    Ok(K8L1View {
+        class_patch,
+        other_patch,
+        omega_len,
+        trailing_len,
+    })
 }
 
-fn demux_other_patches(bytes: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
-    let mut i = 0usize;
-    let n = varint::get_u64(bytes, &mut i)? as usize;
+fn patch_count(patch_bytes: &[u8]) -> anyhow::Result<usize> {
+    let p = PatchList::decode(patch_bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(p.entries.len())
+}
 
-    let mut kind = Vec::new();
-    let mut caseb = Vec::new();
-    let mut letter = Vec::new();
-    let mut digit = Vec::new();
-    let mut punct = Vec::new();
-    let mut raw = Vec::new();
+fn demux_other_patches(other_bytes: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let mut i = 0usize;
+
+    let n = varint::get_u64(other_bytes, &mut i)? as usize;
+
+    let mut kind: Option<Vec<u8>> = None;
+    let mut caseb: Option<Vec<u8>> = None;
+    let mut letter: Option<Vec<u8>> = None;
+    let mut digit: Option<Vec<u8>> = None;
+    let mut punct: Option<Vec<u8>> = None;
+    let mut raw: Option<Vec<u8>> = None;
 
     for _ in 0..n {
-        let id = varint::get_u64(bytes, &mut i)?;
-        let len = varint::get_u64(bytes, &mut i)? as usize;
-        if i + len > bytes.len() {
-            anyhow::bail!("k8l1: other_patch mux len oob");
+        let id = varint::get_u64(other_bytes, &mut i)?;
+        let len = varint::get_u64(other_bytes, &mut i)? as usize;
+        if i + len > other_bytes.len() {
+            anyhow::bail!("k8l1: other_patch mux oob (id={}, len={})", id, len);
         }
-        let chunk = bytes[i..i + len].to_vec();
+        let payload = other_bytes[i..i + len].to_vec();
         i += len;
 
         match id {
-            PATCH_KIND => kind = chunk,
-            PATCH_CASE => caseb = chunk,
-            PATCH_LETTER => letter = chunk,
-            PATCH_DIGIT => digit = chunk,
-            PATCH_PUNCT => punct = chunk,
-            PATCH_RAW => raw = chunk,
+            PATCH_KIND => kind = Some(payload),
+            PATCH_CASE => caseb = Some(payload),
+            PATCH_LETTER => letter = Some(payload),
+            PATCH_DIGIT => digit = Some(payload),
+            PATCH_PUNCT => punct = Some(payload),
+            PATCH_RAW => raw = Some(payload),
             _ => {}
         }
     }
 
-    if i != bytes.len() {
-        anyhow::bail!("k8l1: other_patch mux trailing bytes");
-    }
+    let kind = kind.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing kind"))?;
+    let caseb = caseb.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing case"))?;
+    let letter = letter.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing letter"))?;
+    let digit = digit.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing digit"))?;
+    let punct = punct.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing punct"))?;
+    let raw = raw.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing raw"))?;
 
     Ok((kind, caseb, letter, digit, punct, raw))
-}
-
-fn patch_count(bytes: &[u8]) -> anyhow::Result<usize> {
-    if bytes.is_empty() {
-        return Ok(0);
-    }
-    let pl = PatchList::decode(bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(pl.entries.len())
 }
 
 pub fn run(args: LaneSweepArgs) -> anyhow::Result<()> {
@@ -168,8 +177,8 @@ pub fn run(args: LaneSweepArgs) -> anyhow::Result<()> {
         let take = sz.min(input.len());
         let slice = &input[..take];
 
-        let (artifact, stats) = lane::encode_k8l1(slice, &recipe_bytes, args.max_ticks)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let (artifact, stats) =
+            lane::encode_k8l1(slice, &recipe_bytes, args.max_ticks).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let v = decode_k8l1_view(&artifact)?;
         let class_m = patch_count(&v.class_patch)?;
@@ -187,7 +196,7 @@ pub fn run(args: LaneSweepArgs) -> anyhow::Result<()> {
             take,
             artifact.len(),
             class_m,
-            stats.other_mismatches,
+            kind_m + case_m + letter_m + digit_m + punct_m + raw_m,
             kind_m,
             case_m,
             letter_m,
