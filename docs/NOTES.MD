@@ -20432,3 +20432,531 @@ For reference, the latest uploaded codebundle snapshot is here:
 
 
 ### END NOTE - MARCH 17 2026 - 14:45 CST
+
+
+
+### BEGIN NOTE - MARCH 17 2026 - 16:20 CST
+
+
+
+Here are the updated carry-over notes for the next instance, with the latest ApexTrace experiments and the first real K8DNZ lane-integration result folded in.
+
+---
+
+# K8DNZ carry-over notes — ApexTrace local-structure and first lane win checkpoint
+
+## 0) Executive snapshot
+
+K8DNZ is now in a meaningfully stronger position than it was at the March 17 14:45 checkpoint.
+
+The repo is still a modular Rust workspace with `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace`, and the latest codebundle shows ApexTrace is fully integrated alongside the existing cadence, lane, timemap, omega, merkle, and encode/decode surfaces. The filtered tree in the latest codebundle shows `crates/k8dnz-apextrace`, `crates/k8dnz-cli/src/cmd/apextrace.rs`, `k8dnz-core/src/lane/mod.rs`, `repr/text_norm.rs`, `repr/ws_lanes.rs`, and `symbol/patch.rs` all present in one repo shape.  
+
+The deepest change from this session is not just that ApexTrace can render pretty lattices or produce better-than-random short-window fits. The deeper change is:
+
+> ApexTrace has now earned its first real K8DNZ codec-surface win.
+
+That win is small, but it is real: on the current whitespace/class-lane experiment, the first ApexTrace adapter beat the current baseline class patch by 35 packed bytes and 35 patch entries on full `Genesis1.txt`. That means ApexTrace is no longer only a diagnostic curiosity. It has now helped on the thing K8DNZ actually cares about: residual size.
+
+That does **not** mean the breakthrough is solved. It means ApexTrace has crossed the threshold from “interesting primitive” to “credible candidate lane predictor.”
+
+---
+
+## 1) Core doctrine still unchanged
+
+The foundational K8DNZ doctrine remains intact.
+
+From the original project notes, the system is still supposed to be a deterministic, fixed-point cadence machine built around free orbit, alignment, lockstep frustum traversal, deterministic field sampling, and paired emission, with turns/fixed-point rather than floating-point math, and reproducibility as a non-negotiable invariant.  
+
+From the breakthrough blueprint, the real path is still:
+
+* do **not** predict arbitrary raw bytes directly if a structured representation can make the target more law-like,
+* split into reversible, corpus-free structured lanes,
+* predict symbols in each lane,
+* encode sparse residual patches,
+* and enforce a hard byte budget with real accounting.   
+
+The blueprint remains explicit that the only honest route to the ultra-hard goal is to make the data become algorithmically simple under the generator so the residual collapses. That is still the mountain. ApexTrace is now one more route up that mountain, not the summit itself.  
+
+---
+
+## 2) Current repo state to remember
+
+The latest codebundle shows the repo is now a 134-file Rust workspace with these relevant surfaces: `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace`, plus test coverage across determinism, roundtrips, cadence stability, ws-lane roundtrip, golden streams, timemap roundtrip, and the ApexTrace tests. 
+
+Important practical state:
+
+* `k8dnz-apextrace` now has `dibit.rs`, `fit.rs`, `generator.rs`, `key.rs`, `law.rs`, `render.rs`, and tests. 
+* `k8dnz-cli/src/cmd/apextrace.rs` now exposes:
+
+  * `pack`
+  * `inspect`
+  * `gen`
+  * `fit`
+  * `render`
+  * `stats`
+  * `window-scan`
+  * `ws-lane` 
+* The lane world is still present and important:
+
+  * `repr/text_norm.rs`
+  * `repr/ws_lanes.rs`
+  * `lane/mod.rs`
+  * `symbol/patch.rs`
+  * `encode2kb`
+  * `lane_sweep` 
+
+That means the next instance should build on the current integrated workspace, not recreate any of this ApexTrace plumbing.
+
+---
+
+## 3) What we had already proven before this session
+
+At the prior checkpoint, we had already established:
+
+* ApexTrace is integrated into K8DNZ as a sibling crate, not a separate repo.
+* ApexTrace can fit short byte windows better than a naive quaternary baseline.
+* The raw lattice visit counts are mostly combinatorial baseline, so the real signal must come from subtree-conditioned deviations, not the baseline itself.
+* The correct next move was subtree stats, then 16-byte moving-window scans, then a lane experiment. 
+
+Those recommendations have now been substantially executed.
+
+---
+
+## 4) What we accomplished in this session
+
+### A) We added the missing instrumentation layer
+
+ApexTrace now has the diagnostic surfaces that the previous notes said were missing:
+
+* subtree-conditioned stats
+* `stats` command
+* `window-scan` command
+* significance-filtered hot-node reporting
+* scan-level summary output
+* and then the first lane adapter, `ws-lane`.  
+
+This matters because before this session, ApexTrace could fit and render, but it could not tell us **where** its signal lived. Now it can.
+
+### B) We proved the local-window effect is real
+
+The full Genesis 16-byte moving-window scan completed successfully with:
+
+* `windows=4186`
+* best window at byte range `1515..1531`
+* `matches=35 / 64`
+* `match_pct=54.687500`
+* `longest_run=6`
+
+And once the significance filters were added, that same best window also remained best under both `sig8` and `sig16`, meaning it was not merely winning because of a trivial perfect tiny leaf. The scan summary code now explicitly reports `hot_sig8_*` and `hot_sig16_*` fields and scan percentiles.  
+
+The important practical result from the run was:
+
+* top windows existed at `54.6875%`, `53.125%`, and `51.5625%`
+* the high tail was sparse
+* and the best windows survived significance filtering with medium-size subtree support.
+
+### C) We corrected the hot-node interpretation
+
+The first scan outputs showed that the raw `hot_node` field was too easily dominated by tiny perfect nodes of size 1 or 2. That was a real interpretive trap.
+
+The fix was to add:
+
+* `hot_sig8_*`
+* `hot_sig16_*`
+
+and scan summaries based on those larger subtrees. The code now explicitly filters on `row.hot_sig8_subtree_size >= 8` and `row.hot_sig16_subtree_size >= 16` before reporting the best significant windows. 
+
+That was an important correction. It moved the interpretation from “lucky leaf” to “meaningful medium-size hot region.”
+
+### D) We identified what the best windows actually are
+
+The top text windows were not random-looking byte slices. They were phrase-shaped English text.
+
+From the terminal experiments:
+
+* `219..235` → ` Let there be li`
+* `1515..1531` → ` Let there be li`
+* `396..412` → `ess he called Ni`
+
+The repeated grep check showed that ` Let there be li` occurs at both byte offsets 219 and 1515. That means at least part of the top-window strength is associated with repeated textual structure in Genesis, not arbitrary raw-byte accidents.
+
+Interpretation:
+
+* ApexTrace seems to like repeated, phrase-shaped, structurally simple local English patterns.
+* That strongly supports the idea that it is better suited to structured lane prediction than to brute-force raw-byte reconstruction.
+
+### E) We executed the first real ApexTrace × K8DNZ lane trial
+
+This is the biggest result of the session.
+
+We added `apextrace ws-lane`, which compares ApexTrace directly against the current K8L1 baseline on the whitespace/class-lane surface inside the existing repo. The current command exists in `k8dnz-cli/src/cmd/apextrace.rs` and uses `WsLanes::split`, `lane::encode_k8l1`, `PatchList`, and an ApexTrace search over the lane stream. It also includes baseline auto-retry on insufficient emissions, using progressively larger `max_ticks`.  
+
+The actual run on `text/Genesis1.txt` with `--seed-count 512` produced:
+
+* baseline required auto-retries:
+
+  * 20,000,000 failed
+  * 40,000,000 failed
+  * 80,000,000 succeeded
+* `baseline_artifact_bytes=11560`
+* `baseline_class_mismatches=2717`
+* `baseline_class_patch_entries=2717`
+* `baseline_class_patch_bytes=3260`
+
+For ApexTrace on the same class lane:
+
+* `apex_matches=1519`
+* `apex_total=4201`
+* `apex_match_pct=36.158058`
+* `apex_longest_run=8`
+* `apex_patch_entries=2682`
+* `apex_patch_bytes=3225`
+
+Net effect:
+
+* `delta_patch_bytes = -35`
+* `delta_patch_entries = -35`
+
+And the final stderr summary confirmed that the ApexTrace path beat the baseline class patch by 35 bytes while using the exact same comparison surface.
+
+This is the first real on-the-board codec win for ApexTrace inside K8DNZ.
+
+---
+
+## 5) Interpretation of the new results
+
+### A) This is a real win, but a small one
+
+The whitespace/class-lane result is modest:
+
+* baseline class patch bytes: 3260
+* ApexTrace class patch bytes: 3225
+* improvement: 35 bytes, about 1.07%
+
+That is **not** a breakthrough by itself.
+
+But it is extremely important because the adapter is still crude:
+
+* one global ApexKey over the whole class lane
+* very simple `bucket_u8_local(..., 3)` mapping
+* no chunking
+* no local window selection
+* no per-subtree adaptation
+* no lane-specific law family
+
+And even with that crude setup, ApexTrace still edged out the current baseline.
+
+That is the right kind of evidence. It says the idea may have real leverage once localized.
+
+### B) The local-window thesis got stronger, not weaker
+
+Before `ws-lane`, the evidence for ApexTrace was mostly diagnostic:
+
+* short-window fits
+* subtree stats
+* phrase clustering
+
+Now we have a real codec-surface result that agrees with those diagnostics:
+
+* ApexTrace helps more when the structure is local and phrase-like.
+* The first global lane trial still won a little.
+* Therefore the next likely gain comes from **chunked/local lane prediction**, not from clinging to one giant global predictor.
+
+### C) The histogram mismatch shows obvious room for improvement
+
+The class-lane histogram comparison from the `ws-lane` run was:
+
+* target:
+
+  * other = 3344
+  * space = 797
+  * newline = 60
+* predicted:
+
+  * other = 1474
+  * space = 1397
+  * newline = 1330
+
+So the current ApexTrace adapter is badly miscalibrated to the true lane distribution and still managed to win slightly on patch size.
+
+That is actually encouraging. It means the current mapping is not especially good yet, and there is plausible headroom from a smarter symbol mapping or chunk-local fit.
+
+### D) The null-model caution still matters
+
+One methodological correction remains important:
+
+Once we search 512 seeds per window, the naive 25% quaternary baseline is no longer the right null. Best-of-512 on random or shuffled targets will also exceed 25%.
+
+That does **not** invalidate the current signal. It just means future interpretation should compare ApexTrace against:
+
+* shuffled Genesis controls
+* random-byte controls
+* simple synthetic structured controls
+
+under the same search budget.
+
+That null-control step is still worth doing later, but after the lane win it is no longer the highest-priority action.
+
+---
+
+## 6) What these results do and do not mean
+
+### What they do mean
+
+* ApexTrace is now a credible **candidate lane predictor** inside K8DNZ.
+* Local structure inside Genesis is real enough to be exploited by ApexTrace.
+* Phrase-shaped and repeated text regions are especially favorable.
+* Medium-size subtrees matter; tiny perfect leaves are not the real story.
+* The repo now has the instrumentation to study this honestly.
+
+### What they do **not** mean
+
+* We have not solved the 2KB Genesis objective.
+* We have not shown a global raw-byte ApexTrace compressor.
+* We have not shown a strong total-artifact win yet; we only showed a class-lane patch win.
+* We have not yet integrated ApexTrace into punctuation, case, or letters lanes.
+* We have not yet shown a knee curve where residual bytes collapse toward the ultra-hard regime required by the blueprint.
+
+So the correct stance is:
+
+> progress, yes
+> breakthrough, no
+> stronger odds for the lane path, yes
+> proof of endgame budget, no
+
+---
+
+## 7) Strategic consequences for the project
+
+The strongest strategic consequence is that the blueprint’s lane ladder is now even more justified than before:
+
+1. whitespace lane only
+2. whitespace + punctuation
+3. add case
+4. add letters 
+
+The blueprint also says that the real truth surface is not generic match rates but:
+
+* residual entries count
+* residual bytes raw
+* residual bytes packed
+* total bytes best-case
+* knee-curve behavior as target size grows. 
+
+The first ApexTrace lane experiment finally speaks in that language. That is why it matters.
+
+The repo and experiments now support a more disciplined framing:
+
+* Timemap and bitfield work still matter as baselines and alternate fronts.
+* ApexTrace is now a parallel predictor candidate.
+* The next discriminating test is **not** another giant abstract scan.
+* The next discriminating test is a tighter head-to-head on residual size under lane-local conditions.
+
+---
+
+## 8) What remains unfinished
+
+### A) Chunked/local ws-lane ApexTrace does not exist yet
+
+This is now the most obvious missing experiment.
+
+Everything so far says ApexTrace is better locally than globally. So the next natural implementation step is:
+
+* split the class/whitespace lane into chunks or local windows
+* fit ApexTrace per chunk
+* emit a deterministic small descriptor per chunk
+* compare packed patch bytes against:
+
+  * baseline lane predictor
+  * current global ApexTrace ws-lane
+
+This is the single most likely near-term place to get a second, larger win.
+
+### B) Better lane mapping does not exist yet
+
+The current adapter uses a very crude bucket mapping into three classes. The target/predicted histogram mismatch shows that this mapping is probably leaving performance on the table.
+
+We still need to test:
+
+* smarter deterministic symbol mapping
+* maybe distribution-aware but still corpus-free mapping
+* possibly per-lane offset/phase scheduling
+
+### C) ApexTrace has only been tested on the class/whitespace lane
+
+It has not yet been tested on:
+
+* whitespace + punctuation
+* case
+* letters
+
+The blueprint still says these are the right next rungs. 
+
+### D) The total-artifact budget picture is still unsolved
+
+The lane win was only on a component surface. We still do not know whether ApexTrace improves:
+
+* best total artifact bytes
+* budget behavior
+* knee-curve behavior
+* or only one lane in isolation
+
+That remains to be measured.
+
+---
+
+## 9) Best current interpretation of ApexTrace inside K8DNZ
+
+ApexTrace should now be treated as all of the following:
+
+* a deterministic quaternary generator
+* a geometric/local-structure diagnostic
+* a candidate local lane predictor
+* a now-proven small residual improver on the class/whitespace lane
+* not yet a standalone compressor
+* not yet a proven route to the 2KB Genesis finish
+
+That is a stronger and more honest place than we were at the last checkpoint.
+
+---
+
+## 10) Recommended next experiments in exact order
+
+### 1. Implement chunked/local `ws-lane`
+
+This is the top priority now.
+
+Goal:
+
+* compare three predictors on the same class lane:
+
+  * baseline K8L1 predictor
+  * global ApexTrace ws-lane
+  * chunked/local ApexTrace ws-lane
+
+Metrics:
+
+* patch entries
+* patch bytes
+* runtime
+* optional per-chunk best seeds
+
+### 2. Add a compact comparison command or mode
+
+The first lane experiment already shows the right metrics. Now make it easier to compare variants in one run.
+
+A good next surface would print:
+
+* baseline_class_patch_bytes
+* apex_global_patch_bytes
+* apex_chunked_patch_bytes
+* deltas between them
+* target size
+* ticks used on baseline side
+* seed count / chunk size on ApexTrace side
+
+### 3. Move to `whitespace + punctuation`
+
+If chunked ws-lane wins again, move immediately to the second blueprint rung. 
+
+### 4. Only then consider case, then letters
+
+Letters are likely harder and will probably need the most locality-aware treatment. The earlier notes already showed `letter` and `kind` were some of the biggest cost centers in the lane breakdown. 
+
+### 5. Later: null calibration
+
+Still worth doing, but it has slipped behind the lane experiments in priority.
+
+Run matched `window-scan` controls on:
+
+* shuffled Genesis
+* random bytes
+* repeated synthetic patterns
+
+This will sharpen the interpretation of the local-window fit scores.
+
+---
+
+## 11) What to paste first thing next instance
+
+To move fast next time, start with this exact state snapshot.
+
+### A) Confirm current repo/build state
+
+Run:
+
+```bash
+cargo build
+cargo test -p k8dnz-apextrace
+```
+
+### B) Re-run the current known-good baseline comparison
+
+Run:
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- apextrace ws-lane --recipe ./configs/tuned_validated.k8r --in text/Genesis1.txt --seed-count 512
+```
+
+Expected remembered outcome from this session:
+
+* baseline auto-retries to 80,000,000 ticks
+* baseline class patch bytes = 3260
+* ApexTrace class patch bytes = 3225
+* delta = -35 bytes
+
+### C) Then implement and test chunked/local ws-lane
+
+The next instance should immediately aim to produce a second command variant or option such as:
+
+* `apextrace ws-lane --chunk-bytes ...`
+* or a sibling command such as `apextrace ws-lane-chunked`
+
+And then compare:
+
+* baseline
+* global ApexTrace
+* chunked ApexTrace
+
+### D) Keep the local-window discoveries in mind
+
+Remember:
+
+* best 16-byte windows were sparse, not everywhere
+* top repeated snippet was ` Let there be li`
+* medium-size `sig8` and `sig16` support mattered
+* therefore local fitting is the strongest next lever
+
+---
+
+## 12) Current confidence update
+
+The odds of **some** meaningful K8DNZ success have gone up.
+
+The odds of the full endgame artifact have not exploded, but they did improve because we now have evidence on the real metric: residual size on a live lane.
+
+A precise way to say it:
+
+> Before this session, ApexTrace was promising as a diagnostic and local-structure primitive.
+> After this session, ApexTrace has become a small but real codec contributor inside K8DNZ.
+
+That is a material change in project state.
+
+---
+
+## 13) Bottom-line carry-forward statement
+
+The cleanest summary for the next instance is:
+
+> K8DNZ now has ApexTrace fully integrated, instrumented, and tested as more than a geometric curiosity. Full-window scans across Genesis1 showed rare but real local windows up to 54.6875% quaternary match, and significance filtering proved the best windows are backed by medium-size coherent subtrees rather than only lucky tiny leaves. The strongest windows cluster around repeated, phrase-shaped English text such as “ Let there be li,” which supports the view that ApexTrace likes local structured language patterns more than arbitrary raw bytes. Most importantly, the first real lane-level integration (`apextrace ws-lane`) produced a genuine codec-surface win on full `Genesis1.txt`: ApexTrace reduced the baseline class patch from 3260 bytes to 3225 bytes, a 35-byte improvement, even with a crude global adapter. The next serious move is therefore not another raw-byte curiosity run, but a chunked/local ws-lane ApexTrace experiment, followed by the next rung of the blueprint lane ladder: whitespace + punctuation, then case, then letters. The project is still far from the 2KB Genesis finish, but ApexTrace has now earned a credible place in the real predictor stack.
+
+### END NOTE - MARCH 17 2026 - LATE SESSION CST
+
+For reference:
+
+* [latest codebundle](sandbox:/mnt/data/codebundle.md) 
+* [latest project notes](sandbox:/mnt/data/NOTES.MD)
+* [blueprint](sandbox:/mnt/data/BLUEPRINT.MD)
+
+
+### END NOTE - MARCH 17 2026 - 16:20 CST

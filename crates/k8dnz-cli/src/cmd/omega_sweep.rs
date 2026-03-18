@@ -1,8 +1,11 @@
 // crates/k8dnz-cli/src/cmd/omega_sweep.rs
 
+use std::io::Write;
+
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, ValueEnum};
 
-use crate::cmd::omega::{omega_with_lane, parse_omega_spec, LaneName};
+use crate::cmd::omega::{omega_to_spec, omega_with_lane, parse_omega_spec, LaneName};
 use crate::io::recipe_file;
 use k8dnz_core::lane;
 
@@ -54,6 +57,11 @@ pub struct OmegaSweepArgs {
     #[arg(long, default_value_t = 1)]
     pub stride: u64,
 
+    /// Optional comma-separated stride list, e.g. "1,2,3,5".
+    /// When present, this overrides --stride and sweeps all listed strides.
+    #[arg(long)]
+    pub stride_list: Option<String>,
+
     /// Optional baseline omega spec; the sweep overrides only the chosen lane.
     #[arg(long)]
     pub omega: Option<String>,
@@ -62,33 +70,42 @@ pub struct OmegaSweepArgs {
     #[arg(long, default_value_t = 20_000_000)]
     pub max_ticks: u64,
 
+    #[arg(long, default_value_t = true)]
+    pub auto_ticks: bool,
+
+    #[arg(long, default_value_t = 2)]
+    pub auto_ticks_mul: u64,
+
+    #[arg(long, default_value_t = 80_000_000)]
+    pub auto_ticks_cap: u64,
+
     /// Verify decode for each successful row (slower).
     #[arg(long, default_value_t = false)]
     pub verify: bool,
+
+    /// Continue sweep even if a particular candidate fails.
+    #[arg(long, default_value_t = true)]
+    pub fail_soft: bool,
 
     /// Print a BEST line whenever we find a new best artifact_bytes.
     #[arg(long, default_value_t = true)]
     pub print_best: bool,
 
-    /// Continue sweep even if a particular skip fails (recommended).
-    #[arg(long, default_value_t = true)]
-    pub fail_soft: bool,
+    /// Reference zstd level for the truth surface.
+    #[arg(long, default_value_t = 3)]
+    pub zstd_level: i32,
 
-    /// If we fail due to insufficient emissions, auto-increase max_ticks and retry.
-    #[arg(long, default_value_t = true)]
-    pub auto_ticks: bool,
-
-    /// Multiply ticks by this factor on each auto retry.
-    #[arg(long, default_value_t = 2)]
-    pub auto_ticks_mul: u64,
-
-    /// Maximum ticks cap when auto-ticks is enabled.
-    #[arg(long, default_value_t = 80_000_000)]
-    pub auto_ticks_cap: u64,
+    /// Optional budget. If > 0, rows at or below budget are tagged UNDER_BUDGET.
+    #[arg(long, default_value_t = 0)]
+    pub budget_bytes: usize,
 
     /// Optional CSV output file (still prints header/rows to stdout).
     #[arg(long)]
     pub out_csv: Option<String>,
+
+    /// Optional path to write the best resulting omega spec.
+    #[arg(long)]
+    pub best_omega_out: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -107,168 +124,343 @@ struct RowStats {
     emissions_needed: usize,
 }
 
-pub fn run(args: OmegaSweepArgs) -> anyhow::Result<()> {
+#[derive(Clone, Debug)]
+struct SweepRow {
+    lane: String,
+    skip: u64,
+    stride: u64,
+    artifact_bytes: usize,
+    plain_zstd_bytes: usize,
+    delta_vs_plain_zstd: i64,
+    class_mismatches: usize,
+    other_mismatches: usize,
+    kind_mismatches: usize,
+    case_mismatches: usize,
+    letter_mismatches: usize,
+    digit_mismatches: usize,
+    punct_mismatches: usize,
+    raw_mismatches: usize,
+    total_len: usize,
+    other_len: usize,
+    emissions_needed: usize,
+    max_ticks_used: u64,
+    status: String,
+    omega_spec: String,
+}
+
+pub fn run(args: OmegaSweepArgs) -> Result<()> {
     if args.skip_step == 0 {
-        anyhow::bail!("skip-step must be >= 1");
-    }
-    if args.stride == 0 {
-        anyhow::bail!("stride must be >= 1");
+        bail!("skip-step must be >= 1");
     }
     if args.skip_from > args.skip_to {
-        anyhow::bail!("skip-from must be <= skip-to");
+        bail!("skip-from must be <= skip-to");
     }
     if args.auto_ticks_mul < 2 {
-        anyhow::bail!("auto-ticks-mul must be >= 2");
+        bail!("auto-ticks-mul must be >= 2");
     }
     if args.auto_ticks_cap < args.max_ticks {
-        anyhow::bail!("auto-ticks-cap must be >= max-ticks");
+        bail!("auto-ticks-cap must be >= max-ticks");
     }
 
-    let recipe_bytes = recipe_file::load_k8r_bytes(&args.recipe)?;
-    let input = std::fs::read(&args.r#in)?;
+    let recipe_bytes = recipe_file::load_k8r_bytes(&args.recipe)
+        .with_context(|| format!("load recipe {}", args.recipe))?;
+    let input = std::fs::read(&args.r#in).with_context(|| format!("read {}", args.r#in))?;
+    let plain_zstd_bytes = zstd::stream::encode_all(std::io::Cursor::new(&input), args.zstd_level)
+        .context("zstd encode omega-sweep input")?
+        .len();
 
-    // IMPORTANT: your current omega parser returns OmegaProgram.
-    let base: k8dnz_core::lane::OmegaProgram = match &args.omega {
+    let base = match &args.omega {
         Some(s) => parse_omega_spec(s)?,
         None => k8dnz_core::lane::OmegaProgram::default(),
     };
-
+    let base_spec = omega_to_spec(&base);
     let lane_name: LaneName = args.lane.into();
+    let strides = parse_stride_list(args.stride_list.as_deref(), args.stride)?;
 
     let mut out_fh = match &args.out_csv {
         Some(p) => Some(std::io::BufWriter::new(std::fs::File::create(p)?)),
         None => None,
     };
 
-    let header = "skip,artifact_bytes,class_m,other_m,kind_m,case_m,letter_m,digit_m,punct_m,raw_m,total_len,other_len,emissions_needed,max_ticks_used,status\n";
+    let header = "lane,skip,stride,artifact_bytes,plain_zstd_bytes,delta_vs_plain_zstd,class_m,other_m,kind_m,case_m,letter_m,digit_m,punct_m,raw_m,total_len,other_len,emissions_needed,max_ticks_used,status,omega_spec\n";
     print!("{}", header);
     if let Some(fh) = out_fh.as_mut() {
-        use std::io::Write;
         fh.write_all(header.as_bytes())?;
         fh.flush()?;
     }
 
-    let mut best_artifact: Option<usize> = None;
-    let mut best_line: Option<String> = None;
+    eprintln!(
+        "omega_sweep start: lane={} plain_zstd_bytes={} base_omega={}",
+        lane_name.as_str(),
+        plain_zstd_bytes,
+        base_spec
+    );
 
-    let mut skip = args.skip_from;
-    while skip <= args.skip_to {
-        // omega_with_lane now returns OmegaProgram in your tree.
-        let omega: k8dnz_core::lane::OmegaProgram = omega_with_lane(&base, lane_name, skip, args.stride)?;
+    let mut best: Option<SweepRow> = None;
 
-        match encode_with_retries(
-            &input,
-            &recipe_bytes,
-            args.max_ticks,
-            args.auto_ticks,
-            args.auto_ticks_mul,
-            args.auto_ticks_cap,
-            omega,
-        ) {
-            Ok((artifact, st, ticks_used)) => {
-                if args.verify {
-                    let decoded = lane::decode_k8l1(&artifact).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let norm = k8dnz_core::repr::text_norm::normalize_newlines(&input);
-                    if decoded != norm {
-                        let line = format!(
-                            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},VERIFY_FAIL\n",
-                            skip,
-                            st.artifact_bytes,
-                            st.class_mismatches,
-                            st.other_mismatches,
-                            st.kind_mismatches,
-                            st.case_mismatches,
-                            st.letter_mismatches,
-                            st.digit_mismatches,
-                            st.punct_mismatches,
-                            st.raw_mismatches,
-                            st.total_len,
-                            st.other_len,
-                            st.emissions_needed,
-                            ticks_used
-                        );
-                        print!("{}", line);
-                        if let Some(fh) = out_fh.as_mut() {
-                            use std::io::Write;
-                            fh.write_all(line.as_bytes())?;
+    for &stride in &strides {
+        let mut skip = args.skip_from;
+        while skip <= args.skip_to {
+            let omega = omega_with_lane(&base, lane_name, skip, stride)?;
+            let omega_spec = omega_to_spec(&omega);
+
+            match encode_with_retries(
+                &input,
+                &recipe_bytes,
+                args.max_ticks,
+                args.auto_ticks,
+                args.auto_ticks_mul,
+                args.auto_ticks_cap,
+                omega,
+            ) {
+                Ok((artifact, st, ticks_used)) => {
+                    if args.verify {
+                        let decoded = lane::decode_k8l1(&artifact).map_err(|e| anyhow!("{e}"))?;
+                        let norm = k8dnz_core::repr::text_norm::normalize_newlines(&input);
+                        if decoded != norm {
+                            let row = SweepRow {
+                                lane: lane_name.as_str().to_string(),
+                                skip,
+                                stride,
+                                artifact_bytes: st.artifact_bytes,
+                                plain_zstd_bytes,
+                                delta_vs_plain_zstd: st.artifact_bytes as i64 - plain_zstd_bytes as i64,
+                                class_mismatches: st.class_mismatches,
+                                other_mismatches: st.other_mismatches,
+                                kind_mismatches: st.kind_mismatches,
+                                case_mismatches: st.case_mismatches,
+                                letter_mismatches: st.letter_mismatches,
+                                digit_mismatches: st.digit_mismatches,
+                                punct_mismatches: st.punct_mismatches,
+                                raw_mismatches: st.raw_mismatches,
+                                total_len: st.total_len,
+                                other_len: st.other_len,
+                                emissions_needed: st.emissions_needed,
+                                max_ticks_used: ticks_used,
+                                status: "VERIFY_FAIL".to_string(),
+                                omega_spec,
+                            };
+                            emit_row(&row, out_fh.as_mut())?;
+                            if !args.fail_soft {
+                                bail!("verify failed at skip={} stride={}", skip, stride);
+                            }
+                            skip = advance_skip(skip, args.skip_step)?;
+                            continue;
                         }
+                    }
 
-                        if !args.fail_soft {
-                            anyhow::bail!("verify failed at skip={}", skip);
+                    let mut status = String::from("OK");
+                    if args.budget_bytes > 0 && st.artifact_bytes <= args.budget_bytes {
+                        status = String::from("UNDER_BUDGET");
+                    }
+
+                    let row = SweepRow {
+                        lane: lane_name.as_str().to_string(),
+                        skip,
+                        stride,
+                        artifact_bytes: st.artifact_bytes,
+                        plain_zstd_bytes,
+                        delta_vs_plain_zstd: st.artifact_bytes as i64 - plain_zstd_bytes as i64,
+                        class_mismatches: st.class_mismatches,
+                        other_mismatches: st.other_mismatches,
+                        kind_mismatches: st.kind_mismatches,
+                        case_mismatches: st.case_mismatches,
+                        letter_mismatches: st.letter_mismatches,
+                        digit_mismatches: st.digit_mismatches,
+                        punct_mismatches: st.punct_mismatches,
+                        raw_mismatches: st.raw_mismatches,
+                        total_len: st.total_len,
+                        other_len: st.other_len,
+                        emissions_needed: st.emissions_needed,
+                        max_ticks_used: ticks_used,
+                        status,
+                        omega_spec,
+                    };
+                    emit_row(&row, out_fh.as_mut())?;
+
+                    let is_better = match &best {
+                        None => true,
+                        Some(cur) => better_row(&row, cur),
+                    };
+                    if is_better {
+                        best = Some(row.clone());
+                        if args.print_best {
+                            eprintln!(
+                                "BEST lane={} skip={} stride={} artifact_bytes={} delta_vs_plain_zstd={} class_m={} other_m={} max_ticks_used={} omega={}",
+                                row.lane,
+                                row.skip,
+                                row.stride,
+                                row.artifact_bytes,
+                                row.delta_vs_plain_zstd,
+                                row.class_mismatches,
+                                row.other_mismatches,
+                                row.max_ticks_used,
+                                row.omega_spec
+                            );
                         }
-
-                        skip = skip.saturating_add(args.skip_step);
-                        continue;
                     }
                 }
-
-                let line = format!(
-                    "{},{},{},{},{},{},{},{},{},{},{},{},{},{},OK\n",
-                    skip,
-                    st.artifact_bytes,
-                    st.class_mismatches,
-                    st.other_mismatches,
-                    st.kind_mismatches,
-                    st.case_mismatches,
-                    st.letter_mismatches,
-                    st.digit_mismatches,
-                    st.punct_mismatches,
-                    st.raw_mismatches,
-                    st.total_len,
-                    st.other_len,
-                    st.emissions_needed,
-                    ticks_used
-                );
-
-                print!("{}", line);
-                if let Some(fh) = out_fh.as_mut() {
-                    use std::io::Write;
-                    fh.write_all(line.as_bytes())?;
-                }
-
-                let cur = st.artifact_bytes;
-                let is_better = best_artifact.map(|b| cur < b).unwrap_or(true);
-                if is_better {
-                    best_artifact = Some(cur);
-                    best_line = Some(line.trim_end().to_string());
-                    if args.print_best {
-                        if let Some(bl) = &best_line {
-                            println!("BEST,{}", bl);
-                        }
+                Err(e) => {
+                    let row = SweepRow {
+                        lane: lane_name.as_str().to_string(),
+                        skip,
+                        stride,
+                        artifact_bytes: 0,
+                        plain_zstd_bytes,
+                        delta_vs_plain_zstd: 0,
+                        class_mismatches: 0,
+                        other_mismatches: 0,
+                        kind_mismatches: 0,
+                        case_mismatches: 0,
+                        letter_mismatches: 0,
+                        digit_mismatches: 0,
+                        punct_mismatches: 0,
+                        raw_mismatches: 0,
+                        total_len: input.len(),
+                        other_len: 0,
+                        emissions_needed: 0,
+                        max_ticks_used: 0,
+                        status: format!("ERROR:{}", e.to_string().replace(',', ";")),
+                        omega_spec,
+                    };
+                    emit_row(&row, out_fh.as_mut())?;
+                    if !args.fail_soft {
+                        return Err(e);
                     }
                 }
             }
-            Err(e) => {
-                let msg = e.to_string().replace(',', ";");
-                let line = format!("{},,,,,,,,,,,,,ERROR:{}\n", skip, msg);
-                print!("{}", line);
-                if let Some(fh) = out_fh.as_mut() {
-                    use std::io::Write;
-                    fh.write_all(line.as_bytes())?;
-                }
 
-                if !args.fail_soft {
-                    return Err(e);
-                }
-            }
-        }
-
-        skip = skip.saturating_add(args.skip_step);
-        if skip == u64::MAX {
-            break;
+            skip = advance_skip(skip, args.skip_step)?;
         }
     }
 
     if let Some(fh) = out_fh.as_mut() {
-        use std::io::Write;
         fh.flush()?;
     }
 
-    if let Some(bl) = best_line {
-        eprintln!("best_row={}", bl);
+    if let Some(best) = &best {
+        eprintln!(
+            "best_row=lane={} skip={} stride={} artifact_bytes={} plain_zstd_bytes={} delta_vs_plain_zstd={} class_m={} other_m={} kind_m={} case_m={} letter_m={} digit_m={} punct_m={} raw_m={} total_len={} other_len={} emissions_needed={} max_ticks_used={} status={} omega={}",
+            best.lane,
+            best.skip,
+            best.stride,
+            best.artifact_bytes,
+            best.plain_zstd_bytes,
+            best.delta_vs_plain_zstd,
+            best.class_mismatches,
+            best.other_mismatches,
+            best.kind_mismatches,
+            best.case_mismatches,
+            best.letter_mismatches,
+            best.digit_mismatches,
+            best.punct_mismatches,
+            best.raw_mismatches,
+            best.total_len,
+            best.other_len,
+            best.emissions_needed,
+            best.max_ticks_used,
+            best.status,
+            best.omega_spec,
+        );
+
+        if let Some(path) = args.best_omega_out.as_deref() {
+            std::fs::write(path, best.omega_spec.as_bytes())
+                .with_context(|| format!("write {}", path))?;
+            eprintln!("best_omega_written={}", path);
+        }
     }
 
     Ok(())
+}
+
+fn emit_row(row: &SweepRow, out_fh: Option<&mut std::io::BufWriter<std::fs::File>>) -> Result<()> {
+    let line = format!(
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+        row.lane,
+        row.skip,
+        row.stride,
+        row.artifact_bytes,
+        row.plain_zstd_bytes,
+        row.delta_vs_plain_zstd,
+        row.class_mismatches,
+        row.other_mismatches,
+        row.kind_mismatches,
+        row.case_mismatches,
+        row.letter_mismatches,
+        row.digit_mismatches,
+        row.punct_mismatches,
+        row.raw_mismatches,
+        row.total_len,
+        row.other_len,
+        row.emissions_needed,
+        row.max_ticks_used,
+        csv_escape(&row.status),
+        csv_escape(&row.omega_spec),
+    );
+    print!("{}", line);
+    if let Some(fh) = out_fh {
+        fh.write_all(line.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn better_row(a: &SweepRow, b: &SweepRow) -> bool {
+    (
+        a.artifact_bytes,
+        a.delta_vs_plain_zstd,
+        a.other_mismatches,
+        a.class_mismatches,
+        a.max_ticks_used,
+        a.skip,
+        a.stride,
+    ) < (
+        b.artifact_bytes,
+        b.delta_vs_plain_zstd,
+        b.other_mismatches,
+        b.class_mismatches,
+        b.max_ticks_used,
+        b.skip,
+        b.stride,
+    )
+}
+
+fn parse_stride_list(spec: Option<&str>, fallback_stride: u64) -> Result<Vec<u64>> {
+    match spec {
+        Some(s) => {
+            let mut out = Vec::new();
+            for part in s.split(',') {
+                let t = part.trim();
+                if t.is_empty() {
+                    continue;
+                }
+                let v = t.parse::<u64>()?;
+                if v == 0 {
+                    bail!("stride-list values must be >= 1");
+                }
+                out.push(v);
+            }
+            if out.is_empty() {
+                bail!("stride-list is empty");
+            }
+            out.sort_unstable();
+            out.dedup();
+            Ok(out)
+        }
+        None => {
+            if fallback_stride == 0 {
+                bail!("stride must be >= 1");
+            }
+            Ok(vec![fallback_stride])
+        }
+    }
+}
+
+fn advance_skip(skip: u64, step: u64) -> Result<u64> {
+    let next = skip.saturating_add(step);
+    if next == u64::MAX {
+        bail!("omega-sweep overflowed skip range");
+    }
+    Ok(next)
 }
 
 fn encode_with_retries(
@@ -279,11 +471,10 @@ fn encode_with_retries(
     mul: u64,
     cap: u64,
     omega: k8dnz_core::lane::OmegaProgram,
-) -> anyhow::Result<(Vec<u8>, RowStats, u64)> {
-    let mut max_ticks = base_max_ticks;
+) -> Result<(Vec<u8>, RowStats, u64)> {
+    let mut max_ticks = base_max_ticks.max(1);
 
     loop {
-        // IMPORTANT: OmegaProgram -> use the *_omega_prog API.
         match lane::encode_k8l1_with_omega_prog(input, recipe_bytes, max_ticks, omega.clone()) {
             Ok((artifact, st)) => {
                 let row = RowStats {
@@ -311,14 +502,19 @@ fn encode_with_retries(
                 if auto_ticks && is_insufficient && max_ticks < cap {
                     let next = max_ticks.saturating_mul(mul).min(cap);
                     if next == max_ticks {
-                        return Err(anyhow::anyhow!("{e}"));
+                        return Err(anyhow!("{e}"));
                     }
                     max_ticks = next;
                     continue;
                 }
 
-                return Err(anyhow::anyhow!("{e}"));
+                return Err(anyhow!("{e}"));
             }
         }
     }
+}
+
+fn csv_escape(s: &str) -> String {
+    let escaped = s.replace('"', "\"\"");
+    format!("\"{}\"", escaped)
 }

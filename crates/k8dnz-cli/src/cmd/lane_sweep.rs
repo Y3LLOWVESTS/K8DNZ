@@ -1,11 +1,17 @@
 // crates/k8dnz-cli/src/cmd/lane_sweep.rs
 
+use anyhow::{anyhow, Context, Result};
 use clap::Args;
 
+use crate::cmd::omega::{omega_to_spec, parse_omega_spec};
 use crate::io::recipe_file;
 use k8dnz_core::lane;
 use k8dnz_core::symbol::patch::PatchList;
 use k8dnz_core::symbol::varint;
+
+const MAGIC_K8L1: &[u8; 4] = b"K8L1";
+const K8L1_VERSION_MIN: u8 = 1;
+const K8L1_VERSION_MAX: u8 = 3;
 
 const PATCH_KIND: u64 = 1;
 const PATCH_CASE: u64 = 2;
@@ -13,11 +19,6 @@ const PATCH_LETTER: u64 = 3;
 const PATCH_DIGIT: u64 = 4;
 const PATCH_PUNCT: u64 = 5;
 const PATCH_RAW: u64 = 6;
-
-const MAGIC_K8L1: &[u8; 4] = b"K8L1";
-const K8L1_VERSION_MIN: u8 = 1;
-const K8L1_VERSION_MAX: u8 = 2;
-const K8L1_VERSION_V2: u8 = 2;
 
 #[derive(Args)]
 pub struct LaneSweepArgs {
@@ -32,9 +33,161 @@ pub struct LaneSweepArgs {
 
     #[arg(long, default_value_t = 20_000_000)]
     pub max_ticks: u64,
+
+    #[arg(long, default_value_t = true)]
+    pub auto_ticks: bool,
+
+    #[arg(long, default_value_t = 2)]
+    pub auto_mul: u64,
+
+    #[arg(long, default_value_t = 2_000_000_000)]
+    pub auto_max_ticks: u64,
+
+    #[arg(long, default_value_t = 3)]
+    pub zstd_level: i32,
+
+    #[arg(long)]
+    pub omega: Option<String>,
+
+    #[arg(long)]
+    pub out_csv: Option<String>,
 }
 
-fn parse_sizes(s: &str) -> anyhow::Result<Vec<usize>> {
+#[derive(Clone, Debug)]
+struct K8L1View {
+    recipe_len: usize,
+    omega_len: usize,
+    class_patch_len: usize,
+    other_patch_len: usize,
+    #[allow(dead_code)]
+    class_patch: Vec<u8>,
+    other_patch: Vec<u8>,
+    consumed_len: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PatchBreakdown {
+    kind: usize,
+    caseb: usize,
+    letter: usize,
+    digit: usize,
+    punct: usize,
+    raw: usize,
+
+    kind_bytes: usize,
+    caseb_bytes: usize,
+    letter_bytes: usize,
+    digit_bytes: usize,
+    punct_bytes: usize,
+    raw_bytes: usize,
+
+    other_mux_overhead_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SweepRow {
+    size: usize,
+    omega_spec: String,
+    max_ticks_used: u64,
+    input_bytes: usize,
+    plain_zstd_bytes: usize,
+    artifact_bytes: usize,
+    delta_vs_plain_zstd: i64,
+    recipe_bytes: usize,
+    omega_bytes: usize,
+    class_patch_bytes: usize,
+    other_patch_bytes: usize,
+    header_overhead: usize,
+    class_mismatches: usize,
+    other_mismatches: usize,
+    kind_mismatches: usize,
+    case_mismatches: usize,
+    letter_mismatches: usize,
+    digit_mismatches: usize,
+    punct_mismatches: usize,
+    raw_mismatches: usize,
+    emissions_needed: u64,
+}
+
+pub fn run(args: LaneSweepArgs) -> Result<()> {
+    let input = std::fs::read(&args.r#in).with_context(|| format!("read {}", args.r#in))?;
+    let recipe_bytes = recipe_file::load_k8r_bytes(&args.recipe)
+        .with_context(|| format!("load recipe {}", args.recipe))?;
+    let omega = match args.omega.as_deref() {
+        Some(spec) => parse_omega_spec(spec)?,
+        None => k8dnz_core::lane::OmegaProgram::default(),
+    };
+    let omega_spec = omega_to_spec(&omega);
+
+    let sizes = parse_sizes(&args.sizes)?;
+    let mut rows = Vec::new();
+
+    for &size in &sizes {
+        let take = size.min(input.len());
+        let slice = &input[..take];
+
+        let (artifact, stats, max_ticks_used) = encode_with_retries(
+            slice,
+            &recipe_bytes,
+            args.max_ticks,
+            args.auto_ticks,
+            args.auto_mul,
+            args.auto_max_ticks,
+            omega.clone(),
+        )?;
+
+        let view = decode_k8l1_view(&artifact)?;
+        let bd = decode_patch_breakdown(&view.other_patch).unwrap_or_default();
+
+        let plain_zstd_bytes = zstd_bytes(slice, args.zstd_level)?;
+        let artifact_bytes = artifact.len();
+        let delta_vs_plain_zstd = artifact_bytes as i64 - plain_zstd_bytes as i64;
+
+        let payload_sum = view
+            .recipe_len
+            .saturating_add(view.omega_len)
+            .saturating_add(view.class_patch_len)
+            .saturating_add(view.other_patch_len);
+        let header_overhead = view.consumed_len.saturating_sub(payload_sum);
+
+        rows.push(SweepRow {
+            size: take,
+            omega_spec: omega_spec.clone(),
+            max_ticks_used,
+            input_bytes: take,
+            plain_zstd_bytes,
+            artifact_bytes,
+            delta_vs_plain_zstd,
+            recipe_bytes: view.recipe_len,
+            omega_bytes: view.omega_len,
+            class_patch_bytes: view.class_patch_len,
+            other_patch_bytes: view.other_patch_len,
+            header_overhead,
+            class_mismatches: stats.class_mismatches,
+            other_mismatches: stats.other_mismatches,
+            kind_mismatches: bd.kind,
+            case_mismatches: bd.caseb,
+            letter_mismatches: bd.letter,
+            digit_mismatches: bd.digit,
+            punct_mismatches: bd.punct,
+            raw_mismatches: bd.raw,
+            emissions_needed: stats.emissions_needed as u64,
+        });
+    }
+
+    eprintln!("lane_sweep omega={}", omega_spec);
+    print_rows(&rows);
+
+    if let Some(path) = args.out_csv.as_deref() {
+        std::fs::write(path, rows_to_csv(&rows).as_bytes())
+            .with_context(|| format!("write {}", path))?;
+        eprintln!("lane_sweep ok: out_csv={}", path);
+    }
+
+    Ok(())
+}
+
+fn parse_sizes(s: &str) -> Result<Vec<usize>> {
     let mut out = Vec::new();
     for part in s.split(',') {
         let t = part.trim();
@@ -49,17 +202,41 @@ fn parse_sizes(s: &str) -> anyhow::Result<Vec<usize>> {
     Ok(out)
 }
 
-#[derive(Clone, Debug)]
-struct K8L1View {
-    class_patch: Vec<u8>,
-    other_patch: Vec<u8>,
-    #[allow(dead_code)]
-    omega_len: usize,
-    #[allow(dead_code)]
-    trailing_len: usize,
+fn encode_with_retries(
+    input: &[u8],
+    recipe_bytes: &[u8],
+    base_max_ticks: u64,
+    auto_ticks: bool,
+    mul: u64,
+    cap: u64,
+    omega: k8dnz_core::lane::OmegaProgram,
+) -> Result<(Vec<u8>, lane::LaneEncodeStats, u64)> {
+    let mut max_ticks = base_max_ticks.max(1);
+    loop {
+        match lane::encode_k8l1_with_omega_prog(input, recipe_bytes, max_ticks, omega.clone()) {
+            Ok((artifact, st)) => return Ok((artifact, st, max_ticks)),
+            Err(e) => {
+                let s = e.to_string();
+                let is_insufficient = s.contains("insufficient emissions")
+                    || s.contains("need 1, got 0")
+                    || s.contains("within max_ticks");
+
+                if auto_ticks && is_insufficient && max_ticks < cap {
+                    let next = max_ticks.saturating_mul(mul).min(cap);
+                    if next == max_ticks {
+                        return Err(anyhow!("{e}"));
+                    }
+                    max_ticks = next;
+                    continue;
+                }
+
+                return Err(anyhow!("{e}"));
+            }
+        }
+    }
 }
 
-fn decode_k8l1_view(bytes: &[u8]) -> anyhow::Result<K8L1View> {
+fn decode_k8l1_view(bytes: &[u8]) -> Result<K8L1View> {
     let mut i = 0usize;
 
     if bytes.len() < 5 {
@@ -86,8 +263,8 @@ fn decode_k8l1_view(bytes: &[u8]) -> anyhow::Result<K8L1View> {
     }
     i += recipe_len;
 
-    let mut omega_len: usize = 0;
-    if ver == K8L1_VERSION_V2 {
+    let mut omega_len = 0usize;
+    if ver >= 2 {
         omega_len = varint::get_u64(bytes, &mut i)? as usize;
         if i + omega_len > bytes.len() {
             anyhow::bail!("k8l1: omega oob");
@@ -109,105 +286,186 @@ fn decode_k8l1_view(bytes: &[u8]) -> anyhow::Result<K8L1View> {
     let other_patch = bytes[i..i + other_patch_len].to_vec();
     i += other_patch_len;
 
-    let trailing_len = bytes.len().saturating_sub(i);
-
     Ok(K8L1View {
+        recipe_len,
+        omega_len,
+        class_patch_len,
+        other_patch_len,
         class_patch,
         other_patch,
-        omega_len,
-        trailing_len,
+        consumed_len: i,
     })
 }
 
-fn patch_count(patch_bytes: &[u8]) -> anyhow::Result<usize> {
-    let p = PatchList::decode(patch_bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(p.entries.len())
-}
-
-fn demux_other_patches(other_bytes: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
+fn decode_patch_breakdown(other_patch: &[u8]) -> Result<PatchBreakdown> {
+    let mut out = PatchBreakdown::default();
     let mut i = 0usize;
 
-    let n = varint::get_u64(other_bytes, &mut i)? as usize;
+    if other_patch.is_empty() {
+        return Ok(out);
+    }
 
-    let mut kind: Option<Vec<u8>> = None;
-    let mut caseb: Option<Vec<u8>> = None;
-    let mut letter: Option<Vec<u8>> = None;
-    let mut digit: Option<Vec<u8>> = None;
-    let mut punct: Option<Vec<u8>> = None;
-    let mut raw: Option<Vec<u8>> = None;
+    let patch_count = varint::get_u64(other_patch, &mut i)? as usize;
+    let overhead_start = i;
 
-    for _ in 0..n {
-        let id = varint::get_u64(other_bytes, &mut i)?;
-        let len = varint::get_u64(other_bytes, &mut i)? as usize;
-        if i + len > other_bytes.len() {
-            anyhow::bail!("k8l1: other_patch mux oob (id={}, len={})", id, len);
+    for _ in 0..patch_count {
+        let patch_id = varint::get_u64(other_patch, &mut i)?;
+        let patch_len = varint::get_u64(other_patch, &mut i)? as usize;
+
+        if i + patch_len > other_patch.len() {
+            anyhow::bail!("other_patch child oob");
         }
-        let payload = other_bytes[i..i + len].to_vec();
-        i += len;
 
-        match id {
-            PATCH_KIND => kind = Some(payload),
-            PATCH_CASE => caseb = Some(payload),
-            PATCH_LETTER => letter = Some(payload),
-            PATCH_DIGIT => digit = Some(payload),
-            PATCH_PUNCT => punct = Some(payload),
-            PATCH_RAW => raw = Some(payload),
+        let child = &other_patch[i..i + patch_len];
+        i += patch_len;
+
+        let decoded = PatchList::decode(child).map_err(|e| anyhow!("{e}"))?;
+        let entries = decoded.entries.len();
+
+        match patch_id {
+            PATCH_KIND => {
+                out.kind = entries;
+                out.kind_bytes = patch_len;
+            }
+            PATCH_CASE => {
+                out.caseb = entries;
+                out.caseb_bytes = patch_len;
+            }
+            PATCH_LETTER => {
+                out.letter = entries;
+                out.letter_bytes = patch_len;
+            }
+            PATCH_DIGIT => {
+                out.digit = entries;
+                out.digit_bytes = patch_len;
+            }
+            PATCH_PUNCT => {
+                out.punct = entries;
+                out.punct_bytes = patch_len;
+            }
+            PATCH_RAW => {
+                out.raw = entries;
+                out.raw_bytes = patch_len;
+            }
             _ => {}
         }
     }
 
-    let kind = kind.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing kind"))?;
-    let caseb = caseb.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing case"))?;
-    let letter = letter.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing letter"))?;
-    let digit = digit.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing digit"))?;
-    let punct = punct.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing punct"))?;
-    let raw = raw.ok_or_else(|| anyhow::anyhow!("k8l1: other_patch mux missing raw"))?;
+    out.other_mux_overhead_bytes = i.saturating_sub(
+        overhead_start
+            .saturating_add(out.kind_bytes)
+            .saturating_add(out.caseb_bytes)
+            .saturating_add(out.letter_bytes)
+            .saturating_add(out.digit_bytes)
+            .saturating_add(out.punct_bytes)
+            .saturating_add(out.raw_bytes),
+    );
 
-    Ok((kind, caseb, letter, digit, punct, raw))
+    Ok(out)
 }
 
-pub fn run(args: LaneSweepArgs) -> anyhow::Result<()> {
-    let recipe_bytes = recipe_file::load_k8r_bytes(&args.recipe)?;
-    let input = std::fs::read(&args.r#in)?;
-    let sizes = parse_sizes(&args.sizes)?;
+fn zstd_bytes(input: &[u8], level: i32) -> Result<usize> {
+    let compressed = zstd::stream::encode_all(std::io::Cursor::new(input), level)
+        .context("zstd encode plain input")?;
+    Ok(compressed.len())
+}
 
-    println!("size,artifact_bytes,class_mismatches,other_mismatches,kind_mismatches,case_mismatches,letter_mismatches,digit_mismatches,punct_mismatches,raw_mismatches,total_len,other_len,emissions_needed");
-
-    for sz in sizes {
-        let take = sz.min(input.len());
-        let slice = &input[..take];
-
-        let (artifact, stats) =
-            lane::encode_k8l1(slice, &recipe_bytes, args.max_ticks).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-        let v = decode_k8l1_view(&artifact)?;
-        let class_m = patch_count(&v.class_patch)?;
-        let (k, c, l, d, p, r) = demux_other_patches(&v.other_patch)?;
-
-        let kind_m = patch_count(&k)?;
-        let case_m = patch_count(&c)?;
-        let letter_m = patch_count(&l)?;
-        let digit_m = patch_count(&d)?;
-        let punct_m = patch_count(&p)?;
-        let raw_m = patch_count(&r)?;
-
+fn print_rows(rows: &[SweepRow]) {
+    println!(
+        "size,input_bytes,plain_zstd_bytes,artifact_bytes,delta_vs_plain_zstd,recipe_bytes,omega_bytes,class_patch_bytes,other_patch_bytes,header_overhead,max_ticks_used,emissions_needed,class_mismatches,other_mismatches,kind_mismatches,case_mismatches,letter_mismatches,digit_mismatches,punct_mismatches,raw_mismatches,omega_spec"
+    );
+    for row in rows {
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            take,
-            artifact.len(),
-            class_m,
-            kind_m + case_m + letter_m + digit_m + punct_m + raw_m,
-            kind_m,
-            case_m,
-            letter_m,
-            digit_m,
-            punct_m,
-            raw_m,
-            stats.total_len,
-            stats.other_len,
-            stats.emissions_needed
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            row.size,
+            row.input_bytes,
+            row.plain_zstd_bytes,
+            row.artifact_bytes,
+            row.delta_vs_plain_zstd,
+            row.recipe_bytes,
+            row.omega_bytes,
+            row.class_patch_bytes,
+            row.other_patch_bytes,
+            row.header_overhead,
+            row.max_ticks_used,
+            row.emissions_needed,
+            row.class_mismatches,
+            row.other_mismatches,
+            row.kind_mismatches,
+            row.case_mismatches,
+            row.letter_mismatches,
+            row.digit_mismatches,
+            row.punct_mismatches,
+            row.raw_mismatches,
+            csv_escape(&row.omega_spec)
         );
     }
 
-    Ok(())
+    if let Some(best_total) = rows.iter().min_by_key(|row| row.artifact_bytes) {
+        eprintln!(
+            "lane_sweep best_artifact: size={} artifact_bytes={} plain_zstd_bytes={} delta_vs_plain_zstd={} class_mismatches={} other_mismatches={} max_ticks_used={} omega={}",
+            best_total.size,
+            best_total.artifact_bytes,
+            best_total.plain_zstd_bytes,
+            best_total.delta_vs_plain_zstd,
+            best_total.class_mismatches,
+            best_total.other_mismatches,
+            best_total.max_ticks_used,
+            best_total.omega_spec,
+        );
+    }
+
+    if let Some(best_delta) = rows.iter().min_by_key(|row| row.delta_vs_plain_zstd) {
+        eprintln!(
+            "lane_sweep best_delta_vs_zstd: size={} artifact_bytes={} plain_zstd_bytes={} delta_vs_plain_zstd={} class_mismatches={} other_mismatches={} max_ticks_used={} omega={}",
+            best_delta.size,
+            best_delta.artifact_bytes,
+            best_delta.plain_zstd_bytes,
+            best_delta.delta_vs_plain_zstd,
+            best_delta.class_mismatches,
+            best_delta.other_mismatches,
+            best_delta.max_ticks_used,
+            best_delta.omega_spec,
+        );
+    }
+}
+
+fn rows_to_csv(rows: &[SweepRow]) -> String {
+    let mut out = String::from(
+        "size,input_bytes,plain_zstd_bytes,artifact_bytes,delta_vs_plain_zstd,recipe_bytes,omega_bytes,class_patch_bytes,other_patch_bytes,header_overhead,max_ticks_used,emissions_needed,class_mismatches,other_mismatches,kind_mismatches,case_mismatches,letter_mismatches,digit_mismatches,punct_mismatches,raw_mismatches,omega_spec\n",
+    );
+
+    for row in rows {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            row.size,
+            row.input_bytes,
+            row.plain_zstd_bytes,
+            row.artifact_bytes,
+            row.delta_vs_plain_zstd,
+            row.recipe_bytes,
+            row.omega_bytes,
+            row.class_patch_bytes,
+            row.other_patch_bytes,
+            row.header_overhead,
+            row.max_ticks_used,
+            row.emissions_needed,
+            row.class_mismatches,
+            row.other_mismatches,
+            row.kind_mismatches,
+            row.case_mismatches,
+            row.letter_mismatches,
+            row.digit_mismatches,
+            row.punct_mismatches,
+            row.raw_mismatches,
+            csv_escape(&row.omega_spec)
+        ));
+    }
+
+    out
+}
+
+fn csv_escape(s: &str) -> String {
+    let escaped = s.replace('"', "\"\"");
+    format!("\"{}\"", escaped)
 }
