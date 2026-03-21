@@ -20960,3 +20960,2316 @@ For reference:
 
 
 ### END NOTE - MARCH 17 2026 - 16:20 CST
+
+
+
+### BEGIN NOTE - MARCH 17 2026 - 20:15 CST
+
+
+Repo snapshot source: latest uploaded codebundle 
+
+## 0) Executive snapshot
+
+K8DNZ is now sitting on **two real but still separate successes**. First, the **ApexTrace track** is no longer just a curiosity: it is fully integrated into the Rust workspace, has deterministic tests, subtree/window diagnostics, and it earned its first real codec-surface win by beating the current Genesis1 class-lane baseline patch by **35 bytes** on the exact comparison surface used by the existing K8L1 flow. Second, the **timemap/gen-law track** now has a reproducible 1 KB closed-form + LowpassThresh run that completes cleanly, produces TM2 output, and reaches **4695/8192 matches (57.31%)**. That is real progress, even though it still loses to plain zstd overall.  
+
+The repo is also clearly becoming **experiment-heavy**. The codebundle shows one workspace containing `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace`, with lane, omega, timemap, merkle, apextrace, encode/decode, and tests all coexisting. That is good for optionality, but the mental surface is getting crowded. The next instance should be less about adding more random surfaces and more about deciding what the **basic engine** is, what instrumentation stays attached to it, and what is now just a side experiment.  
+
+The most important emotional/framing point to carry forward is this: **we do have success now**. It is not the final breakthrough, but it is enough to justify a strategic rethink instead of panic. ApexTrace has earned the right to stay in the conversation, and gen-law has earned the right to stay as a serious vision-aligned predictor path.  
+
+## 1) Core doctrine that must not change
+
+The original doctrine is still right. K8DNZ is supposed to remain a **deterministic, fixed-point, modular cadence machine** built around free orbit, alignment, lockstep frustum traversal, deterministic field sampling, and paired emissions. Angles are supposed to live in turns/fixed-point, not floating-point drift, and the same recipe+seed must reproduce the same result. That is still the foundation and should not be sacrificed just because the repo has accumulated many experiments. 
+
+The old notes are also still correct on the deeper compression principle: for arbitrary real files, the honest route is not “magic formula-only compression,” but **short deterministic recipe + minimal residual**. Pure program-only decompression is only realistic when the data is highly generatable. For general text, the practical doctrine is still model-plus-residual.  
+
+The February blueprint also remains the cleanest north star: **stop trying to win on raw bytes first**, shift to structure, split into reversible lanes, and look for a **knee curve** where residual collapses under the right representation. If there is no knee, the law/representation must change. If there is a knee, zoom in and exploit it.  
+
+## 2) What we have actually accomplished so far
+
+The workspace is real and integrated. The codebundle shows the project now includes a dedicated `k8dnz-apextrace` crate with `dibit`, `fit`, `generator`, `key`, `law`, and `render` modules, and the CLI exposes a full `apextrace` command family including `fit`, `render`, `stats`, `window-scan`, and `ws-lane`. This means ApexTrace is not living outside the main project anymore; it is a first-class sibling inside the same repo.  
+
+Tests and determinism are in a good place. Earlier carry-over notes explicitly record that the ApexTrace tests passed and that the integration hurdle is cleared, which matters because it means the next instance does **not** need to waste time re-proving whether the crate is stable enough to keep. That question has already been answered. 
+
+On the ApexTrace side, the important pre-lane results were: short windows are clearly more law-like than larger raw windows, raw visit counts in the lattice are mostly combinatorial baseline rather than “the signal,” and the meaningful future signal lies in subtree-conditioned deviations, local windows, and structured surfaces rather than raw-byte global fitting. That interpretive correction is already one of the biggest intellectual wins of the project so far. 
+
+On the lane side, the big new result is the `apextrace ws-lane` comparison. On full `Genesis1.txt`, the baseline class patch was **3260 bytes**, while the ApexTrace class-lane patch came out at **3225 bytes**, for a real win of **-35 bytes** and **-35 patch entries**. That is only about a 1% improvement, but it is the first time ApexTrace has helped on a surface K8DNZ actually cares about. 
+
+On the timemap/gen-law side, the major progress is that `gen-law` is now a serious working surface rather than a flaky edge case. The 1024-byte closed-form + LowpassThresh run completed with `produced_emissions_end=10285`, `matches=4695/8192 (57.31%)`, `tm_format=TM2`, `tm_zstd_bytes=212`, and `residual_container_zstd_bytes=462`. The effective score is still **674 bytes without recipe** versus **445 bytes for plain zstd**, so it is still **+229 worse** than zstd, but the run is now stable, structured, and interpretable. 
+
+The mapping breakthrough inside that gen-law track remains **LowpassThresh**. Your notes explicitly call out that shifting from hashy/geom extraction to `lowpass-thresh` with `bit_tau` and `bit_smooth_shift` introduced memory and smoothness that made the predicted bitstream more structured and the residual more compressible. That matters because it is one of the clearest places where the code became *more vision-aligned and more useful at the same time*. 
+
+## 3) The honest reading of the current state
+
+ApexTrace has now proven three things. It is deterministic. It is better than random on short structured regions. And it can produce a small real win on a lane surface. What it has **not** proven is that QDL-1 or raw global ApexKeys are the final compression answer. The existing notes are already very clear that ApexTrace should currently be thought of as a **deterministic quaternary generator, a possible local/lane predictor, and a geometric partitioning diagnostic**, not a finished compressor. 
+
+Gen-law has now proven three parallel things. The field-based bitfield path is real. LowpassThresh can create structured predicted streams. And the closed-form law family can stay inside the legal emission window and produce artifacts deterministically. What it has **not** proven is a zstd win or a full collapse regime. The remaining gap at 1 KB is still overhead, especially around the timemap/program side.  
+
+The repo-bloat feeling you have is valid. The current workspace contains many surfaces answering different questions: “Can the cadence engine emit reproducibly?”, “Can lane patches beat baseline?”, “Can timemap laws create structured bitfields?”, “Can ApexTrace find local law-like windows?”, “Can omega schedules help K8L1?”. Those are all good questions, but they are not all the **same question**. The next instance should separate the **core machine**, the **predictor adapters**, and the **diagnostic/search tools** so the project feels legible again. 
+
+## 4) The best mental model for the next instance
+
+My recommendation is to adopt this framing:
+
+**ApexTrace should be treated primarily as a field-map / local-structure analyzer and possibly a knob-programmer, not as the final artifact format.**
+
+That recommendation follows from the evidence. The short-window and subtree evidence says ApexTrace sees local structure. The ws-lane result says it can already help a residual surface a little. But the notes also say the most likely gains come from **chunked/local lane prediction**, not one giant global predictor. That means the intelligent use of ApexTrace is probably to **map where the data is law-like**, propose local regimes, and either predict lanes directly or help choose cadence-law knobs. 
+
+That is also very close to your own intuition: ApexTrace as a **field map of the data**, and the ark key or similar compact object as the way of expressing the knob settings used to sample that field. That framing stays within the vision while still using what actually works. It does not force ApexTrace to be the whole codec. It lets ApexTrace become the thing that tells the codec where the structure lives and how to tune itself. This is an inference from the current evidence, not a proved theorem, but it is the most intelligent path I see right now.  
+
+At the same time, **gen-law should stay alive as the current best proof that frustum/field-style sampling can produce useful structured residuals**. The 57.31% run is not a win yet, but it is the strongest current evidence that the more vision-aligned “sample a deterministic field and then correct it” path still has real compression potential. 
+
+## 5) The most intelligent path forward
+
+The best path is a **hybrid simplification**, not a destructive reset.
+
+Keep the basic engine. Keep the field. Keep the lane machinery. Keep ApexTrace. Keep gen-law. But stop letting every experimental surface pretend to be the main story. The main story should become:
+
+**data → reversible representation → field map / law map → predicted stream → sparse residual → one honest scoreboard**
+
+That is already compatible with the old “smoke-out engine” notes: propose candidate recipes, run a generator/predictor, compare against target, track match rate, run lengths, and residual entropy, and only fully code the best candidates. 
+
+The blueprint’s lane ladder should also be restored as the main scientific method: whitespace first, then punctuation, then case, then letters. That is still the cleanest way to tell whether the dream is visible. Full-book goals should only come after a knee appears on smaller sizes. 
+
+## 6) What to keep, what to freeze, what to leave behind
+
+Keep:
+
+* deterministic cadence core and fixed-point doctrine
+* lane representation and patch surfaces
+* ApexTrace `stats`, `window-scan`, and `ws-lane`
+* gen-law closed-form + LowpassThresh + TM2
+* one unified scoreboard against plain zstd.  
+
+Freeze for now:
+
+* giant raw-byte ApexTrace sweeps that do not touch lane or residual surfaces
+* more broad omega experimentation unless it is tied to a clean benchmark surface
+* full-book attempts before a smaller knee is visible.  
+
+Leave behind:
+
+* the expectation that pure formula-only compression is the main route for arbitrary text
+* the idea that repo progress equals adding more commands
+* the habit of judging success by tiny timemap size alone when residual still dominates.  
+
+## 7) Concrete next-instance agenda
+
+Start the next instance with brainstorming, not coding first.
+
+1. Acknowledge the current wins clearly: ApexTrace lane win and gen-law 57.31% run.  
+
+2. Decide on the new project framing:
+   **Is ApexTrace a predictor, a field map, a knob-tuner, or all three in layers?**
+   My recommendation is: field map first, knob-tuner second, direct predictor third.
+
+3. Define the “basic engine” boundary.
+   The likely basic engine is `k8dnz-core` dynamics/field/fixed/recipe/signal plus the lane representation stack, while ApexTrace and timemap/gen-law become adapters on top rather than competing identities.  
+
+4. Pick one **single canonical benchmark loop** for the next coding phase:
+
+   * a lane benchmark, or
+   * a gen-law reconstruct benchmark,
+     but not five different benchmark families at once.
+
+5. If lane-first wins the discussion, follow the lane ladder from the blueprint and use ApexTrace as local map/tuner on each lane. 
+
+6. If gen-law wins the discussion, make the next mandatory milestone a **round-trip reconstruct invariant** on the current best 1 KB case, then sweep a small neighborhood around the successful closed-form law. The current notes already imply that what matters now is whether we are in a parameter-collapse regime or still just moving around low-impact dimensions. 
+
+## 8) Bottom-line carry-forward statement
+
+The cleanest statement for the next instance is:
+
+**K8DNZ has not solved compression yet, but it has crossed an important threshold. ApexTrace is now a credible structural primitive with a real lane-surface win, and gen-law is now a credible field-based predictor path with a stable 57.31% 1 KB run. The next instance should simplify the mental model, treat ApexTrace as a field-map/knob-programmer candidate, keep the cadence/frustum doctrine intact, and decide which single benchmark loop becomes the main road from here.**   
+
+
+
+
+### END NOTE - MARCH 17 2026 - 20:15 CST
+
+
+
+### BEGIN NOTE - MARCH 19 2026 - 00:20 CST
+
+Below is a comprehensive carry-over pack for the next instance.
+
+---
+
+# K8DNZ carry-over notes — March 19, 2026, late session
+
+## 0) Executive snapshot
+
+K8DNZ is no longer in the “pure intuition” stage. It is now in a more mature and much more valuable stage:
+
+**the project has a real deterministic engine, a real reversible lane surface, a real ApexTrace structural layer, a real gen-law field-predictor track, and a now-validated local predictor architecture that improved class-lane residual behavior substantially.**
+
+The most important shift in this session is this:
+
+**ApexTrace is now best understood as a structural predictor / field-map layer whose job is to improve predictability and help discover better local knob regimes, not as a finished compressor by itself.**
+
+That is not a retreat. It is the first truly coherent architectural role for ApexTrace.
+
+At the same time, the project is still far from the strongest end-state claims. The latest results do **not** support saying we are on track for 90% exact full-file compression yet. They do support saying:
+
+* predictor quality has improved materially on the class lane
+* compact chunk scheduling is plausible
+* the “field map + local refinement” idea is real
+* the next frontier is to convert lane-local predictor wins into a full reversible multi-lane artifact path
+
+The core doctrine from the original notes remains intact: deterministic fixed-point Cadence engine, pair-token emissions, and compression as **recipe/program + residual** rather than fantasy pure-formula decoding for arbitrary files. 
+
+---
+
+## 1) North star and non-negotiables
+
+These remain the governing constraints and should not be diluted:
+
+* Cadence is still a deterministic codec engine based on:
+
+  * counter-rotating free orbit
+  * alignment window
+  * lockstep frustum traversal
+  * deterministic field sampling
+  * pair-token emission
+* core math stays fixed-point in turns
+* same recipe + same seed must reproduce the same stream
+* no cheating with corpus-specific baked-in Genesis knowledge
+* the honest general route is: **representation transform + predictor + sparse residual + compact container**
+
+The February blueprint is still the clearest statement of the real breakthrough criterion:
+
+* not better packaging tricks
+* not better merkle wrapping
+* but a representation where the data becomes algorithmically simple enough under the predictor that the residual collapses toward near-zero 
+
+The blueprint’s central strategy remains correct:
+
+**stop predicting bytes directly; predict structure instead.**
+Use deterministic, reversible, general-purpose transforms into lanes and then predict those lanes with a law/predictor stack.
+
+---
+
+## 2) Repo / workspace state
+
+The repo is a real modular workspace, not a toy sketch repo.
+
+The March 19 codebundle shows:
+
+* `k8dnz-core`
+* `k8dnz-cli`
+* `k8dnz-apextrace`
+
+with a filtered file count of `143`, including:
+
+* fixed-point math
+* dynamics engine
+* field module
+* recipe format
+* repr/text normalization + lanes
+* signal/timing map / emission surfaces
+* patch / varint / symbol utilities
+* ApexTrace modules for `apex_map`, `dibit`, `fit`, `generator`, `key`, `law`, `render`
+* CLI commands for `apextrace`, `encode2kb`, `decode2kb`, `lane_sweep`, `timemap`, `tune`, `omega`, merkle tools, and more 
+
+This matters because the next instance does **not** need to start from architecture debates about whether the project is modular enough. It already is.
+
+The issue now is **conceptual prioritization**, not basic scaffolding.
+
+---
+
+## 3) The big conceptual reframing that now seems correct
+
+This is the cleanest framing so far:
+
+### Cadence
+
+Cadence remains the core deterministic engine and emission law.
+
+### Lanes
+
+Lanes remain the canonical reversible structured surface.
+
+### ApexTrace
+
+ApexTrace is best treated as:
+
+* a structural analyzer
+* a local predictor helper
+* a field-map over timeline / chunked structure
+* a tool for discovering better local schedules / knob families
+
+### Residual
+
+Residual remains the honest correction channel.
+
+### Compression story
+
+The real compression story is now:
+
+**input → normalization → lanes → local predictor stack → sparse residual → compact artifact**
+
+That is very close to both the blueprint and the original “formula string” / “recipe + residual” design logic in the notes.
+
+This is the single most important philosophical cleanup achieved across the recent sessions.
+
+---
+
+## 4) What was already accomplished before tonight
+
+Before this latest session, the project had already established several important wins:
+
+### A) Deterministic core / invariants
+
+The original Cadence engine requirements were carried into real code and tests:
+
+* fixed-point turns
+* deterministic orbit/lockstep logic
+* reproducible outputs
+* invariant tests around free orbit and lockstep behavior
+
+### B) Reversible lane representation
+
+The blueprint called for lane-first structure and reversible reconstruction, especially starting with whitespace / punctuation / case / letters. That structure exists in the codebase via `repr`, `ws_lanes`, symbol/patch utilities, and related CLI flows.
+
+### C) ApexTrace integration
+
+ApexTrace is fully inside the workspace as a first-class sibling crate with determinism, fit, key roundtrip, and render tests. The repo is no longer treating it as a side experiment living outside the main architecture. 
+
+### D) First real lane win
+
+The earlier `apextrace ws-lane` work already showed a real class-lane gain over the baseline class patch on `Genesis1.txt`:
+
+* baseline class patch: `3260`
+* ApexTrace global class patch: `3225`
+
+This was the first proof that ApexTrace could improve a surface K8DNZ actually cares about.
+
+### E) Gen-law track survived reality
+
+The timemap / gen-law / LowpassThresh path had already produced a meaningful, reproducible 1 KB run with stable deterministic behavior. It was not a zstd win, but it proved the field-based predictor path is real enough to stay in the project.
+
+---
+
+## 5) What we accomplished in this latest session
+
+This session was mostly about turning your newer ApexTrace / field-map intuition into something concrete and measurable.
+
+### A) We operationalized the “ApexTrace as field map” idea
+
+The key conceptual move was:
+
+* treat ApexTrace as a timeline field-map
+* use chunk-local prediction
+* apply boundary-pair refinement on chunk boundaries
+* measure effect on class-lane patch size and total payload
+
+This turned the sketch/intuitive concept into a real experiment surface.
+
+### B) We added `apex-map-lane`
+
+A new experiment path was built around:
+
+* `ApexMap`
+* chunked class-lane prediction
+* boundary-pair refinement
+* metrics for patch bytes, total payload, and match rate
+
+### C) We added tests
+
+The ApexTrace tests now include:
+
+* deterministic behavior
+* boundary pair correctness
+* refinement behavior
+* newline-related gating behavior
+* compact manifest roundtrip tests
+
+### D) We proved the field-map refinement is a real predictor improver
+
+This is the biggest empirical win of the night.
+
+Across multiple chunk sizes, the field-refined predictor always beat both:
+
+* the original global ApexTrace predictor
+* the plain chunked predictor
+
+That is enough to say the concept is **viable as a predictor architecture**.
+
+### E) We identified that the first big blocker was overhead, not prediction quality
+
+The initial runs showed strong patch improvements, but exact totals were inflated by crude per-chunk key accounting.
+
+That clarified the real problem:
+**local prediction works better, but chunk description overhead can kill the artifact.**
+
+### F) We introduced compact manifest accounting and then a real compact manifest binary
+
+This was a major step.
+
+First, compact accounting showed that the whole local-predictor path might actually become artifact-competitive if chunk schedule cost is represented properly.
+
+Then a real compact chunk manifest encoder/decoder was added and its roundtrip test passed in `k8dnz-cli`.
+
+This is a major architectural milestone because it moves the “compact chunk schedule” story from estimate to a real encoded artifact path.
+
+---
+
+## 6) The latest measured results from this session
+
+These numbers are the most important concrete state snapshot for the next instance.
+
+All numbers below are from the latest terminal output on `text/Genesis1.txt`, with input length `4201`.
+
+### Shared baseline/global reference
+
+* baseline class patch bytes: `3260`
+* global ApexTrace patch bytes: `3225`
+* global total payload exact: `3273`
+* global match pct: `36.158058`
+
+This remains the reference point for the current ApexTrace class-lane comparison.
+
+---
+
+### Best current balanced result: `chunk_bytes=128`
+
+This is the current leader.
+
+#### Exact chunk accounting
+
+* chunk patch bytes: `2715`
+* chunk total payload exact: `4299`
+
+#### Compact manifest binary accounting
+
+* compact manifest bytes exact: `316`
+* compact chunk total payload exact: `3031`
+
+#### Field-refined result
+
+* field patch bytes: `2383`
+* field total payload exact: `3967`
+* compact field total payload exact: `2699`
+* field match pct: `56.200905`
+
+#### Deltas
+
+* delta field patch vs global: `-842`
+* delta field patch vs chunked: `-332`
+* delta compact field total vs global: `-574`
+
+This means the best current measured compact artifact-path number is:
+
+**`2699` vs global `3273` on the class-lane comparison surface**
+
+That is a **574-byte improvement** over the old global total on this lane surface.
+
+This is the strongest current balanced result.
+
+---
+
+### `chunk_bytes=64`
+
+#### Compact numbers
+
+* compact manifest bytes exact: `612`
+* compact chunk total payload exact: `3082`
+* compact field total payload exact: `2840`
+
+#### Field quality
+
+* field patch bytes: `2228`
+* field match pct: `59.890502`
+
+This has the strongest pure predictor feel, but `128` still wins overall because `64` pays more schedule overhead.
+
+---
+
+### `chunk_bytes=256`
+
+#### Compact numbers
+
+* compact manifest bytes exact: `172`
+* compact chunk total payload exact: `3063`
+* compact field total payload exact: `2791`
+
+This is better than old global total but not as strong as `128`.
+
+---
+
+## 7) The most important honest interpretation of the latest numbers
+
+### What is genuinely validated
+
+#### 1) ApexTrace local field-map refinement is real
+
+It improves class-lane predictability materially.
+
+#### 2) Chunk-local schedules are real
+
+Global whole-file ApexTrace is no longer the best path on this surface.
+
+#### 3) Compact chunk scheduling is plausible and now partially real
+
+With a real compact manifest binary, the chunked approach is no longer just a fake accounting trick.
+
+#### 4) `128-byte` chunking is the current best balance point
+
+This should be the current benchmark anchor.
+
+---
+
+### What is **not** yet validated
+
+#### 1) We are not on track for 90% exact full-file compression yet
+
+The current best compact field total is `2699` on a `4201`-byte input, which is nowhere near a 90% size reduction if interpreted as a full exact artifact, and in truth it is still only a **class-lane surface**, not the full exact-file stack.
+
+#### 2) We have not shown a full multi-lane exact artifact win yet
+
+Whitespace/class lane progress is meaningful, but the full reversible text stack has not yet been pushed through the same end-to-end compact artifact gate.
+
+#### 3) We have not shown the decisive knee curve yet
+
+The blueprint says the project’s truth test is a knee curve over size and lanes. We still do not have the final decisive lane-sweep / encode2kb truth surface that proves residual collapse across scales.
+
+#### 4) Newline control is still unresolved
+
+This is a subtle but important problem.
+
+Despite multiple attempts at:
+
+* margin gating
+* dominant-share gating
+* hard spacelike-only gating
+
+the reported newline histogram remained unchanged in practice on the tested runs:
+
+* `64`: field predicted newline count `753`
+* `128`: `860`
+* `256`: `1003`
+
+and the explicit `newline_only_from_spacelike=false` comparison for `128` produced the same reported outcome as `true`.
+
+So the current newline gating logic is still not biting in a meaningful way on this benchmark.
+
+That is a live unresolved issue.
+
+---
+
+## 8) What ApexTrace is actually doing for us now
+
+This needs to be crystal clear for the next instance.
+
+ApexTrace is not currently “solving compression” directly.
+
+ApexTrace is currently helping us do three things:
+
+### A) Discover better predictability
+
+It gives us local structure-sensitive prediction behavior that clearly beats the previous global baseline on the class lane.
+
+### B) Discover better local schedule families
+
+The chunk-local and boundary-refined behavior suggests ApexTrace is useful for finding better local regimes rather than forcing one giant law over the full file.
+
+### C) Discover better knobs
+
+This is the correct sense in which ApexTrace is helping with “better knobs.”
+
+It is not giving us magic final knobs.
+It is giving us evidence about which **local structural regimes** are worth formalizing into compact artifact descriptors.
+
+So the right summary sentence is:
+
+**ApexTrace is now a structural predictor-and-discovery layer whose job is to improve local predictability so the eventual recipe/knob family can be smaller and the residual can be sparser.**
+
+That is exactly aligned with the “smoke-out engine” / tuning-engine idea from the original notes: propose candidate recipes, measure mismatch structure, keep the best, refine.
+
+---
+
+## 9) What remains unsolved
+
+This section is critical because it prevents drift and wishful thinking.
+
+### A) Full reversible multi-lane artifact path
+
+We still need the full honest pipeline:
+
+* normalize text
+* split into multiple reversible lanes
+* predict each lane
+* pack residuals
+* enforce exact artifact accounting
+* decode back to exact bytes
+
+The blueprint already described this `encode2kb` / `lane_sweep` worldview clearly. 
+
+### B) Real knee-curve experiment
+
+This is still the decisive experiment.
+
+For each target size and lane:
+
+* run small deterministic sweeps
+* record match%
+* residual entry count
+* residual bytes raw
+* residual bytes packed
+* best total bytes
+
+If the curve shows no collapse, change representation.
+If a knee appears, zoom in.
+
+### C) Newline pathology
+
+The field-refined class-lane predictor still grossly overpredicts newline relative to target.
+
+This is the clearest currently unresolved predictor pathology.
+
+### D) Full-lane ladder progression
+
+The blueprint still says the lane ladder should proceed in order:
+
+1. whitespace lane only
+2. whitespace + punctuation
+3. add case
+4. add letters 
+
+Right now we have meaningful movement on the whitespace/class type surface. We still have to keep climbing this ladder in a disciplined way.
+
+### E) Full exact artifact truth surface
+
+The project still needs a stronger single “scoreboard” surface where all new ideas live or die by the same rules.
+
+That is still best expressed as the `encode2kb` and `lane_sweep` truth surface from the blueprint. 
+
+---
+
+## 10) The biggest mistakes to avoid next instance
+
+### 1) Do not claim 90% compression trajectory yet
+
+The current numbers do not justify it.
+
+### 2) Do not confuse class-lane artifact improvements with full exact-file breakthrough
+
+The current win is real, but it is lane-local and partial.
+
+### 3) Do not keep inventing new abstraction layers before locking the truth surface
+
+The repo already has enough optionality.
+
+### 4) Do not let the project become “all predictor cleverness, no full accounting”
+
+The blueprint is right: the scoreboard must include total bytes, not just match rate or patch entries.
+
+### 5) Do not let newline pathology remain vague
+
+It needs a concrete diagnosis and fix, not just more knobs.
+
+---
+
+## 11) Current state of specific surfaces
+
+### ApexTrace `ws-lane`
+
+Still important as the original proof that ApexTrace can beat the old class-lane baseline.
+
+### ApexTrace `apex-map-lane`
+
+Now the most interesting active surface.
+This is where the newest predictor/field-map work is happening.
+
+### Compact manifest
+
+Now real enough to be part of the actual artifact-path conversation, not just an estimate.
+
+### Timemap / gen-law
+
+Still alive and still important as the strongest “vision-aligned field predictor” path, but not the main focus of this exact latest session.
+
+### Omega
+
+Still exists in the repo, but should remain secondary unless tied directly to a clean benchmark surface.
+
+### Merkle / packaging
+
+Should stay secondary until the structural predictor truth surface is clearer. The blueprint already said packaging is not the breakthrough lever. 
+
+---
+
+## 12) Recommended next-instance agenda, in order
+
+This order is important.
+
+### Step 1: Lock `128-byte chunk + compact manifest + field refinement` as the current anchor
+
+That is the current best measured point.
+
+### Step 2: Diagnose newline overprediction properly
+
+Do not just keep adding soft gates.
+
+Possible next moves:
+
+* inspect actual override sites for desired class `newline`
+* log current→desired transitions for newline
+* verify whether the problem is true promotion or chunk field source bias
+* add a hard per-boundary or per-window newline cap
+* consider suppressing newline refinement entirely for one diagnostic run
+
+### Step 3: Build the actual `lane_sweep` / knee-curve truth surface for ApexMapLane
+
+The blueprint already says this is the decisive experiment. 
+
+Need a surface that prints, per size / per chunk setting / per lane:
+
+* patch entries
+* patch bytes
+* compact manifest bytes
+* compact total bytes
+* match%
+* maybe class histogram drift diagnostics
+
+### Step 4: Move from class-lane-only progress to the lane ladder
+
+The next lane after current class/whitespace progress should be:
+
+* whitespace + punctuation
+
+Then measure whether the same local predictor logic retains its gain when the reversible surface gets slightly harder.
+
+### Step 5: Integrate into the `encode2kb` worldview
+
+Not because ≤2KB is immediately likely on Genesis1, but because the full project needs one honest artifact path where all experiments eventually plug in.
+
+### Step 6: Keep timemap/gen-law alive, but do not let it steal focus
+
+It remains useful, but the current actionable leverage is in the lane-local predictor path.
+
+---
+
+## 13) Best concise statement of the project as of tonight
+
+Here is the cleanest carry-forward summary:
+
+**K8DNZ now has a real deterministic engine, a real structured lane surface, and a now-validated ApexTrace local field-map path that materially improves class-lane prediction. The most important new result is that compact chunk scheduling plus field refinement can beat the old global ApexTrace total on the class-lane benchmark, with the current best point at 128-byte chunks (compact field total 2699 vs global 3273 on a 4201-byte Genesis1 input). This is not yet a full-file breakthrough and does not support 90% compression claims, but it is the clearest evidence so far that ApexTrace has a serious role as a structural predictor-and-knob-discovery layer. The next instance should focus on newline pathology, real knee-curve instrumentation, and advancing from the current class-lane surface to the next rung of the reversible lane ladder.**
+
+---
+
+## 14) One-paragraph blunt honesty section
+
+The project is in a good state, but it is not in a solved state. The latest results are meaningful because they turn a speculative structural idea into measurable predictor gains and plausible compact artifact improvements. But the dream has not yet crossed the decisive threshold. There is still no evidence of near-zero full residual, no full exact multi-lane collapse regime, and no basis yet for 90% exact full-file compression claims. The right attitude for the next instance is confidence without fantasy: **the architecture is getting more correct, the predictor is getting better, the accounting is getting more honest, and the scoreboard is finally starting to say something useful.**
+
+---
+
+## 15) Suggested exact next-instance opening prompt
+
+Use this to resume seamlessly:
+
+“Continue K8DNZ from the March 19 late-session carry-over. Treat ApexTrace as a structural predictor/field-map layer, keep 128-byte chunked compact-field as the current benchmark anchor, and focus first on diagnosing newline overprediction and building a real knee-curve / lane-sweep truth surface. Do not drift into new abstractions until we have a clearer full reversible artifact scoreboard.”
+
+
+### END NOTE - MARCH 19 2026 - 00:20 CST
+
+
+
+### BEGIN NOTE - MARCH 19 2026 - 02:15 CST
+
+
+
+Below is a comprehensive carry-over pack for the next instance.
+
+---
+
+# K8DNZ carry-over notes — March 19, 2026, end-of-night state
+
+## 0) Executive snapshot
+
+Tonight was a very important cleanup-and-truth session for K8DNZ.
+
+The biggest accomplishment was **not** a new compression record by itself. The biggest accomplishment was that we made the ApexMap class-lane scoreboard much more honest and much harder to fool.
+
+By the end of the session, we proved all of the following:
+
+* the `apextrace apex-map-lane` path is real and runnable
+* the earlier “it never finishes” problem was mostly a **search-budget explosion**, not a logic hang
+* the apparent `79%` class-lane match breakthrough at tiny chunks was largely a **majority-class mirage**
+* the repo now has a **class-lane anti-mirage metric surface**
+* the selector now rejects collapse-heavy false winners
+* the current **honest** ApexMap class-lane anchor is now:
+
+**`chunk_bytes = 64`**
+with:
+
+* `compact_field_total_payload_exact = 2646`
+* `field_patch_bytes = 2034`
+* `field_balanced_accuracy_pct = 44.129018`
+* `field_macro_f1_pct = 38.344016`
+* `field_pred_collapse_90_flag = false`
+
+This is the cleanest current benchmark point for continued ApexMap class-lane work.
+
+The session also proved something philosophically important:
+
+**raw match % alone is not a trustworthy metric on this class-lane surface.**
+
+That is a major maturity upgrade for the project.
+
+---
+
+## 1) High-level project framing that still holds
+
+The broader project framing remains intact and should be carried forward exactly.
+
+### Core doctrine
+
+K8DNZ is still aiming at a deterministic codec architecture built from:
+
+* deterministic Cadence engine
+* fixed-point turns
+* alignment / lockstep / frustum-style emission law
+* reversible structured representation
+* predictor + residual + compact artifact path
+* exact reproducibility from recipe + seed
+
+### Compression truth
+
+The honest path is still:
+
+**representation transform → structured lanes → predictor stack → sparse residual → compact exact artifact**
+
+Not:
+
+* packaging tricks
+* vague field-wave magic without accounting
+* raw-match vanity metrics
+* special-casing Genesis
+
+### ApexTrace’s real role
+
+ApexTrace is now best understood as:
+
+* a structural predictor layer
+* a field-map / local schedule discovery layer
+* a knob-discovery layer
+* a way to improve local predictability so recipe/residual cost can eventually shrink
+
+It is **not** yet the final exact-file compressor by itself.
+
+That conceptual reframing remains correct.
+
+---
+
+## 2) Where the repo stands after tonight
+
+The repo is modular and real. It is not stuck at toy level.
+
+Current active relevant workspace pieces remain:
+
+* `k8dnz-core`
+* `k8dnz-cli`
+* `k8dnz-apextrace`
+
+### Relevant functional surfaces already in repo
+
+* deterministic core engine
+* reversible lane logic
+* class/whitespace lane experimentation
+* ApexTrace key/gen/fit/render stack
+* `apextrace ws-lane`
+* `apextrace apex-map-lane`
+* compact chunk manifest
+* `encode2kb`
+* `lane_sweep`
+* `timemap`
+* tuning / omega / merkle tools
+
+### Important repo state after tonight
+
+We added and/or stabilized:
+
+* richer ApexMap override diagnostics
+* chunk sweep support on `apex-map-lane`
+* newline-focused diag CSV output
+* class-lane anti-mirage metrics module
+* confusion matrix reporting
+* majority-baseline comparison
+* balanced accuracy
+* macro precision / recall / F1
+* weighted F1
+* entropy drift
+* collapse flag
+* best-run selector that refuses collapse cases
+
+This means the repo now has a **much more truthful ApexMap lane benchmark surface** than it had at the start of the session.
+
+---
+
+## 3) Main problem discovered tonight: search-budget explosion, not a true hang
+
+At one point it looked like the ApexMap sweep command was “never finishing.”
+
+We diagnosed that this was mostly due to search-size blowup, not a deadlock or broken loop.
+
+### Root cause
+
+`apex-map-lane` performs brute-force seed/quadrant search both:
+
+* globally
+* and per chunk
+
+With default `seed_count=4096`, chunked sweeps become huge.
+
+For example, on Genesis1-sized class lane:
+
+* `chunk_bytes=64` gives about 66 chunks
+* each chunk does `4 × seed_count` candidates
+* so `66 × 4 × 4096` is already enormous
+
+That is why the earlier runs felt like they never ended.
+
+### Secondary cost
+
+There is also a real baseline retry loop:
+
+* initial baseline at `20,000,000` ticks failed
+* retry at `40,000,000` failed
+* retry at `80,000,000` succeeded
+
+So baseline cost is real, but the bigger issue was search combinatorics.
+
+### Practical resolution
+
+Interactive ApexMap work should currently use reduced budgets such as:
+
+* `seed-count 64`
+* `seed-count 128`
+* possibly `seed-step 17`
+
+This is now an important workflow note for future sessions.
+
+---
+
+## 4) Major benchmark progression from this session
+
+This section is critical because it describes how our understanding changed over the night.
+
+---
+
+### 4A) Early reduced-budget sweep established that the command works
+
+Using reduced seed budgets, we got clean outputs and real sweep data.
+
+One key reduced-budget run:
+
+`chunk_bytes=128`, `seed_count=128`, `seed_step=17`
+
+Result:
+
+* `compact_field_total_payload_exact = 2747`
+* `field_patch_bytes = 2431`
+* `field_match_pct = 55.058319`
+* `field_pred_newline_delta = 789`
+
+That confirmed the new command was working.
+
+---
+
+### 4B) Reduced sweep across `64,128,256`
+
+Using:
+
+* `chunk-sweep 64,128,256`
+* `seed-count 64`
+* `seed-step 17`
+
+We got:
+
+#### `64`
+
+* `compact_field_total_payload_exact = 2646`
+* `field_patch_bytes = 2034`
+* `field_match_pct = 64.508450`
+* `field_pred_newline_delta = 494`
+
+#### `128`
+
+* `compact_field_total_payload_exact = 2791`
+* `field_patch_bytes = 2475`
+* `field_match_pct = 54.010950`
+* `field_pred_newline_delta = 800`
+
+#### `256`
+
+* `compact_field_total_payload_exact = 2980`
+* `field_patch_bytes = 2808`
+* `field_match_pct = 46.084266`
+* `field_pred_newline_delta = 1047`
+
+At that moment, `64` looked like the leader.
+
+This was already interesting because earlier larger-budget work had pointed to `128`, so the optimum was clearly budget-sensitive.
+
+---
+
+### 4C) Exploring `16` and `32` produced deceptively huge match %
+
+Next we swept:
+
+* `16,32,64,128,256`
+* `seed-count 64`
+* `seed-step 17`
+
+This produced the striking results:
+
+#### `16`
+
+* `compact_field_total_payload_exact = 3786`
+* `field_patch_bytes = 1400`
+* `field_match_pct = 79.600095`
+* `field_pred_hist_other = 4201`
+* `field_pred_hist_space = 0`
+* `field_pred_hist_newline = 0`
+
+#### `32`
+
+* `compact_field_total_payload_exact = 2616`
+* `field_patch_bytes = 1409`
+* `field_match_pct = 79.385861`
+* `field_pred_hist_other = 4188`
+* `field_pred_hist_space = 5`
+* `field_pred_hist_newline = 8`
+
+At first glance, this looked huge, especially `32`, which even beat `64` on compact total.
+
+But the histograms revealed a problem.
+
+---
+
+## 5) Critical conceptual discovery: the 79% score was a majority-class mirage
+
+This was one of the most important findings of the whole project so far.
+
+### Target class histogram on Genesis1 class lane
+
+The target class-lane histogram is:
+
+* `other = 3344`
+* `space = 797`
+* `newline = 60`
+* total = `4201`
+
+That means a dumb predictor that says **everything is `other`** gets:
+
+`3344 / 4201 = 79.600095%`
+
+That is exactly the `79.600095` score we observed.
+
+So the first big “79%” breakthrough was **not** real structured prediction. It was a majority-class collapse.
+
+### What that means
+
+The class-lane is imbalanced enough that raw accuracy can be highly misleading.
+
+A collapsed predictor can look “great” by raw match % while actually being useless on minority classes.
+
+This is why the project urgently needed anti-mirage metrics.
+
+---
+
+## 6) Secondary discovery: fixed boundary band was unfairly overpowering tiny chunks
+
+When `chunk_bytes` got very small, the refinement region became huge relative to the chunk.
+
+Example:
+
+* `chunk_bytes=16`
+* `boundary_band=16`
+
+That means refinement can wash across almost the whole lane repeatedly.
+
+This made `16` and `32` runs not really comparable to `64/128` under the same nominal settings.
+
+That led us to test fairer scaled-band runs.
+
+---
+
+## 7) Fair-band verification runs proved the mirage
+
+We then ran:
+
+* `16` with `boundary_band=4`
+* `32` with `boundary_band=8`
+* `64` with `boundary_band=16`
+
+### Fair-band `16`
+
+* `field_match_pct = 75.077363`
+* `field_pred_hist_other = 3354`
+* `field_pred_hist_space = 516`
+* `field_pred_hist_newline = 331`
+* `compact_field_total_payload_exact = 3976`
+
+This was less collapsed than before, but still not especially attractive artifact-wise.
+
+### Fair-band `32`
+
+* `field_match_pct = 68.602714`
+* `field_pred_hist_other = 3098`
+* `field_pred_hist_space = 597`
+* `field_pred_hist_newline = 506`
+* `compact_field_total_payload_exact = 3069`
+
+This also lost its magical feel once refinement was scaled fairly.
+
+### Fair-band `64`
+
+* `field_match_pct = 64.508450`
+* `compact_field_total_payload_exact = 2646`
+
+Under fairer comparison, `64` again looked strongest overall.
+
+That was an important signal that `32`’s earlier win was heavily dependent on over-aggressive refinement behavior.
+
+---
+
+## 8) High-impact code batch: anti-mirage truth surface
+
+The highest-impact code batch of the session created a real anti-mirage scoreboard.
+
+### New metrics module
+
+A new module was added:
+
+* `crates/k8dnz-cli/src/cmd/apextrace/class_metrics.rs`
+
+It computes:
+
+* raw match %
+* target histogram
+* predicted histogram
+* confusion matrix
+* majority baseline match %
+* raw match vs majority
+* predicted dominant class
+* dominant share %
+* collapse-90 flag
+* entropy
+* histogram L1 distance
+* per-class precision
+* per-class recall
+* per-class F1
+* balanced accuracy
+* macro precision / recall / F1
+* weighted F1
+
+### Why this matters
+
+This made it possible to distinguish:
+
+* genuinely structured predictors
+* majority-class mirages
+* minority-class erasure
+* newline overshoot
+* healthy non-collapsed tradeoffs
+
+This was a major increase in project honesty.
+
+---
+
+## 9) Final anti-mirage benchmark results
+
+After the metric upgrade, we reran:
+
+* `chunk-sweep 16,32,64,128`
+* `seed-count 64`
+* `seed-step 17`
+
+And got the final truth surface.
+
+---
+
+### `16`
+
+* `compact_field_total_payload_exact = 3786`
+* `field_match_pct = 79.600095`
+* `majority_baseline_match_pct = 79.600095`
+* `field_match_vs_majority_pct = 0.000000`
+* `field_balanced_accuracy_pct = 33.333333`
+* `field_macro_f1_pct = 29.547161`
+* `field_pred_dominant_share_pct = 100.000000`
+* `field_pred_collapse_90_flag = true`
+
+Interpretation:
+**pure majority-class collapse**
+
+---
+
+### `32`
+
+* `compact_field_total_payload_exact = 2616`
+* `field_match_pct = 79.385861`
+* `majority_baseline_match_pct = 79.600095`
+* `field_match_vs_majority_pct = -0.214235`
+* `field_balanced_accuracy_pct = 33.275476`
+* `field_macro_f1_pct = 29.592773`
+* `field_pred_dominant_share_pct = 99.690550`
+* `field_pred_collapse_90_flag = true`
+
+Interpretation:
+**near-total collapse / fake winner under old selector**
+
+---
+
+### `64`
+
+* `compact_field_total_payload_exact = 2646`
+* `field_patch_bytes = 2034`
+* `field_match_pct = 64.508450`
+* `field_match_vs_majority_pct = -15.091645`
+* `field_balanced_accuracy_pct = 44.129018`
+* `field_macro_f1_pct = 38.344016`
+* `field_pred_dominant_share_pct = 70.911688`
+* `field_pred_collapse_90_flag = false`
+* `field_precision_other_pct = 82.678751`
+* `field_recall_other_pct = 73.654306`
+* `field_precision_space_pct = 34.281437`
+* `field_recall_space_pct = 28.732748`
+* `field_precision_newline_pct = 3.249097`
+* `field_recall_newline_pct = 30.000000`
+* `field_f1_newline_pct = 5.863192`
+
+Interpretation:
+**current healthiest non-collapsed anchor**
+
+---
+
+### `128`
+
+* `compact_field_total_payload_exact = 2791`
+* `field_patch_bytes = 2475`
+* `field_match_pct = 54.010950`
+* `field_match_vs_majority_pct = -25.589145`
+* `field_balanced_accuracy_pct = 45.754266`
+* `field_macro_f1_pct = 35.318514`
+* `field_pred_dominant_share_pct = 55.748631`
+* `field_pred_collapse_90_flag = false`
+
+Interpretation:
+non-collapsed, but weaker artifact point than `64`, and not better enough on balance metrics to overturn `64`
+
+---
+
+## 10) Final selector fix
+
+Once the anti-mirage metrics were added, the selector still incorrectly picked `32` because it optimized compact size too early.
+
+We fixed that.
+
+### Final selector behavior
+
+The selector now prioritizes:
+
+1. `field_pred_collapse_90_flag`
+2. `compact_field_total_payload_exact`
+3. `field_patch_bytes`
+4. balanced accuracy
+5. macro F1
+
+That means collapse-flagged runs are no longer allowed to win against non-collapsed runs just because they are smaller.
+
+### Result
+
+After the selector fix, the command correctly reports:
+
+**best: `chunk_bytes=64`**
+
+This is the right current anchor.
+
+---
+
+## 11) Exact final current truth
+
+This is the most important concise carry-forward truth statement:
+
+**The anti-mirage scoreboard proved that the earlier 79% class-lane win was a majority-class mirage. Tiny chunk sizes 16 and 32 collapse toward “other” and are now correctly flagged as invalid winners. With collapse-aware selection, the current honest ApexMap class-lane anchor is 64-byte chunking, with compact field total 2646, patch bytes 2034, balanced accuracy 44.129018, macro F1 38.344016, and no collapse flag.**
+
+That should be the baseline for the next instance.
+
+---
+
+## 12) What we accomplished tonight, in order
+
+This section is for continuity and confidence.
+
+### A) Diagnosed the apparent hang
+
+* proved it was search budget blowup, not a deadlock
+
+### B) Made reduced-budget ApexMap sweeps practical
+
+* `seed-count 64` and `128` are workable interactive budgets
+
+### C) Confirmed ApexMap sweep path works
+
+* outputs, diagnostics, compact totals, refinement metrics all functioning
+
+### D) Found promising small-chunk behavior
+
+* initially suggested `64`, then misleadingly `32`
+
+### E) Discovered the 79% mirage
+
+* tied directly to all-`other` majority-class baseline
+
+### F) Proved raw accuracy is not enough
+
+* class imbalance makes it misleading
+
+### G) Added high-impact anti-mirage scoreboard
+
+* class metrics
+* confusion matrix
+* balanced metrics
+* collapse detection
+* entropy/histogram diagnostics
+
+### H) Fixed the selector
+
+* collapse cases no longer win
+
+### I) Ended with a trustworthy anchor
+
+* `64` is the current honest ApexMap class-lane operating point
+
+This was a very productive session.
+
+---
+
+## 13) What remains unsolved
+
+There is still a lot to do. The project is healthier, but not solved.
+
+### A) Newline is still weak
+
+Even at the current honest anchor (`64`):
+
+* target newline count = `60`
+* predicted newline count = `554`
+* `newline precision = 3.249097`
+* `newline recall = 30.000000`
+* `newline F1 = 5.863192`
+
+This is still bad.
+
+So newline pathology remains a major live problem.
+
+### B) Raw match % is no longer usable as primary score
+
+The project now knows this. Future work must not regress into raw-match vanity.
+
+### C) The current best point is still class-lane-only
+
+This is not full-file breakthrough territory yet.
+It is a good lane-local benchmark point.
+
+### D) The full exact multi-lane artifact path still needs more work
+
+We still do not have a full exact-file breakthrough from this predictor surface.
+
+### E) The predictor still does not beat majority baseline on raw accuracy
+
+Even the healthiest `64` point has:
+
+* `field_match_vs_majority_pct = -15.091645`
+
+That is okay conceptually because balance matters, but it also means the predictor is still weak in some important ways.
+
+### F) Minority-class handling is still poor
+
+Especially:
+
+* newline precision
+* newline F1
+* space recall is not great either
+
+### G) ApexMap remains a local predictor helper, not the whole solution
+
+This conceptual boundary remains important.
+
+---
+
+## 14) Warnings seen in build/test output
+
+These are currently non-blocking:
+
+### `k8dnz-core`
+
+* `gen_pred_stream_with_omega` is unused
+
+### `k8dnz-cli`
+
+* `CompactChunkManifest::encoded_len` is unused
+* several `K8L1View` fields are never read
+
+These are warning-only and did not block builds or tests.
+
+---
+
+## 15) Build / test health at end of session
+
+End-of-session state is healthy.
+
+### Cargo build
+
+* successful
+
+### Cargo test
+
+* successful
+
+Relevant outcomes:
+
+* `k8dnz-cli` tests all passed
+* class metric tests passed
+* compact manifest tests passed
+* Genesis roundtrip encode/decode tests passed
+* determinism tests passed
+* merkle roundtrip tests passed
+* tune fit Genesis tests passed
+
+This is a good stopping point.
+
+---
+
+## 16) Current most important files touched this session
+
+These are the key files to remember for future editing:
+
+### ApexMap / diagnostics / scoring
+
+* `crates/k8dnz-apextrace/src/apex_map.rs`
+* `crates/k8dnz-apextrace/src/lib.rs`
+* `crates/k8dnz-apextrace/tests/apex_map.rs`
+
+### CLI ApexMap lane command
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_lane.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/mod.rs`
+
+### New anti-mirage metrics
+
+* `crates/k8dnz-cli/src/cmd/apextrace/class_metrics.rs`
+
+These are the most relevant files for the next instance.
+
+---
+
+## 17) Current recommended workflow for interactive ApexMap work
+
+For interactive work on Genesis1, do **not** use huge seed budgets by default.
+
+### Current practical search settings
+
+Recommended interactive budget:
+
+* `seed-count 64`
+* `seed-step 17`
+
+Possibly:
+
+* `seed-count 128` for confirmation
+
+Avoid default huge budgets for chunk sweeps until necessary.
+
+### Recommended benchmark command
+
+The current truth-surface checkpoint command is:
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- apextrace apex-map-lane --recipe ./configs/tuned_validated.k8r --in text/Genesis1.txt --chunk-sweep 16,32,64,128 --seed-count 64 --seed-step 17 --diag-limit 2000 --out-diag /tmp/apex_truth_diag.csv --format txt
+```
+
+But the **interpreted** anchor is now:
+
+* ignore collapse winners
+* trust `64` as current baseline
+
+---
+
+## 18) Current interpretation of chunk-size landscape
+
+### `16`
+
+* too collapse-prone
+* invalid winner under anti-mirage rules
+
+### `32`
+
+* also collapse-prone
+* fake winner under old scoreboard
+* no longer trustworthy
+
+### `64`
+
+* currently healthiest balance
+* best honest anchor
+
+### `128`
+
+* non-collapsed
+* somewhat more balanced on some metrics
+* but weaker compact total / macro F1 than `64`
+
+### `256`
+
+* weaker than current honest anchor
+* not the near-term focus
+
+So the current class-lane story is:
+
+**the knee is not at 16 or 32 in any trustworthy sense; 64 is currently the best non-collapsed operating point.**
+
+---
+
+## 19) What the next instance should focus on
+
+The next session should not reopen the mirage question. That is now settled.
+
+### Top priority: improve minority-class handling from the 64-byte anchor
+
+The current anchor is:
+
+* `chunk_bytes=64`
+* `boundary_band=16`
+* reduced search budget
+* anti-mirage selector active
+
+That should be the stable starting point.
+
+### Main target
+
+Improve:
+
+* newline precision
+* newline F1
+* space recall / precision balance
+* minority-class discrimination
+
+without collapsing to majority-class `other`
+
+### Good next directions
+
+#### 1) Newline-specific refinement restraint
+
+The current newline handling still allows too much newline promotion or too much poor-quality newline emission. Possible next directions:
+
+* stronger newline caps
+* per-boundary newline budget
+* asymmetry between `space -> newline` and `other -> newline`
+* explicit penalty if predicted newline count drifts too far from target-like priors
+* class-specific override gating based on confusion behavior
+
+#### 2) Boundary-band scaling by chunk size
+
+Right now fixed bands can distort small chunks. A more principled band schedule may help:
+
+* band as fraction of chunk size
+* minimum and maximum cap
+* per-chunk adaptive band
+
+#### 3) Selector / objective refinement
+
+Now that anti-mirage metrics exist, the search/selection objective could become smarter:
+
+* non-collapsed first
+* compact total second
+* newline F1 or minority balance third
+* maybe explicit Pareto surface rather than one scalar winner
+
+#### 4) Field-source diagnostics
+
+Still worth exploring:
+
+* `field_from_global`
+* `field_from_chunked`
+* compare minority-class behavior, not just compact totals
+
+#### 5) Add summary outputs for confusion matrix insights
+
+Right now the command prints the raw counts. A future refinement could explicitly summarize:
+
+* newline TP/FP/FN
+* space TP/FP/FN
+* collapse diagnostics
+* majority delta
+
+#### 6) Eventually move beyond class lane
+
+But only after the class-lane truth surface is genuinely stable and healthy.
+
+---
+
+## 20) Things to avoid next time
+
+These are important project guardrails.
+
+### Do not:
+
+* celebrate raw match % without anti-mirage context
+* let `16` or `32` re-enter as “best” just because compact size is small
+* optimize for raw accuracy on an imbalanced class surface
+* drift back into architecture invention before improving the current healthy anchor
+* claim the project is near full-file breakthrough based on current ApexMap lane numbers
+
+### Do:
+
+* use `64` as the honest starting point
+* judge progress via collapse-aware metrics
+* focus on minority-class handling
+* keep exact artifact totals central
+
+---
+
+## 21) Best concise summary sentence for the next instance
+
+Use this as the central carry-forward summary:
+
+**The main result of the March 19 late session is that K8DNZ now has a collapse-aware anti-mirage ApexMap class-lane truth surface. The earlier 79% tiny-chunk scores were exposed as majority-class collapse, and after adding class metrics, confusion matrices, entropy/histogram diagnostics, and a collapse-aware selector, the current honest ApexMap class-lane anchor is 64-byte chunking with compact field total 2646, patch bytes 2034, balanced accuracy 44.13, macro F1 38.34, and no collapse flag. The next instance should focus on improving minority-class handling, especially newline precision/recall, from this 64-byte non-collapsed baseline.**
+
+---
+
+## 22) One-paragraph blunt honesty section
+
+K8DNZ is in a materially better state than before this session, but this was not a compression victory lap. It was a truth-surface victory. We discovered that the class-lane metric we were implicitly trusting could be badly fooled by majority-class collapse. We fixed that. The repo now knows how to detect and reject those fake wins. That is a serious advance in scientific honesty and engineering maturity. The current best honest ApexMap class-lane point is promising, but it is still weak on newline and still lane-local. The right next step is not more hype. It is controlled improvement from the non-collapsed `64` baseline.
+
+---
+
+## 23) Suggested exact next-instance opening prompt
+
+Use this to resume cleanly:
+
+“Continue K8DNZ from the March 19 end-of-night anti-mirage carry-over. Treat the ApexMap class-lane truth surface as fixed: 16 and 32 are collapse mirages, and 64-byte chunking is the current honest anchor. Focus next on improving minority-class handling, especially newline precision/recall and space balance, from the 64-byte non-collapsed baseline without regressing into majority-class collapse.”
+
+---
+
+
+
+
+### END NOTE - MARCH 19 2026 - 02:15 CST
+
+
+
+### BEGIN NOTE - MARCH 20 2026 - 11:30 CST
+
+
+Absolutely. Here is a deep carry-over pack for the next instance.
+
+For code reference, the latest uploaded codebundle snapshot is here: . The newest filtered tree shows the workspace now contains `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace`, and that the ApexTrace command surface now includes `apex_map_lane.rs`, `apex_map_dibit.rs`, and `apex_map_dibit_other.rs` under `crates/k8dnz-cli/src/cmd/apextrace/` 
+
+# K8DNZ carry-over notes — March 20, 2026
+
+## ApexTrace lane checkpoint, newline-floor breakthrough, and dibit de-prioritization
+
+## 0) Executive snapshot
+
+K8DNZ is in a better position now than at the start of this ApexTrace phase.
+
+The project is still governed by the same doctrine: deterministic fixed-point Cadence core, recipe + residual honesty, no corpus cheating, and compression coming from a representation where the residual collapses rather than from packaging tricks. The blueprint still says the right path is to stop predicting raw bytes and instead climb the lane ladder in increasing difficulty: whitespace, then punctuation, then case, then letters, while measuring residual counts and packed bytes at each step. 
+
+The biggest change from this session is not that we “solved compression.” We did not. The biggest change is that we now have a much clearer split between what is promising and what is noise:
+
+* **Promising:** ApexTrace on the whitespace/class lane, especially with raw chunk selection, stronger boundary bands, and capped newline demotion.
+* **Not promising right now:** dibit-first ApexTrace, both on the full normalized stream and on the `other_lane`.
+
+So the next instance should **continue the lane route** and **stop letting dibit experiments dominate the roadmap**.
+
+## 1) Source-of-truth doctrine that still stands
+
+The oldest project notes are still correct on fundamentals:
+
+* Cadence is a deterministic, reversible encoding/compression project built around free orbit, alignment, lockstep frustum behavior, deterministic field sampling, and emission.
+* Core math should use fixed-point turns and should not depend on π for correctness.
+* The practical engineering framing is still: **shortest deterministic recipe that explains the data + minimal residual**.
+* Pure “formula-only” decompression is only realistic when the data is actually generated by a short law; for real files the honest default is still **program + residual**. 
+
+The blueprint also remains explicit that the 2KB dream only happens if the residual collapses under the right representation, and that the decisive experiment is the **knee curve**: measure residual entries, raw residual bytes, packed residual bytes, and total artifact bytes across progressively harder lanes and target sizes.
+
+## 2) Current repo state to remember
+
+The latest repo shape matters because the next instance should build on the integrated workspace, not reinvent it.
+
+What now exists in the workspace:
+
+* `k8dnz-core`
+* `k8dnz-cli`
+* `k8dnz-apextrace`
+
+And in the newest codebundle the CLI ApexTrace surface includes:
+
+* `apex_map_lane.rs`
+* `apex_map_dibit.rs`
+* `apex_map_dibit_other.rs`
+* `class_metrics.rs`
+* `common.rs`
+* `compact_manifest.rs`
+* `ws_lane.rs`
+* `ws_lane_render.rs`
+* `ws_lane_types.rs` 
+
+That means the project already has the right scaffolding for the next phase: we do **not** need another architecture detour before continuing.
+
+## 3) What we have accomplished so far, in the larger K8DNZ story
+
+Before this session, the notes already established three important truths:
+
+First, ApexTrace had crossed the line from “interesting side primitive” to “credible candidate lane predictor.” The March 17 notes explicitly recorded that ApexTrace achieved its first real codec-surface win by beating the current whitespace/class-lane baseline patch on full `Genesis1.txt`, which made it something worth integrating rather than just admiring. 
+
+Second, the lane ladder had already been named as the clean path forward: whitespace, punctuation, case, letters.
+
+Third, the integrated repo already had the right pieces to pursue this honestly: normalization, whitespace lanes, patch machinery, CLI entrypoints, ApexTrace crate, tests, and the general modular shape expected by the blueprint.
+
+This session did not overturn any of that. It sharpened it.
+
+## 4) What we accomplished in this session
+
+### A) We proved the whitespace/class-lane ApexTrace path has real tunable structure
+
+The strongest result from this session was on `apextrace apex-map-lane`, not on dibits.
+
+Key observations from the session output:
+
+* `Genesis1.txt` normalized length stayed `4201`.
+* Class histogram stayed:
+
+  * `other = 3344`
+  * `space = 797`
+  * `newline = 60`
+* Baseline class run needed auto-ticks up to `80,000,000`.
+* Baseline class patch bytes were `3260`.
+
+That baseline matters because it confirms the old lesson: the raw cadence recipe alone is still not enough; residual is still the mountain.
+
+But then the field-map lane work got materially better.
+
+### B) Chunk objective study clarified that `raw` currently beats `honest` and `raw-guarded`
+
+You ran a sequence of objective variants:
+
+* `honest`
+* `raw`
+* `raw-guarded --chunk-raw-slack 1`
+* `raw-guarded --chunk-raw-slack 2`
+
+The outcome was clear:
+
+* `honest` underperformed badly.
+* `raw-guarded` stayed close to `raw` but was worse.
+* plain `raw` was best on the whitespace/class lane in this regime.
+
+Best pre-demotion class-lane result from the raw path:
+
+* `chunk_bytes = 64`
+* `boundary_band = 20`
+* `field_margin = 8` or equivalent inert margin setting
+* `field_match_pct = 68.031421`
+* `field_patch_bytes = 1886`
+* `compact_field_total_payload_exact = 2498`
+* `field_f1_newline_pct = 7.053942`
+* `field_pred_newline_delta = 362`
+
+That was already a meaningful improvement over earlier boundary bands and over the guarded variants.
+
+### C) Boundary-band sweep found a real lever; field-margin sweep did not
+
+The `boundary_band` sweep mattered:
+
+* band `12` gave about `60.795049%`
+* band `16` gave about `64.508450%`
+* band `20` gave about `68.031421%`
+
+So wider boundary influence helped.
+
+By contrast, `field_margin` over `6, 8, 10, 12` was effectively inert in the tested regime. Same outputs repeated within each band.
+
+That means the next instance should remember this clearly:
+
+* **boundary geometry mattered**
+* **field-margin, at least in this tested window, did not**
+
+### D) Naive newline demotion improved payload a lot but destroyed newline truth
+
+Then you swept `newline-demote-margin`.
+
+This created the critical split between “looks better” and “actually better.”
+
+With demotion disabled:
+
+* `field_match_pct = 68.031421`
+* `field_f1_newline_pct = 7.053942`
+* `field_pred_newline_delta = 362`
+* `compact_field_total_payload_exact = 2498`
+
+With naive demotion:
+
+* `field_match_pct = 75.672459`
+* `compact_field_total_payload_exact = 2177`
+* but `field_f1_newline_pct = 0.000000`
+* and predicted newlines collapsed to zero
+
+So naive demotion was not a real win. It made the lane look cleaner by erasing newline behavior.
+
+This was a very important lesson.
+
+### E) The capped newline floor salvaged the gain without killing newline existence
+
+The follow-up fix was the high-value breakthrough of the session.
+
+You added a floor:
+
+* `--newline-demote-keep-ppm-min 150000`
+* `--newline-demote-keep-min 1`
+
+That preserved a minimum newline presence after demotion.
+
+Best result with floor:
+
+* `chunk_bytes = 64`
+* `boundary_band = 20`
+* `field_margin = 8`
+* `newline_demote_margin = 8`
+* `field_match_pct = 74.529874`
+* `field_match_vs_majority_pct = -5.070221`
+* `field_patch_bytes = 1613`
+* `compact_field_total_payload_exact = 2225`
+* `field_f1_newline_pct = 4.838710`
+* `field_newline_before_demote = 422`
+* `field_newline_after_demote = 64`
+* `field_newline_floor_used = 64`
+* `field_pred_newline_delta = 4`
+* `field_newline_extinct_flag = false`
+
+This is the most important carry-forward result from the whole session.
+
+Why it matters:
+
+* It pushed the class-lane compact payload down from `2498` to `2225`.
+* It kept newline prediction alive instead of collapsing it to zero.
+* It brought predicted newline count to essentially target truth (`delta = 4` against target `60`).
+* It moved raw class-lane match close to the majority baseline without the fake-extinction behavior.
+
+This is not the full codec win. But it is a serious class-lane refinement result.
+
+Also note the practical meaning:
+
+* `2225` is only **177 bytes above 2048**
+* but this is **only the class lane artifact**, not the full reversible Genesis1 solution
+
+That distinction matters. Still, it is a psychologically important checkpoint.
+
+## 5) What the 74.53% class-lane match does and does not mean
+
+This needs to be preserved in the next instance so we do not confuse ourselves.
+
+It does **not** mean:
+
+* 74.53% chance of predicting the next byte of Genesis
+* 74.53% solution to the full compression problem
+* 74.53% of the final Bible/book problem solved
+
+It **does** mean:
+
+* on the **3-class whitespace/class lane**
+* across positions labeled `{other, space, newline}`
+* the ApexTrace-derived field prediction matches the true class symbol about `74.53%` of the time under the best capped-demotion regime
+
+That is a class-symbol accuracy result on a very small alphabet.
+
+And even there, raw match has to be interpreted alongside imbalance:
+
+* majority baseline is `79.600095%` because `other` dominates the class lane
+* the best field model is still `5.07` points below that majority baseline on raw match
+* balanced accuracy is only about `38.10%`
+
+So the real honest reading is:
+
+* raw class accuracy got much better
+* newline-count control got much better
+* payload got much smaller
+* but the class predictor still is not truly “solved” in a balanced sense
+
+That is still good progress, just not magic.
+
+## 6) What we learned about dibits
+
+This session also made the dibit situation much clearer.
+
+### A) Full-stream dibit ApexTrace did not become viable
+
+Best `apex-map-dibit` result:
+
+* around `33.206379%` dibit match
+* byte match about `0.999762%`
+* compact field total around `13956`
+* majority baseline about `33.866936%`
+* still worse than baseline
+
+That means the full dibit surface did not reveal a hidden collapse regime.
+
+### B) `other_lane` dibit ApexTrace also did not become viable
+
+Best `apex-map-dibit-other` result:
+
+* `field_match_pct = 34.255383`
+* `field_other_byte_match_pct = 1.046651`
+* `oracle_full_byte_match_pct = 21.233040`
+* `compact_field_total_payload_exact = 10978`
+* majority baseline about `42.546352`
+
+That “oracle full byte” number was mostly inherited from exact whitespace/class reconstruction, not from actually predicting the other bytes. So it was not a hidden win either.
+
+### C) Correct strategic conclusion
+
+The right takeaway is exactly what you said:
+
+> hang up the dibit idea in ApexTrace and continue with what we were doing
+
+That is the correct move.
+
+Important nuance:
+
+* do **not** necessarily delete the dibit files yet
+* do treat them as **archived experiments**, not roadmap drivers
+
+They are evidence. They are not the next mountain path.
+
+## 7) What remains unsolved
+
+A lot remains unsolved, and this should be stated honestly.
+
+### A) We still do not have the knee curve for the whole representation stack
+
+The blueprint says the deciding experiment is the knee curve across lane difficulty and target size. 
+
+We still do **not** have:
+
+* whitespace lane
+* whitespace + punctuation
+* add case
+* add letters
+
+all measured in one clean, comparable chain.
+
+We only have meaningful new evidence on the whitespace/class lane and negative evidence on dibits.
+
+### B) We still do not have a strong predictor for the non-whitespace content
+
+The `other_lane` remains the actual hard part.
+
+Right now:
+
+* whitespace/class lane has become a credible compression surface
+* `other_lane` remains mostly unresolved
+* dibit treatment of `other_lane` did not help
+
+So the next representation split is the main job.
+
+### C) We are still far from a full honest Genesis1 or Genesis123 lane-collapse proof
+
+The blueprint is explicit:
+
+* only go for full book after a knee appears on smaller targets
+* only expect the 2KB dream if residual per chunk becomes tiny or near-zero in the right representation
+
+We are not there yet.
+
+### D) We still need stronger lane factorization beyond whitespace
+
+The lane ladder from the blueprint remains the cleanest path:
+
+1. whitespace lane only
+2. whitespace + punctuation
+3. add case
+4. add letters
+
+That should now be treated as the mainline roadmap, not as a theoretical aside.
+
+## 8) Strong conclusions to carry forward
+
+These are the main judgments the next instance should inherit without re-debating from zero.
+
+### Conclusion 1
+
+**ApexTrace has earned the right to remain inside K8DNZ, but only as a lane predictor candidate.**
+
+Not as a replacement for the whole codec doctrine. Not as a dibit miracle. As a lane-surface tool.
+
+### Conclusion 2
+
+**Whitespace/class-lane prediction is the only ApexTrace surface currently showing serious codec relevance.**
+
+And even there, the best result came from:
+
+* raw chunk selection
+* larger boundary band
+* capped newline demotion with a floor
+
+### Conclusion 3
+
+**Dibit-first ApexTrace is not where the breakthrough is hiding.**
+
+Both full dibit and `other_lane` dibit experiments came back weak.
+
+### Conclusion 4
+
+**The next big move is punctuation lane, not more dibit tuning.**
+
+The blueprint already said this. The experiments now agree with it.
+
+### Conclusion 5
+
+**The end goal is still honest, general, deterministic compression through structured representation + predictor + sparse residual, not corpus trickery.**
+
+That means:
+
+* fixed tokenizer/lane rules
+* deterministic recipe + seeds
+* no hidden Genesis dictionary
+* no target-specific cheat unless it is paid for in the artifact size 
+
+## 9) Best next-instance implementation direction
+
+This is the most important practical section.
+
+### The next instance should do this, in order
+
+1. **Freeze dibit work**
+
+   Treat:
+
+   * `apex_map_dibit.rs`
+   * `apex_map_dibit_other.rs`
+
+   as parked experiments. Keep them compiling, but do not let them dominate the roadmap.
+
+2. **Keep `apex_map_lane.rs` as the main ApexTrace surface**
+
+   That is where the real signal is.
+
+3. **Generalize lane handling beyond whitespace/class**
+
+   The next useful lane is punctuation.
+
+   The likely path is:
+
+   * extend representation splitting in `k8dnz-core` beyond `WsLanes`
+   * or create an adjacent small-alphabet lane extractor for punctuation
+   * make reconstruction exact and deterministic
+   * run ApexTrace on punctuation lane before letters
+
+4. **Measure the same scoreboard on punctuation lane**
+
+   For each run, record:
+
+   * raw match %
+   * balanced accuracy
+   * macro F1
+   * residual patch entries
+   * residual bytes
+   * compact payload bytes
+   * majority baseline comparison
+
+   This is straight out of the blueprint’s lane-ladder doctrine. 
+
+5. **Build a comparable lane table**
+
+   We need one clean per-lane scoreboard:
+
+   * whitespace/class
+   * punctuation
+   * case
+   * letters
+
+   Then we will finally know whether the collapse is climbing the ladder or stalling.
+
+## 10) Files the next instance should inspect first
+
+Start with these:
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_lane.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/class_metrics.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/ws_lane_types.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/compact_manifest.rs`
+* `crates/k8dnz-core/src/repr/text_norm.rs`
+* `crates/k8dnz-core/src/repr/ws_lanes.rs`
+
+These are the files most directly tied to the current winning path. The codebundle confirms they are present in the repo shape we now have. 
+
+After that, inspect the parked experimental files only as reference:
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_dibit.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_dibit_other.rs` 
+
+## 11) The specific technical ideas worth preserving
+
+Do not lose these details next time.
+
+### A) `boundary_band=20` mattered
+
+This should be one of the first retained defaults for class-lane work.
+
+### B) `field_margin` looked inert in the tested range
+
+Do not waste too much time re-sweeping the same narrow field-margin range unless the surrounding logic changes.
+
+### C) `raw` objective currently wins
+
+Until evidence changes, use raw objective as the reference setting for whitespace/class lane.
+
+### D) Newline demotion needs a floor
+
+This is the subtle but important insight.
+
+The right lesson is not “demote newline harder.”
+
+The right lesson is:
+
+* aggressive newline demotion can shrink payload
+* but it must be capped by a truth-preserving floor
+* otherwise the metric improves by killing the minority class
+
+### E) Majority baseline must stay on-screen
+
+Because the class lane is imbalanced, always compare against majority baseline and report balanced accuracy, not just raw match.
+
+## 12) What the end goal still is
+
+Do not let the ApexTrace detour blur the true objective.
+
+The goal is still not “nice predictor metrics.”
+
+The goal is:
+
+* a deterministic recipe-driven codec
+* modular and honest
+* with structured lanes
+* sparse residuals
+* packed into an artifact that can approach the 2KB dream only if the knee appears
+
+The blueprint’s practical encode2kb flow still stands:
+
+1. normalize input
+2. split into lanes
+3. predict each lane
+4. compute sparse residual patches
+5. pack recipe + seeds + lane descriptors + residual
+6. enforce total budget or fail
+
+That is still the North Star.
+
+## 13) The current honest feasibility statement
+
+The honest current view is:
+
+* odds are better than before that K8DNZ can produce a serious lane-based collapse on structured parts of the text
+* the whitespace/class lane result is real and materially stronger now
+* the 2KB full-goal remains unproven
+* the route to knowing is no longer mysterious:
+
+  * punctuation lane next
+  * then case
+  * then letters
+  * then knee curve judgment
+
+So momentum is real, but the summit is still ahead.
+
+## 14) Bottom-line summary to paste first thing in the next instance
+
+Paste this:
+
+> K8DNZ’s latest ApexTrace session clarified the roadmap. The repo is an integrated Rust workspace with `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace`, and the newest codebundle includes `apex_map_lane`, `apex_map_dibit`, and `apex_map_dibit_other` surfaces. The whitespace/class-lane ApexTrace path is now the only serious ApexTrace codec surface: with `chunk_bytes=64`, `boundary_band=20`, raw chunk selection, and capped newline demotion (`keep_ppm_min=150000`, `keep_min=1`), class-lane compact payload fell to `2225` bytes, field patch bytes to `1613`, class match rose to `74.529874%`, and predicted newline delta shrank to `4` without newline extinction. This is still below the majority baseline (`79.600095%`) and is not full-byte prediction, but it is a real lane-surface refinement. By contrast, dibit ApexTrace did not pay off: full-stream dibit peaked near `33.206379%` match and `other_lane` dibit near `34.255383%`, with only about `1%` actual byte recovery on other bytes. Conclusion: park dibit work, keep `apex_map_lane` as the main ApexTrace surface, and follow the blueprint’s lane ladder next: punctuation, then case, then letters, measuring residual list size, packed residual bytes, and best total artifact bytes at each step. The project doctrine remains unchanged: shortest deterministic recipe plus minimal residual, no corpus cheating, fixed-point turns, and knee-curve evidence before any full-book or 2KB victory claims.
+
+If you want, next turn I’ll turn this into an even tighter “paste into NOTES.md” version.
+
+
+
+### END NOTE - MARCH 20 2026 - 11:30 CST
+
+
+### BEGIN NOTE - MARCH 20 2026 - 19:05 CST
+
+
+LATEST RUN: 
+
+```bash 
+cargo buildcargo test -p k8dnz-core --test case_lanes_roundtrip
+cargo test -p k8dnz-core --test punct_kind_lanes_roundtrip
+cargo run -p k8dnz-cli --bin k8dnz-cli -- apextrace apex-map-case --in text/Genesis1.txt --seed-count 512 --chunk-sweep 64,128 --chunk-search-objective raw --boundary-band-sweep 8,12,16 --field-margin-sweep 4,8 --format txt
+```
+
+# LATEST RESULT:
+
+  Running `target/debug/k8dnz-cli apextrace apex-map-case --in text/Genesis1.txt --seed-count 512 --chunk-sweep 64,128 --chunk-search-objective raw --boundary-band-sweep 8,12,16 --field-margin-sweep 4,8 --format txt`
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=64 chunk_count=50 chunk_patch_entries=955 chunk_patch_bytes=1368 chunk_total_payload_exact=3768 compact_manifest_bytes_exact=468 compact_chunk_total_payload_exact=1836 chunk_match_pct=69.845279 chunk_match_vs_majority_pct=-27.439217 chunk_balanced_accuracy_pct=69.242280 chunk_macro_f1_pct=46.422381 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=67.992220 chunk_mean_macro_f1_pct=45.788108 chunk_mean_minority_f1_pct=9.678254 chunk_mean_abs_minority_delta=18.020000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=8 boundary_delta=1 field_margin=4 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=640 field_patch_bytes=1053 field_total_payload_exact=3453 compact_field_total_payload_exact=1521 field_match_pct=79.791601 field_match_vs_majority_pct=-17.492895 field_balanced_accuracy_pct=64.181253 field_macro_precision_pct=52.334294 field_macro_recall_pct=64.181253 field_macro_f1_pct=49.976603 field_weighted_f1_pct=86.498451 field_pred_entropy_bits=0.723567 field_hist_l1_pct=17.366593
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=799179 field_pred_dominant_share_pct=79.917903 field_pred_collapse_90_flag=false
+field_precision_lower_pct=98.222047 field_recall_lower_pct=80.688088 field_f1_lower_pct=88.595866 field_precision_upper_pct=6.446541 field_recall_upper_pct=47.674419 field_f1_upper_pct=11.357341
+field_overrides=351 field_boundary_count=49 field_touched_positions=784 field_lower_applied=351 field_upper_applied=0
+delta_field_patch_vs_global=-853 delta_field_patch_vs_chunked=-315 delta_field_total_vs_global=1499 delta_field_total_vs_chunked=-315 delta_compact_chunk_total_vs_global=-118 delta_compact_field_total_vs_global=-433 delta_compact_field_total_vs_chunked=-2247 delta_compact_field_total_vs_compact_chunked=-315
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[2180,987,0,0] field_pred_hist=[2531,636,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=64 chunk_count=50 chunk_patch_entries=955 chunk_patch_bytes=1368 chunk_total_payload_exact=3768 compact_manifest_bytes_exact=468 compact_chunk_total_payload_exact=1836 chunk_match_pct=69.845279 chunk_match_vs_majority_pct=-27.439217 chunk_balanced_accuracy_pct=69.242280 chunk_macro_f1_pct=46.422381 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=67.992220 chunk_mean_macro_f1_pct=45.788108 chunk_mean_minority_f1_pct=9.678254 chunk_mean_abs_minority_delta=18.020000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=8 boundary_delta=1 field_margin=8 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=640 field_patch_bytes=1053 field_total_payload_exact=3453 compact_field_total_payload_exact=1521 field_match_pct=79.791601 field_match_vs_majority_pct=-17.492895 field_balanced_accuracy_pct=64.181253 field_macro_precision_pct=52.334294 field_macro_recall_pct=64.181253 field_macro_f1_pct=49.976603 field_weighted_f1_pct=86.498451 field_pred_entropy_bits=0.723567 field_hist_l1_pct=17.366593
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=799179 field_pred_dominant_share_pct=79.917903 field_pred_collapse_90_flag=false
+field_precision_lower_pct=98.222047 field_recall_lower_pct=80.688088 field_f1_lower_pct=88.595866 field_precision_upper_pct=6.446541 field_recall_upper_pct=47.674419 field_f1_upper_pct=11.357341
+field_overrides=351 field_boundary_count=49 field_touched_positions=784 field_lower_applied=351 field_upper_applied=0
+delta_field_patch_vs_global=-853 delta_field_patch_vs_chunked=-315 delta_field_total_vs_global=1499 delta_field_total_vs_chunked=-315 delta_compact_chunk_total_vs_global=-118 delta_compact_field_total_vs_global=-433 delta_compact_field_total_vs_chunked=-2247 delta_compact_field_total_vs_compact_chunked=-315
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[2180,987,0,0] field_pred_hist=[2531,636,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=64 chunk_count=50 chunk_patch_entries=955 chunk_patch_bytes=1368 chunk_total_payload_exact=3768 compact_manifest_bytes_exact=468 compact_chunk_total_payload_exact=1836 chunk_match_pct=69.845279 chunk_match_vs_majority_pct=-27.439217 chunk_balanced_accuracy_pct=69.242280 chunk_macro_f1_pct=46.422381 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=67.992220 chunk_mean_macro_f1_pct=45.788108 chunk_mean_minority_f1_pct=9.678254 chunk_mean_abs_minority_delta=18.020000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=12 boundary_delta=1 field_margin=4 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=559 field_patch_bytes=972 field_total_payload_exact=3372 compact_field_total_payload_exact=1440 field_match_pct=82.349226 field_match_vs_majority_pct=-14.935270 field_balanced_accuracy_pct=59.844093 field_macro_precision_pct=51.852363 field_macro_recall_pct=59.844093 field_macro_f1_pct=50.099598 field_weighted_f1_pct=88.036612 field_pred_entropy_bits=0.655250 field_hist_l1_pct=14.177455
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=831070 field_pred_dominant_share_pct=83.107041 field_pred_collapse_90_flag=false
+field_precision_lower_pct=97.910334 field_recall_lower_pct=83.641675 field_f1_lower_pct=90.215298 field_precision_upper_pct=5.794393 field_recall_upper_pct=36.046512 field_f1_upper_pct=9.983897
+field_overrides=452 field_boundary_count=49 field_touched_positions=1176 field_lower_applied=452 field_upper_applied=0
+delta_field_patch_vs_global=-934 delta_field_patch_vs_chunked=-396 delta_field_total_vs_global=1418 delta_field_total_vs_chunked=-396 delta_compact_chunk_total_vs_global=-118 delta_compact_field_total_vs_global=-514 delta_compact_field_total_vs_chunked=-2328 delta_compact_field_total_vs_compact_chunked=-396
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[2180,987,0,0] field_pred_hist=[2632,535,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=64 chunk_count=50 chunk_patch_entries=955 chunk_patch_bytes=1368 chunk_total_payload_exact=3768 compact_manifest_bytes_exact=468 compact_chunk_total_payload_exact=1836 chunk_match_pct=69.845279 chunk_match_vs_majority_pct=-27.439217 chunk_balanced_accuracy_pct=69.242280 chunk_macro_f1_pct=46.422381 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=67.992220 chunk_mean_macro_f1_pct=45.788108 chunk_mean_minority_f1_pct=9.678254 chunk_mean_abs_minority_delta=18.020000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=12 boundary_delta=1 field_margin=8 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=559 field_patch_bytes=972 field_total_payload_exact=3372 compact_field_total_payload_exact=1440 field_match_pct=82.349226 field_match_vs_majority_pct=-14.935270 field_balanced_accuracy_pct=59.844093 field_macro_precision_pct=51.852363 field_macro_recall_pct=59.844093 field_macro_f1_pct=50.099598 field_weighted_f1_pct=88.036612 field_pred_entropy_bits=0.655250 field_hist_l1_pct=14.177455
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=831070 field_pred_dominant_share_pct=83.107041 field_pred_collapse_90_flag=false
+field_precision_lower_pct=97.910334 field_recall_lower_pct=83.641675 field_f1_lower_pct=90.215298 field_precision_upper_pct=5.794393 field_recall_upper_pct=36.046512 field_f1_upper_pct=9.983897
+field_overrides=452 field_boundary_count=49 field_touched_positions=1176 field_lower_applied=452 field_upper_applied=0
+delta_field_patch_vs_global=-934 delta_field_patch_vs_chunked=-396 delta_field_total_vs_global=1418 delta_field_total_vs_chunked=-396 delta_compact_chunk_total_vs_global=-118 delta_compact_field_total_vs_global=-514 delta_compact_field_total_vs_chunked=-2328 delta_compact_field_total_vs_compact_chunked=-396
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[2180,987,0,0] field_pred_hist=[2632,535,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=64 chunk_count=50 chunk_patch_entries=955 chunk_patch_bytes=1368 chunk_total_payload_exact=3768 compact_manifest_bytes_exact=468 compact_chunk_total_payload_exact=1836 chunk_match_pct=69.845279 chunk_match_vs_majority_pct=-27.439217 chunk_balanced_accuracy_pct=69.242280 chunk_macro_f1_pct=46.422381 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=67.992220 chunk_mean_macro_f1_pct=45.788108 chunk_mean_minority_f1_pct=9.678254 chunk_mean_abs_minority_delta=18.020000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=16 boundary_delta=1 field_margin=4 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=491 field_patch_bytes=904 field_total_payload_exact=3304 compact_field_total_payload_exact=1372 field_match_pct=84.496369 field_match_vs_majority_pct=-12.788128 field_balanced_accuracy_pct=59.817297 field_macro_precision_pct=52.077755 field_macro_recall_pct=59.817297 field_macro_f1_pct=51.038598 field_weighted_f1_pct=89.314390 field_pred_entropy_bits=0.600236 field_hist_l1_pct=11.904010
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=853804 field_pred_dominant_share_pct=85.380486 field_pred_collapse_90_flag=false
+field_precision_lower_pct=97.892012 field_recall_lower_pct=85.913664 field_f1_lower_pct=91.512532 field_precision_upper_pct=6.263499 field_recall_upper_pct=33.720930 field_f1_upper_pct=10.564663
+field_overrides=524 field_boundary_count=49 field_touched_positions=1568 field_lower_applied=524 field_upper_applied=0
+delta_field_patch_vs_global=-1002 delta_field_patch_vs_chunked=-464 delta_field_total_vs_global=1350 delta_field_total_vs_chunked=-464 delta_compact_chunk_total_vs_global=-118 delta_compact_field_total_vs_global=-582 delta_compact_field_total_vs_chunked=-2396 delta_compact_field_total_vs_compact_chunked=-464
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[2180,987,0,0] field_pred_hist=[2704,463,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=64 chunk_count=50 chunk_patch_entries=955 chunk_patch_bytes=1368 chunk_total_payload_exact=3768 compact_manifest_bytes_exact=468 compact_chunk_total_payload_exact=1836 chunk_match_pct=69.845279 chunk_match_vs_majority_pct=-27.439217 chunk_balanced_accuracy_pct=69.242280 chunk_macro_f1_pct=46.422381 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=67.992220 chunk_mean_macro_f1_pct=45.788108 chunk_mean_minority_f1_pct=9.678254 chunk_mean_abs_minority_delta=18.020000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=16 boundary_delta=1 field_margin=8 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=491 field_patch_bytes=904 field_total_payload_exact=3304 compact_field_total_payload_exact=1372 field_match_pct=84.496369 field_match_vs_majority_pct=-12.788128 field_balanced_accuracy_pct=59.817297 field_macro_precision_pct=52.077755 field_macro_recall_pct=59.817297 field_macro_f1_pct=51.038598 field_weighted_f1_pct=89.314390 field_pred_entropy_bits=0.600236 field_hist_l1_pct=11.904010
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=853804 field_pred_dominant_share_pct=85.380486 field_pred_collapse_90_flag=false
+field_precision_lower_pct=97.892012 field_recall_lower_pct=85.913664 field_f1_lower_pct=91.512532 field_precision_upper_pct=6.263499 field_recall_upper_pct=33.720930 field_f1_upper_pct=10.564663
+field_overrides=524 field_boundary_count=49 field_touched_positions=1568 field_lower_applied=524 field_upper_applied=0
+delta_field_patch_vs_global=-1002 delta_field_patch_vs_chunked=-464 delta_field_total_vs_global=1350 delta_field_total_vs_chunked=-464 delta_compact_chunk_total_vs_global=-118 delta_compact_field_total_vs_global=-582 delta_compact_field_total_vs_chunked=-2396 delta_compact_field_total_vs_compact_chunked=-464
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[2180,987,0,0] field_pred_hist=[2704,463,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=128 chunk_count=25 chunk_patch_entries=1144 chunk_patch_bytes=1557 chunk_total_payload_exact=2757 compact_manifest_bytes_exact=244 compact_chunk_total_payload_exact=1801 chunk_match_pct=63.877487 chunk_match_vs_majority_pct=-33.407010 chunk_balanced_accuracy_pct=74.087430 chunk_macro_f1_pct=44.318709 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=75.909658 chunk_mean_macro_f1_pct=44.213659 chunk_mean_minority_f1_pct=11.092626 chunk_mean_abs_minority_delta=44.720000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=8 boundary_delta=1 field_margin=4 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=1023 field_patch_bytes=1436 field_total_payload_exact=2636 compact_field_total_payload_exact=1680 field_match_pct=67.698137 field_match_vs_majority_pct=-29.586359 field_balanced_accuracy_pct=72.660077 field_macro_precision_pct=52.674674 field_macro_recall_pct=72.660077 field_macro_f1_pct=45.910599 field_weighted_f1_pct=78.375115 field_pred_entropy_bits=0.923062 field_hist_l1_pct=31.101989
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=661825 field_pred_dominant_share_pct=66.182507 field_pred_collapse_90_flag=false
+field_precision_lower_pct=99.093511 field_recall_lower_pct=67.413178 field_f1_lower_pct=80.239521 field_precision_upper_pct=6.255836 field_recall_upper_pct=77.906977 field_f1_upper_pct=11.581677
+field_overrides=133 field_boundary_count=24 field_touched_positions=384 field_lower_applied=133 field_upper_applied=0
+delta_field_patch_vs_global=-470 delta_field_patch_vs_chunked=-121 delta_field_total_vs_global=682 delta_field_total_vs_chunked=-121 delta_compact_chunk_total_vs_global=-153 delta_compact_field_total_vs_global=-274 delta_compact_field_total_vs_chunked=-1077 delta_compact_field_total_vs_compact_chunked=-121
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[1963,1204,0,0] field_pred_hist=[2096,1071,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=128 chunk_count=25 chunk_patch_entries=1144 chunk_patch_bytes=1557 chunk_total_payload_exact=2757 compact_manifest_bytes_exact=244 compact_chunk_total_payload_exact=1801 chunk_match_pct=63.877487 chunk_match_vs_majority_pct=-33.407010 chunk_balanced_accuracy_pct=74.087430 chunk_macro_f1_pct=44.318709 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=75.909658 chunk_mean_macro_f1_pct=44.213659 chunk_mean_minority_f1_pct=11.092626 chunk_mean_abs_minority_delta=44.720000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=8 boundary_delta=1 field_margin=8 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=1023 field_patch_bytes=1436 field_total_payload_exact=2636 compact_field_total_payload_exact=1680 field_match_pct=67.698137 field_match_vs_majority_pct=-29.586359 field_balanced_accuracy_pct=72.660077 field_macro_precision_pct=52.674674 field_macro_recall_pct=72.660077 field_macro_f1_pct=45.910599 field_weighted_f1_pct=78.375115 field_pred_entropy_bits=0.923062 field_hist_l1_pct=31.101989
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=661825 field_pred_dominant_share_pct=66.182507 field_pred_collapse_90_flag=false
+field_precision_lower_pct=99.093511 field_recall_lower_pct=67.413178 field_f1_lower_pct=80.239521 field_precision_upper_pct=6.255836 field_recall_upper_pct=77.906977 field_f1_upper_pct=11.581677
+field_overrides=133 field_boundary_count=24 field_touched_positions=384 field_lower_applied=133 field_upper_applied=0
+delta_field_patch_vs_global=-470 delta_field_patch_vs_chunked=-121 delta_field_total_vs_global=682 delta_field_total_vs_chunked=-121 delta_compact_chunk_total_vs_global=-153 delta_compact_field_total_vs_global=-274 delta_compact_field_total_vs_chunked=-1077 delta_compact_field_total_vs_compact_chunked=-121
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[1963,1204,0,0] field_pred_hist=[2096,1071,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=128 chunk_count=25 chunk_patch_entries=1144 chunk_patch_bytes=1557 chunk_total_payload_exact=2757 compact_manifest_bytes_exact=244 compact_chunk_total_payload_exact=1801 chunk_match_pct=63.877487 chunk_match_vs_majority_pct=-33.407010 chunk_balanced_accuracy_pct=74.087430 chunk_macro_f1_pct=44.318709 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=75.909658 chunk_mean_macro_f1_pct=44.213659 chunk_mean_minority_f1_pct=11.092626 chunk_mean_abs_minority_delta=44.720000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=12 boundary_delta=1 field_margin=4 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=970 field_patch_bytes=1383 field_total_payload_exact=2583 compact_field_total_payload_exact=1627 field_match_pct=69.371645 field_match_vs_majority_pct=-27.912851 field_balanced_accuracy_pct=68.433686 field_macro_precision_pct=52.253946 field_macro_recall_pct=68.433686 field_macro_f1_pct=46.099084 field_weighted_f1_pct=79.593231 field_pred_entropy_bits=0.899707 field_hist_l1_pct=28.860120
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=684243 field_pred_dominant_share_pct=68.424376 field_pred_collapse_90_flag=false
+field_precision_lower_pct=98.707891 field_recall_lower_pct=69.425511 field_f1_lower_pct=81.516768 field_precision_upper_pct=5.800000 field_recall_upper_pct=67.441860 field_f1_upper_pct=10.681400
+field_overrides=204 field_boundary_count=24 field_touched_positions=576 field_lower_applied=204 field_upper_applied=0
+delta_field_patch_vs_global=-523 delta_field_patch_vs_chunked=-174 delta_field_total_vs_global=629 delta_field_total_vs_chunked=-174 delta_compact_chunk_total_vs_global=-153 delta_compact_field_total_vs_global=-327 delta_compact_field_total_vs_chunked=-1130 delta_compact_field_total_vs_compact_chunked=-174
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[1963,1204,0,0] field_pred_hist=[2167,1000,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=128 chunk_count=25 chunk_patch_entries=1144 chunk_patch_bytes=1557 chunk_total_payload_exact=2757 compact_manifest_bytes_exact=244 compact_chunk_total_payload_exact=1801 chunk_match_pct=63.877487 chunk_match_vs_majority_pct=-33.407010 chunk_balanced_accuracy_pct=74.087430 chunk_macro_f1_pct=44.318709 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=75.909658 chunk_mean_macro_f1_pct=44.213659 chunk_mean_minority_f1_pct=11.092626 chunk_mean_abs_minority_delta=44.720000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=12 boundary_delta=1 field_margin=8 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=970 field_patch_bytes=1383 field_total_payload_exact=2583 compact_field_total_payload_exact=1627 field_match_pct=69.371645 field_match_vs_majority_pct=-27.912851 field_balanced_accuracy_pct=68.433686 field_macro_precision_pct=52.253946 field_macro_recall_pct=68.433686 field_macro_f1_pct=46.099084 field_weighted_f1_pct=79.593231 field_pred_entropy_bits=0.899707 field_hist_l1_pct=28.860120
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=684243 field_pred_dominant_share_pct=68.424376 field_pred_collapse_90_flag=false
+field_precision_lower_pct=98.707891 field_recall_lower_pct=69.425511 field_f1_lower_pct=81.516768 field_precision_upper_pct=5.800000 field_recall_upper_pct=67.441860 field_f1_upper_pct=10.681400
+field_overrides=204 field_boundary_count=24 field_touched_positions=576 field_lower_applied=204 field_upper_applied=0
+delta_field_patch_vs_global=-523 delta_field_patch_vs_chunked=-174 delta_field_total_vs_global=629 delta_field_total_vs_chunked=-174 delta_compact_chunk_total_vs_global=-153 delta_compact_field_total_vs_global=-327 delta_compact_field_total_vs_chunked=-1130 delta_compact_field_total_vs_compact_chunked=-174
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[1963,1204,0,0] field_pred_hist=[2167,1000,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=128 chunk_count=25 chunk_patch_entries=1144 chunk_patch_bytes=1557 chunk_total_payload_exact=2757 compact_manifest_bytes_exact=244 compact_chunk_total_payload_exact=1801 chunk_match_pct=63.877487 chunk_match_vs_majority_pct=-33.407010 chunk_balanced_accuracy_pct=74.087430 chunk_macro_f1_pct=44.318709 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=75.909658 chunk_mean_macro_f1_pct=44.213659 chunk_mean_minority_f1_pct=11.092626 chunk_mean_abs_minority_delta=44.720000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=16 boundary_delta=1 field_margin=4 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=901 field_patch_bytes=1314 field_total_payload_exact=2514 compact_field_total_payload_exact=1558 field_match_pct=71.550363 field_match_vs_majority_pct=-25.734133 field_balanced_accuracy_pct=67.857952 field_macro_precision_pct=52.281626 field_macro_recall_pct=67.857952 field_macro_f1_pct=46.976886 field_weighted_f1_pct=81.113048 field_pred_entropy_bits=0.871386 field_hist_l1_pct=26.491948
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=707925 field_pred_dominant_share_pct=70.792548 field_pred_collapse_90_flag=false
+field_precision_lower_pct=98.617306 field_recall_lower_pct=71.762415 field_f1_lower_pct=83.073455 field_precision_upper_pct=5.945946 field_recall_upper_pct=63.953488 field_f1_upper_pct=10.880317
+field_overrides=279 field_boundary_count=24 field_touched_positions=768 field_lower_applied=279 field_upper_applied=0
+delta_field_patch_vs_global=-592 delta_field_patch_vs_chunked=-243 delta_field_total_vs_global=560 delta_field_total_vs_chunked=-243 delta_compact_chunk_total_vs_global=-153 delta_compact_field_total_vs_global=-396 delta_compact_field_total_vs_chunked=-1199 delta_compact_field_total_vs_compact_chunked=-243
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[1963,1204,0,0] field_pred_hist=[2242,925,0,0]
+
+input=text/Genesis1.txt
+normalized_len=4201 letter_positions=3167 case_len=3167
+majority_class=0 majority_label=lower majority_count=3081 majority_baseline_match_pct=97.284496 target_entropy_bits=0.179917
+global_patch_entries=1493 global_patch_bytes=1906 global_total_payload_exact=1954 global_match_pct=52.857594 global_match_vs_majority_pct=-44.426902 global_balanced_accuracy_pct=52.599013 global_macro_f1_pct=37.130222
+chunk_bytes=128 chunk_count=25 chunk_patch_entries=1144 chunk_patch_bytes=1557 chunk_total_payload_exact=2757 compact_manifest_bytes_exact=244 compact_chunk_total_payload_exact=1801 chunk_match_pct=63.877487 chunk_match_vs_majority_pct=-33.407010 chunk_balanced_accuracy_pct=74.087430 chunk_macro_f1_pct=44.318709 chunk_search_objective=raw chunk_raw_slack=1 chunk_mean_balanced_accuracy_pct=75.909658 chunk_mean_macro_f1_pct=44.213659 chunk_mean_minority_f1_pct=11.092626 chunk_mean_abs_minority_delta=44.720000 chunk_majority_flip_count=0 chunk_collapse_90_count=0
+field_source=chunked map_node_count=6333 map_depth_seen=12 map_depth_shift=1 map_max_depth_arg=0 boundary_band=16 boundary_delta=1 field_margin=8 lower_margin_add=0 upper_margin_add=0 lower_share_ppm_min=0 upper_share_ppm_min=0
+field_patch_entries=901 field_patch_bytes=1314 field_total_payload_exact=2514 compact_field_total_payload_exact=1558 field_match_pct=71.550363 field_match_vs_majority_pct=-25.734133 field_balanced_accuracy_pct=67.857952 field_macro_precision_pct=52.281626 field_macro_recall_pct=67.857952 field_macro_f1_pct=46.976886 field_weighted_f1_pct=81.113048 field_pred_entropy_bits=0.871386 field_hist_l1_pct=26.491948
+field_pred_dominant_class=0 field_pred_dominant_label=lower field_pred_dominant_share_ppm=707925 field_pred_dominant_share_pct=70.792548 field_pred_collapse_90_flag=false
+field_precision_lower_pct=98.617306 field_recall_lower_pct=71.762415 field_f1_lower_pct=83.073455 field_precision_upper_pct=5.945946 field_recall_upper_pct=63.953488 field_f1_upper_pct=10.880317
+field_overrides=279 field_boundary_count=24 field_touched_positions=768 field_lower_applied=279 field_upper_applied=0
+delta_field_patch_vs_global=-592 delta_field_patch_vs_chunked=-243 delta_field_total_vs_global=560 delta_field_total_vs_chunked=-243 delta_compact_chunk_total_vs_global=-153 delta_compact_field_total_vs_global=-396 delta_compact_field_total_vs_chunked=-1199 delta_compact_field_total_vs_compact_chunked=-243
+target_hist=[3081,86,0,0] global_pred_hist=[1670,1497,0,0] chunk_pred_hist=[1963,1204,0,0] field_pred_hist=[2242,925,0,0]
+apextrace apex-map-case Txt: runs=12 best_chunk=64 best_boundary_band=16 best_field_margin=4 compact_field_total_payload_exact=1372 field_match_pct=84.496369
+apex-map-case best: chunk=64 boundary_band=16 field_margin=4 compact_field_total_payload_exact=1372 field_match_pct=84.496369
+
+
+### END NOTE - MARCH 20 2026 - 19:05 CST
+
+

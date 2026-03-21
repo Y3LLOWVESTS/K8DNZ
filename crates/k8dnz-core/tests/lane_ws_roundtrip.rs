@@ -1,12 +1,12 @@
 // crates/k8dnz-core/tests/lane_ws_roundtrip.rs
 
 use k8dnz_core::lane;
+use k8dnz_core::recipe::{defaults::default_recipe, format};
 use k8dnz_core::repr::text_norm;
 
 fn recipe_bytes_default() -> Vec<u8> {
-    // Default recipe is available via Recipe::default(); encode to bytes.
-    let r = k8dnz_core::Recipe::default();
-    r.encode()
+    let r = default_recipe();
+    format::encode(&r)
 }
 
 #[test]

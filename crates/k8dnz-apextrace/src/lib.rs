@@ -1,3 +1,4 @@
+pub mod apex_map;
 pub mod dibit;
 pub mod error;
 pub mod fit;
@@ -6,6 +7,10 @@ pub mod key;
 pub mod law;
 pub mod render;
 
+pub use apex_map::{
+    ApexMap, ApexMapCfg, ApexMapNode, BoundaryPair, OverrideDecision, OverrideTrace, RefineCfg,
+    RefineStats,
+};
 pub use dibit::{bytes_to_quats, quats_to_bytes};
 pub use error::{ApexError, Result};
 pub use fit::{
