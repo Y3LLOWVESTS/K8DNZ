@@ -23273,3 +23273,2871 @@ apex-map-case best: chunk=64 boundary_band=16 field_margin=4 compact_field_total
 ### END NOTE - MARCH 20 2026 - 19:05 CST
 
 
+### BEGIN NOTE - MARCH 20 2026 - 19:25 CST
+
+Absolutely. Here is a full carry-over pack for the next instance.
+
+For reference, the project doctrine still comes from the same core sources: K8DNZ is a deterministic fixed-point Cadence codec with no π dependency in core logic, recipe+seed reproducibility, and the real breakthrough only happens if residual collapses under the right reversible representation rather than through packaging tricks. The blueprint is explicit that the correct path is a lane ladder — whitespace, punctuation, case, letters — with knee-curve measurement based on residual entries, packed residual bytes, and total artifact bytes, not just raw match rates.   
+
+# K8DNZ carry-over notes — March 20, 2026
+
+## ApexTrace lane-ladder checkpoint, punctuation/case readout, and next truth-surface priority
+
+## 0) Executive snapshot
+
+K8DNZ is in a stronger and more honest position than before this session.
+
+The mainline doctrine has not changed:
+
+* deterministic fixed-point Cadence core
+* recipe + residual honesty
+* no corpus cheating
+* no “2KB miracle” claim unless the residual really collapses
+* representation matters more than packaging
+* the real question is not “did match% go up?” but “did the packed residual become tiny under a general reversible transform?”  
+
+The important change from this session is that the lane-ladder hypothesis is now much better mapped:
+
+* **Whitespace/class** remains the only clearly serious ApexTrace surface.
+* **Full-stream punctuation** turned out to be too imbalanced to trust.
+* **Punctuation subtype (`punct-kind`)** is much more honest than full punctuation, but still not a strong predictive surface.
+* **Case lane** is better framed now, but it looks more like a cheap sparse-residual lane than a predictor breakthrough.
+* Therefore the next high-impact move is **not** more punct-kind tuning and **not** more case tuning.
+* The next high-impact move is to build the **truth surface / lane table / baseline comparison layer** so we can compare ApexTrace vs trivial baselines honestly, then move into **letters** from a position of discipline rather than hope.
+
+That is the key strategic outcome of this session.
+
+---
+
+## 1) Non-negotiable doctrine that still stands
+
+These are still the rules of the project and should not be re-debated from zero next time.
+
+### A) Core Cadence identity
+
+K8DNZ is still a Cadence-inspired deterministic codec:
+
+* A and C free orbit at different speeds in opposite directions
+* alignment within ε triggers lockstep
+* lockstep occurs on the frustum
+* emission happens at the large rim
+* the same recipe+seed must reproduce the same outputs exactly
+* core math uses fixed-point turns, not floating point, and should not depend on π for correctness 
+
+### B) General decoder / no corpus cheating
+
+The blueprint is explicit:
+
+* no Genesis-specific baked dictionary
+* no trained model hidden in decoder
+* any target-specific help must be paid for inside the artifact
+* the decoder must remain general-purpose  
+
+### C) Real breakthrough condition
+
+The 2KB dream only happens if:
+
+* the data becomes algorithmically simple under the chosen representation
+* the residual becomes near-zero or at least extremely sparse
+* packed residual per 2 KiB chunk trends toward single-digit bytes or better 
+
+### D) Lane ladder remains the clean path
+
+The blueprint still says the right climb is:
+
+1. whitespace
+2. punctuation
+3. case
+4. letters
+
+and at each rung we must record:
+
+* match%
+* residual entry count
+* residual bytes raw
+* residual bytes packed
+* total artifact bytes / best total bytes
+* knee behavior as target size grows  
+
+---
+
+## 2) Current repo state after this session
+
+The repo is healthier now than it was before this session.
+
+### Confirmed working additions from this session
+
+The following lane files and tests were added and successfully compiled into the workspace during this session:
+
+#### `k8dnz-core`
+
+* `repr/punct_lanes.rs`
+* `repr/punct_kind_lanes.rs`
+* `repr/case_lanes.rs`
+
+#### tests
+
+* `tests/lane_ws_roundtrip.rs` fixed and now passes
+* `tests/punct_lanes_roundtrip.rs`
+* `tests/punct_kind_lanes_roundtrip.rs`
+* `tests/case_lanes_roundtrip.rs`
+
+#### `k8dnz-cli` ApexTrace surfaces
+
+* `cmd/apextrace/apex_map_punct.rs`
+* `cmd/apextrace/apex_map_punct_kind.rs`
+* `cmd/apextrace/apex_map_case.rs`
+* `cmd/apextrace/symbol_metrics.rs`
+* CLI wiring updated in `cmd/apextrace/mod.rs`
+
+### Repo health checkpoint
+
+What now passes from the user’s terminal:
+
+* `cargo build`
+* `cargo test -p k8dnz-core --test lane_ws_roundtrip`
+* `cargo test -p k8dnz-core --test punct_kind_lanes_roundtrip`
+* `cargo test -p k8dnz-core --test case_lanes_roundtrip`
+
+That is meaningful because it means the repo is no longer in “ideas only” mode for these surfaces. The lane ladder is now partially embodied in real modules and tests.
+
+### Remaining repo noise
+
+Warnings remain, but they are mostly non-blocking:
+
+* old unused warnings in dibit files
+* some dead-code warnings in new lane structs
+* `gen_pred_stream_with_omega` still unused
+* `compact_manifest::encoded_len()` still unused
+
+These are not urgent. They are cleanup, not strategy.
+
+---
+
+## 3) What was already known before this session
+
+Before this session, the major honest result was:
+
+### Whitespace/class lane was the first real ApexTrace win
+
+The March 20 note established that `apex_map_lane` had become the only serious ApexTrace codec surface so far.
+
+The best known whitespace/class regime before this session was:
+
+* `chunk_bytes = 64`
+* `boundary_band = 20`
+* raw chunk selection
+* capped newline demotion with floor
+* class-lane compact payload down to `2225`
+* class-lane patch bytes down to `1613`
+* class match up to `74.529874%`
+* predicted newline delta down to `4`
+* no newline extinction
+
+That result was still below majority baseline and not a balanced predictor win, but it was a real lane-surface refinement and the first strong reason to keep ApexTrace alive inside K8DNZ. It also established the key knobs that mattered:
+
+* `boundary_band` mattered
+* `field_margin` looked inert
+* `raw` objective currently won
+* newline demotion needed a floor
+* majority baseline must remain on-screen for imbalanced lanes 
+
+This session did not overthrow that result. It reinforced it.
+
+---
+
+## 4) What we accomplished in this session
+
+## A) We extended the lane world beyond whitespace
+
+This was the biggest engineering accomplishment of the session.
+
+We added real lane infrastructure for:
+
+* punctuation full-stream factorization
+* punctuation-only subtype factorization
+* case factorization
+* generic symbol metrics for 4-class and 2-class surfaces
+* new CLI surfaces to run ApexTrace on them
+
+That matters because the blueprint did not ask for one isolated win. It asked for a lane ladder with comparable scoreboards. This session moved K8DNZ substantially closer to that architecture.  
+
+## B) We fixed stale lane tests
+
+`lane_ws_roundtrip.rs` had been stuck on `Recipe::default()`. That was fixed to the current recipe API, and now the lane roundtrip/determinism check passes again.
+
+This is not glamorous, but it matters. It re-establishes a basic correctness floor for the lane path.
+
+## C) We learned that full-stream punctuation was the wrong surface
+
+This was one of the most important negative results.
+
+The first `apex-map-punct` run showed:
+
+* `normalized_len = 4201`
+* `punct_len = 124`
+* `other_len = 4077`
+* majority baseline = `97.048322%` (`other` dominates almost everything)
+* best run only reached about `75.743871%`
+* `field_term_applied = 0`
+* `field_pause_applied = 0`
+* `field_wrap_applied = 0`
+
+That meant full-stream punctuation was too imbalanced. The predictor was effectively winning by pushing symbols toward `other`, not by learning punctuation structure. So full punctuation was revealed as a **mirage-prone surface**.
+
+This was a good negative result because it told us not to waste the roadmap there.
+
+## D) We built and tested punctuation-only subtype (`punct-kind`)
+
+This was the right correction.
+
+By removing `other`, we turned punctuation into a much more honest small-alphabet surface:
+
+* punctuation-only positions = `124`
+* majority baseline = `73.387097%`
+* target histogram = `[33, 91, 0, 0]`
+
+Best `punct-kind` run:
+
+* `chunk=32`
+* `boundary_band=16`
+* `field_margin=4`
+* `compact_field_total_payload_exact=117`
+* `field_match_pct=72.580645`
+
+Interpretation:
+
+* this is far more honest than full punctuation
+* it is still **below** majority baseline
+* so it is **not** yet a trustworthy predictor surface
+* but the packed residual is small enough that punct-kind may be “small enough not to be the bottleneck”
+
+That was a subtle but important finding.
+
+It suggests punctuation subtype may be useful more as a **cheap residual lane** than as a predictor frontier.
+
+## E) We added and tested case lane
+
+The case lane was the next rung in the blueprint ladder.
+
+Best `apex-map-case` run:
+
+* `letter_positions = 3167`
+* target histogram = `[3081, 86]`
+* majority baseline = `97.284496%`
+* best run:
+
+  * `chunk=64`
+  * `boundary_band=16`
+  * `field_margin=4`
+  * `compact_field_total_payload_exact=1372`
+  * `field_match_pct=84.496369`
+
+Interpretation:
+
+* better than full punctuation, but still far below majority baseline
+* current refinement still only applied `lower` overrides:
+
+  * `field_lower_applied = 524`
+  * `field_upper_applied = 0`
+* uppercase F1 remained poor:
+
+  * `field_f1_upper_pct = 10.564663`
+
+So case is now clearly framed, but current ApexTrace case behavior is basically a **lower-demotion machine**.
+
+That means case currently looks like:
+
+* a potentially cheap sparse residual lane
+* not a strong predictor breakthrough
+* likely better handled first by a trivial baseline (“all lower + sparse uppercase patch list”) than by more ApexTrace tuning
+
+That is an important strategic realization.
+
+---
+
+## 5) The strongest judgments the next instance should inherit
+
+These judgments should be treated as current best truth unless new evidence changes them.
+
+### Judgment 1
+
+**Whitespace/class remains the only clearly serious ApexTrace codec surface.**
+
+That is still where the most meaningful predictor progress has happened.
+
+### Judgment 2
+
+**Full-stream punctuation should not be a mainline focus.**
+
+It is too dominated by `other`, and that makes it a misleading truth surface.
+
+### Judgment 3
+
+**Punctuation subtype (`punct-kind`) is more honest, but probably not a breakthrough surface.**
+
+Its packed payload is small enough to matter, but it is still not above baseline, so it currently looks more like “small enough lane” than “great predictor.”
+
+### Judgment 4
+
+**Case lane likely belongs in the same category: cheap residual lane, not predictor frontier.**
+
+The target is too imbalanced (`3081 lower`, `86 upper`), and current refinement only pushes lower harder.
+
+### Judgment 5
+
+**Do not spend another high-impact batch trying to coerce punctuation-kind or case into prediction breakthroughs.**
+
+That would likely be wasted effort.
+
+### Judgment 6
+
+**The next real missing piece is the comparable truth surface / lane table / baseline comparison system.**
+
+The blueprint says the decision experiment is the knee curve, not isolated lane anecdotes.  
+
+### Judgment 7
+
+**Letters are probably the next true entropy frontier, but we should enter that frontier with a baseline-aware scoreboard, not blind optimism.**
+
+---
+
+## 6) Latest result table to preserve exactly
+
+These are the latest best known lane checkpoints from this session and the prior March 20 checkpoint.
+
+### A) Whitespace/class lane (best known from earlier session)
+
+* `chunk_bytes = 64`
+* `boundary_band = 20`
+* raw objective
+* capped newline demotion with floor
+* `field_match_pct = 74.529874`
+* `field_patch_bytes = 1613`
+* `compact_field_total_payload_exact = 2225`
+* predicted newline delta = `4`
+* still below majority baseline
+
+### B) Full punctuation lane
+
+Best run:
+
+* `chunk=64`
+* `boundary_band=20`
+* `field_margin=4`
+* `compact_field_total_payload_exact=2174`
+* `field_match_pct=75.743871`
+* majority baseline = `97.048322`
+* not trustworthy due to `other` dominance
+
+### C) Punctuation subtype (`punct-kind`)
+
+Best run:
+
+* `chunk=32`
+* `boundary_band=16`
+* `field_margin=4`
+* `compact_field_total_payload_exact=117`
+* `field_match_pct=72.580645`
+* majority baseline = `73.387097`
+* honest but still not baseline-beating
+
+### D) Case lane
+
+Best run:
+
+* `chunk=64`
+* `boundary_band=16`
+* `field_margin=4`
+* `compact_field_total_payload_exact=1372`
+* `field_match_pct=84.496369`
+* majority baseline = `97.284496`
+* still far below baseline
+* refinement applied lower only, not upper
+
+---
+
+## 7) What these results mean in plain English
+
+### Whitespace/class
+
+Still the strongest ApexTrace result. This is the surface most likely to yield a real second win if improved further.
+
+### Punctuation-kind
+
+Useful because it is now honest and cheap. But it probably will not carry the project.
+
+### Case
+
+Also useful because it is now factored out and measurable. But it probably wants a trivial baseline more than another ApexTrace tuning cycle.
+
+### Larger conclusion
+
+ApexTrace is still valid **inside K8DNZ**, but not as a universal predictor engine. It is currently a **lane-local candidate predictor**, and only one lane has really justified that role so far. That is consistent with the blueprint’s warning that the true route is multiple simple predictors over structured lanes, not one impossible byte-level predictor. 
+
+---
+
+## 8) What remains unfinished
+
+A lot remains unfinished, and the next instance should be clear-eyed about that.
+
+### A) We still do not have the unified lane truth surface
+
+This is now the most obvious missing system.
+
+We need one command or one reporting layer that can show, side by side:
+
+* whitespace/class ApexTrace
+* punct-kind ApexTrace
+* case ApexTrace
+* trivial baseline for punct-kind
+* trivial baseline for case
+* eventually letters
+* maybe baseline K8L1 lane predictor where applicable
+
+For each lane we need:
+
+* target size
+* majority baseline
+* raw match
+* balanced accuracy
+* macro F1
+* residual entries
+* raw residual bytes
+* packed residual bytes
+* total payload / compact total
+* whether the lane is likely a predictor frontier or just a cheap sparse residual lane
+
+Without that, we are still judging too much from scattered outputs.
+
+### B) We do not yet have the trivial baselines that case and punctuation are begging for
+
+This is now an important engineering omission.
+
+The case result practically screams for:
+
+* predict all lowercase
+* store sparse uppercase positions / symbols
+* compare packed bytes directly against ApexTrace case
+
+Likewise punct-kind wants:
+
+* predict all pause
+* store sparse term/wrap positions
+* compare packed bytes directly against ApexTrace punct-kind
+
+We need those baselines before deciding whether ApexTrace is helping or just taking the long road to a result a trivial sparse model could beat.
+
+### C) Letters have not been entered yet
+
+The blueprint always said letters are one of the true frontier lanes. We still do not know whether letters under lowercasing / shape factorization are where the real climb continues or where the approach stalls. 
+
+### D) Word-shape / lowercased letter factorization has not been built
+
+The blueprint explicitly points toward reversible representation shifts like:
+
+* word shape
+* word length
+* lowercased letters
+
+That is still available as a next representation refinement if plain letter lanes do not show a knee. 
+
+### E) The full budget picture is still unsolved
+
+We still do not know if the cumulative lane story is heading toward a real total-artifact knee or just a collection of isolated small wins. The blueprint remains explicit that full-book attempts should wait until the smaller-size knee is visible. 
+
+---
+
+## 9) Recommended next implementation order
+
+This is the single most important practical section for the next instance.
+
+## Next step 1: Build the lane table / truth-surface command
+
+This should now be the top priority.
+
+### Purpose
+
+Make one command or mode that prints a comparable scoreboard across lanes and predictors.
+
+### It should include at minimum
+
+For each lane variant:
+
+* lane id
+* target length
+* majority class + baseline %
+* predictor type
+* chunk size
+* boundary band
+* field margin
+* raw match %
+* balanced accuracy %
+* macro F1 %
+* patch entry count
+* patch bytes
+* compact total payload exact
+* note / tag:
+
+  * `predictor_candidate`
+  * `cheap_residual_lane`
+  * `mirage_risk`
+
+### First included surfaces
+
+* whitespace/class ApexTrace
+* punct-kind ApexTrace
+* case ApexTrace
+* punct-kind trivial baseline
+* case trivial baseline
+
+### Why this matters
+
+Because the blueprint’s real decision experiment is not another isolated run. It is the knee-curve / truth-surface comparison.  
+
+## Next step 2: Add trivial sparse baselines
+
+### Case baseline
+
+* predict all lowercase
+* encode uppercase positions sparsely
+* compare payload against ApexTrace case
+
+### Punct-kind baseline
+
+* predict all pause
+* encode term positions sparsely
+* compare payload against ApexTrace punct-kind
+
+This is likely to save a lot of time by telling us whether those lanes are “basically solved by trivial sparse residual.”
+
+## Next step 3: Move into letters
+
+Only after the truth surface and trivial baselines exist should the next high-impact ApexTrace lane be letters.
+
+Likely first version:
+
+* lowercase letters only
+* alphabet `{a..z}`
+* exact reversible factorization
+* same scoreboard as other lanes
+
+### Why letters next
+
+Because if whitespace is the first strong surface, and punctuation/case are merely cheap residual lanes, then letters are where the remaining entropy probably lives.
+
+## Next step 4: Consider shape + letters factorization if raw letters stall
+
+If plain lowercased letters do not show promising behavior, next representation shift should likely be:
+
+* word shape
+* word length
+* lowercased spelling lane
+
+This is already implied by the blueprint and stays within the “general reversible algorithmic transform” rule. 
+
+---
+
+## 10) Recommended files to inspect first next time
+
+The next instance should start by inspecting these files first.
+
+### Main winning surface / existing baseline
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_lane.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/class_metrics.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/compact_manifest.rs`
+
+### New lane surfaces from this session
+
+* `crates/k8dnz-core/src/repr/punct_lanes.rs`
+* `crates/k8dnz-core/src/repr/punct_kind_lanes.rs`
+* `crates/k8dnz-core/src/repr/case_lanes.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_punct.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_punct_kind.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_case.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/symbol_metrics.rs`
+
+### Tests
+
+* `crates/k8dnz-core/tests/lane_ws_roundtrip.rs`
+* `crates/k8dnz-core/tests/punct_kind_lanes_roundtrip.rs`
+* `crates/k8dnz-core/tests/case_lanes_roundtrip.rs`
+
+### Parked experiments to leave parked
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_dibit.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_dibit_other.rs`
+
+Dibits should remain compiled but de-prioritized.
+
+---
+
+## 11) Technical ideas from this session worth preserving exactly
+
+These are the concrete small truths the next instance should not forget.
+
+### A) `boundary_band` keeps mattering
+
+Across multiple surfaces, larger boundary bands tended to help more than smaller bands.
+
+### B) `field_margin` keeps looking inert
+
+On whitespace/class, punctuation, punct-kind, and case, the narrow tested `field_margin` values kept repeating identical results. Do not spend another batch re-sweeping the same tiny field-margin range unless the refinement logic itself changes.
+
+### C) `raw` objective is still the right reference setting
+
+Nothing in this session contradicted the earlier lesson that `raw` should remain the default reference objective.
+
+### D) Majority baseline must always stay on-screen
+
+This session proved that again on full punctuation, punct-kind, and case. A lane can look “pretty good” and still be mostly majority drift.
+
+### E) Punct-kind and case both hint at trivial-baseline territory
+
+This is a new and important lesson. These lanes may still matter for compression, but probably more as sparse residual lanes than as predictor breakthrough fronts.
+
+---
+
+## 12) Honest feasibility statement at the end of this session
+
+Here is the honest current view.
+
+### What looks genuinely alive
+
+* the lane-ladder doctrine
+* whitespace/class ApexTrace
+* structured representation as the way forward
+* modular lane factorization
+* deterministic sparse-first residual framing
+
+### What looks much weaker than before
+
+* the idea that every new small-alphabet lane will become a strong ApexTrace predictor
+* punctuation as a frontier surface
+* case as a frontier surface
+* any hope that dibits are secretly the real path
+
+### What still has real upside
+
+* chunked/local whitespace/class improvements
+* truthful lane-vs-baseline comparison surfaces
+* letters / lowercased letters
+* possibly word-shape / spelling factorization after letters
+
+### What remains unproven
+
+* the actual knee curve
+* full artifact budget behavior
+* full-book feasibility
+* the 2KB dream
+
+That means momentum is real, but the summit is still ahead and the truth surface is still incomplete.
+
+---
+
+## 13) Recommended first commands for the next instance
+
+The next instance should probably not begin by launching another random sweep. It should begin by building the comparison surface and then running targeted checks.
+
+Suggested sequence:
+
+```bash
+cargo build
+cargo test -p k8dnz-core --test lane_ws_roundtrip
+cargo test -p k8dnz-core --test punct_kind_lanes_roundtrip
+cargo test -p k8dnz-core --test case_lanes_roundtrip
+```
+
+Then implement the lane-table / baseline comparison command.
+
+After that, run:
+
+* whitespace/class ApexTrace reference
+* punct-kind ApexTrace vs trivial baseline
+* case ApexTrace vs trivial baseline
+
+Only after those comparisons exist should the next new lane be letters.
+
+---
+
+## 14) Paste-first summary for the next instance
+
+Paste this first thing next time:
+
+> K8DNZ remains on the same honest path: deterministic Cadence core, fixed-point turns, recipe+residual, no corpus cheating, and the real success condition is residual collapse under a general reversible representation, not packaging tricks. The blueprint still says the correct climb is lane-by-lane — whitespace, punctuation, case, letters — measured by residual entries, packed residual bytes, total artifact bytes, and knee-curve behavior. In the latest session, the repo was materially extended with `punct_lanes`, `punct_kind_lanes`, and `case_lanes` plus new ApexTrace commands `apex-map-punct`, `apex-map-punct-kind`, and `apex-map-case`, and the lane roundtrip tests now pass again. Results clarified the roadmap: whitespace/class is still the only clearly serious ApexTrace surface; full punctuation was too dominated by `other` to trust; punctuation-only subtype (`punct-kind`) became much more honest and got down to `compact_field_total_payload_exact=117` with best run `chunk=32`, `boundary_band=16`, `field_match_pct=72.580645`, but it still sat just below its majority baseline `73.387097`, so it looks more like a small-enough residual lane than a breakthrough predictor. Case behaved similarly: best run was `chunk=64`, `boundary_band=16`, `compact_field_total_payload_exact=1372`, `field_match_pct=84.496369`, but the majority baseline was `97.284496` and refinement only pushed `lower`, not `upper`, so case currently looks like a cheap sparse-residual lane, not a predictor frontier. Conclusion: do not spend the next high-impact batch on more punct-kind or case tuning. The next missing system is the lane truth surface / lane table that compares ApexTrace vs trivial sparse baselines side by side on whitespace/class, punct-kind, and case. After that, move to lowercased letters, because that is probably where the remaining entropy lives.
+
+You also have the uploaded project docs here: [BLUEPRINT.MD](sandbox:/mnt/data/BLUEPRINT.MD), [NOTES.MD](sandbox:/mnt/data/NOTES.MD), and [codebundle.md](sandbox:/mnt/data/codebundle.md).
+
+
+### END NOTE - MARCH 20 2026 - 19:25 CST
+
+
+
+
+### BEGIN NOTE - MARCH 20 2026 - 23:55 CST
+
+
+Absolutely. Here is a full carry-over pack for the next instance.
+
+The latest repo snapshot is in the uploaded [codebundle.md](sandbox:/mnt/data/codebundle.md) and the current codebundle shows a 160-file workspace with the key ApexTrace modules now present in-tree, including `apex_map_case_anchor.rs`, `apex_map_punct_kind.rs`, `baselines.rs`, `symbol_metrics.rs`, and `scripts/run_apextrace_dual_genesis.sh`.  
+
+---
+
+# K8DNZ carry-over notes — March 21, 2026
+
+## Dual-Genesis punct-kind checkpoint, case-lane closure, and the next true frontier
+
+## 0) Executive snapshot
+
+K8DNZ is in a better and more honest place than before this batch.
+
+The most important strategic change is this:
+
+* **Case is now effectively closed as a codec lane** under the current ApexTrace framing.
+* **Punct-kind is now evaluated across two texts, not one**, which is a major improvement in rigor.
+* **Punct-kind is not a codec win on either Genesis1 or Genesis2**, but it is not completely dead either:
+
+  * on **Genesis1**, it tied the majority baseline in raw match at best, and still lost badly on payload
+  * on **Genesis2**, it beat the majority baseline modestly in raw match, but still lost badly on payload
+* therefore punct-kind should now be treated as:
+
+  * **not a mainline compression lane**
+  * but still a **useful diagnostic / frontier lane** because it shows nontrivial structure on some texts
+
+That is the real outcome of this session.
+
+The project doctrine still comes from the same core blueprint:
+
+* deterministic Cadence core
+* fixed-point turns
+* general decoder
+* no corpus cheating
+* lane ladder
+* knee-curve measurement
+* success only if residual really collapses under a general reversible representation, not through packaging tricks. 
+
+---
+
+## 1) Non-negotiable doctrine that still stands
+
+These points should remain fixed unless strong evidence overturns them.
+
+### A) Core Cadence identity still stands
+
+K8DNZ is still grounded in the same Cadence machine:
+
+* FREE_ORBIT with counter-rotating A and C
+* alignment window ε
+* LOCKSTEP on the frustum
+* pair emission at the large rim
+* same recipe + seed must reproduce identical output
+* turns / fixed-point arithmetic in core, not float-driven geometry.
+
+### B) The honest compression condition still stands
+
+The project does **not** win by prettier packaging.
+
+It only wins if:
+
+* the representation makes the target algorithmically simple
+* residual becomes sparse enough to collapse
+* total artifact bytes trend toward a real knee
+* eventually, for the 2KB dream, residual must become near-zero or single-digit bytes per chunk on average.
+
+### C) The lane ladder still stands
+
+The blueprint remains explicit:
+
+1. whitespace
+2. punctuation
+3. case
+4. letters
+
+and each rung must be judged by:
+
+* match %
+* residual entry count
+* residual raw bytes
+* residual packed bytes
+* total artifact bytes
+* knee behavior with increasing target size.
+
+### D) Dual-text discipline is now the right default
+
+Running ApexTrace on both `Genesis1.txt` and `Genesis2.txt` is a good methodological upgrade.
+
+That should now be the default for lane experiments, because it immediately exposes overfitting to a single chapter and pushes the project closer to honest generalization behavior.
+
+---
+
+## 2) Current repo state after this session
+
+The repo is materially stronger than it was a few batches ago.
+
+### Confirmed structure now in-tree
+
+The current workspace snapshot includes:
+
+* `k8dnz-core`, `k8dnz-cli`, `k8dnz-apextrace`
+* lane modules for:
+
+  * whitespace
+  * punctuation
+  * punct-kind
+  * case
+* ApexTrace commands for:
+
+  * `apex_map_lane`
+  * `apex_map_punct`
+  * `apex_map_punct_kind`
+  * `apex_map_case`
+  * `apex_map_case_anchor`
+* support code like:
+
+  * `baselines.rs`
+  * `class_metrics.rs`
+  * `symbol_metrics.rs`
+  * `compact_manifest.rs`
+* the new dual-run script:
+
+  * `scripts/run_apextrace_dual_genesis.sh`. 
+
+### Build health checkpoint
+
+The important status is:
+
+* `cargo build` now passes
+* the dual-Genesis punct-kind script runs successfully
+* warnings remain, but they are mostly dead-code / unused-variable noise, not correctness blockers
+
+The warnings are real but low priority compared with strategy:
+
+* `gen_pred_stream_with_omega` unused
+* various `field_stats` unused
+* some chunk metadata structs are carrying fields not yet rendered
+* `encoded_len` unused
+* some case-anchor fields are not consumed yet
+
+These should be viewed as cleanup, not as project blockers.
+
+---
+
+## 3) What was already established before this session
+
+Before this latest punct-kind dual-Genesis batch, two major truths were already in place.
+
+### A) Whitespace/class was still the only clearly serious ApexTrace surface
+
+That remained the strongest lane-local evidence that ApexTrace might matter inside K8DNZ. The prior note still correctly described whitespace/class as the only clearly serious predictor surface. 
+
+### B) Case had already been effectively resolved by case-anchor
+
+The prior case-anchor truth surface made the case lane much more honest.
+
+The decisive result was:
+
+* `recommended_codec_strategy=baseline-all-lower`
+* `total_payload_exact=177`
+* `raw_match_pct=97.284496`
+* `upper_f1_pct=0.000000`
+
+while the best field result was still far worse on bytes and worse on raw match:
+
+* `best_field_total_payload_exact=3100`
+* `best_field_match_pct=88.980107`
+
+That result means case is **not** a codec frontier under current ApexTrace; it is already best handled by a sparse baseline. 
+
+That case result should now be treated as settled unless a fundamentally different representation changes the game.
+
+---
+
+## 4) What we accomplished in this session
+
+## A) We upgraded punct-kind from single-text anecdote to dual-text truth surface
+
+This is the biggest methodological improvement of the session.
+
+The project no longer judges punct-kind only on `Genesis1.txt`. It now has a repeatable dual-target script and actual side-by-side evidence from:
+
+* `text/Genesis1.txt`
+* `text/Genesis2.txt`
+
+That is important because the blueprint’s real decision surface is not “best run on one text,” but whether a lane behaves honestly across targets and sizes.
+
+## B) We fixed the punct-kind implementation mismatch
+
+The punct-kind command had failed on a struct mismatch (`kind_len` not present on `PunctKindLanes`). That mismatch was corrected, the command compiled, and the dual-Genesis run completed.
+
+This matters because now we are looking at actual lane evidence, not a broken command path.
+
+## C) Genesis1 punct-kind result became more decisive
+
+For `Genesis1.txt`, the key numbers were:
+
+* `kind_len = 124`
+* majority class = `pause`
+* majority baseline raw match = `73.387097%`
+* baseline payload = `63` bytes
+
+Best punct-kind field-tied configuration:
+
+* `chunk=32`
+* `boundary_band=20`
+* `field_margin=4`
+* `field_total_payload_exact=116`
+* `field_match_pct=73.387097`
+
+Stability candidates:
+
+* votes3: `116` bytes, `73.387097%`
+* votes2: `117` bytes, `72.580645%`
+* votes1: `117` bytes, `72.580645%`
+
+Final codec recommendation:
+
+* `recommended_codec_strategy=baseline-pause`
+* `total_payload_exact=63`
+* `raw_match_pct=73.387097`
+
+Final frontier recommendation:
+
+* `recommended_frontier_strategy=field-best-chunk-votes2`
+* `total_payload_exact=117`
+* `raw_match_pct=72.580645`
+* `non_majority_macro_f1_pct=14.285714`
+
+Interpretation:
+
+* punct-kind on Genesis1 **does not beat baseline on raw match**
+* when it ties baseline, it does so at **almost 2x the payload**
+* the only “gain” is modest non-majority behavior, but not enough to justify codec use
+
+So on Genesis1, punct-kind is now clearly **not a codec win**.
+
+## D) Genesis2 punct-kind result was more interesting than Genesis1
+
+For `Genesis2.txt`, the key numbers were:
+
+* `kind_len = 76`
+* majority class = `pause`
+* majority baseline raw match = `71.052632%`
+* baseline payload = `45` bytes
+
+Best punct-kind field result:
+
+* `chunk=32`
+* `boundary_band=16`
+* `field_margin=4`
+* `field_total_payload_exact=85`
+* `field_match_pct=73.684211`
+
+Stability candidates:
+
+* votes3: `89` bytes, `71.052632%`
+* votes2: `85` bytes, `73.684211%`
+* votes1: `85` bytes, `73.684211%`
+
+Final codec recommendation:
+
+* `recommended_codec_strategy=baseline-pause`
+* `total_payload_exact=45`
+* `raw_match_pct=71.052632`
+
+Final frontier recommendation:
+
+* `recommended_frontier_strategy=best-field`
+* `total_payload_exact=85`
+* `raw_match_pct=73.684211`
+* `non_majority_macro_f1_pct=17.241379`
+
+Interpretation:
+
+* punct-kind on Genesis2 **does beat the majority baseline on raw match**
+* but it still loses badly on codec cost:
+
+  * `45` bytes baseline
+  * `85` bytes best frontier
+* so it is still **not a codec recommendation**
+* however, unlike Genesis1, it shows a real signal that ApexTrace can partially improve the lane’s structure-sensitive metrics
+
+That makes Genesis2 punct-kind a **diagnostic frontier**, not a compression frontier.
+
+## E) We now have a stronger cross-text judgment on punct-kind
+
+This is the session’s deepest conclusion:
+
+* punct-kind is **not universally dead**
+* but it is **not a viable codec lane** in its current form
+* its best role is now:
+
+  * a truth-surface / diagnostic lane
+  * a place to study class-sensitive structure
+  * not a place to spend another major batch hoping for codec collapse
+
+That is an important distinction.
+
+---
+
+## 5) Strong judgments the next instance should inherit
+
+These judgments should be treated as current best truth.
+
+### Judgment 1
+
+**Case is closed as a codec lane for now.**
+
+The all-lower sparse baseline already wins overwhelmingly on payload and raw match. Further case tuning should not be a mainline priority unless representation changes dramatically. 
+
+### Judgment 2
+
+**Punct-kind is not a codec breakthrough lane.**
+
+This is now supported on both Genesis1 and Genesis2.
+
+On Genesis1:
+
+* baseline `63` bytes beats any ApexTrace variant
+
+On Genesis2:
+
+* baseline `45` bytes still beats the best ApexTrace variant `85` bytes
+
+So punct-kind should not be treated as a near-term compression win.
+
+### Judgment 3
+
+**Punct-kind is still mildly alive as a diagnostic frontier.**
+
+Genesis2 showed:
+
+* better raw match than baseline
+* better balanced accuracy than baseline
+* materially better non-majority handling than the trivial all-pause guess
+
+So punct-kind still teaches us something about structured prediction behavior, even though it fails codec economics.
+
+### Judgment 4
+
+**Dual-Genesis evaluation should now be permanent.**
+
+Any future ApexTrace lane work should default to at least:
+
+* Genesis1
+* Genesis2
+
+Single-text wins should now be viewed as provisional.
+
+### Judgment 5
+
+**Whitespace/class must be rerun under the dual-Genesis discipline next.**
+
+Whitespace is still the strongest lane-local ApexTrace result from prior work, but now it needs the same honesty standard punct-kind received.
+
+### Judgment 6
+
+**Letters are now the most important unresolved entropy frontier.**
+
+Given:
+
+* case is resolved by sparse baseline
+* punct-kind is not a codec win
+* full punctuation was misleading
+* whitespace is promising but not yet enough
+
+the next true unresolved question is still:
+
+* **letters**
+* likely lowercased letters first
+* maybe followed by word-shape / spelling factorization if raw letters stall.
+
+---
+
+## 6) Exact result table to preserve
+
+## A) Case-anchor checkpoint from prior batch
+
+Use this as settled reference:
+
+* baseline-all-lower:
+
+  * `177` bytes
+  * `97.284496%` raw match
+* best field:
+
+  * `3100` bytes
+  * `88.980107%` raw match
+
+Conclusion:
+
+* case is a sparse-baseline lane, not a predictor frontier. 
+
+## B) Punct-kind on Genesis1
+
+* target length: `124`
+* majority class: `pause`
+* majority baseline: `73.387097%`
+* baseline payload: `63`
+
+Best chunked:
+
+* `chunk=32`
+* `chunk_total_payload_exact=130`
+* `chunk_match_pct=62.096774`
+* `chunk_non_majority_macro_f1_pct=30.985915`
+
+Best field tied baseline:
+
+* `boundary_band=20`
+* `field_total_payload_exact=116`
+* `field_match_pct=73.387097`
+* `field_non_majority_macro_f1_pct=10.256410`
+
+Best frontier recommendation:
+
+* `field-best-chunk-votes2`
+* `117` bytes
+* `72.580645%`
+* `14.285714` non-majority macro F1
+
+Codec recommendation:
+
+* `baseline-pause`
+* `63` bytes
+* `73.387097%`
+
+## C) Punct-kind on Genesis2
+
+* target length: `76`
+* majority class: `pause`
+* majority baseline: `71.052632%`
+* baseline payload: `45`
+
+Best chunked:
+
+* `chunk=32`
+* `chunk_total_payload_exact=92`
+* `chunk_match_pct=68.421053`
+* `chunk_non_majority_macro_f1_pct=33.333333`
+
+Best field:
+
+* `chunk=32`
+* `boundary_band=16`
+* `field_total_payload_exact=85`
+* `field_match_pct=73.684211`
+* `field_non_majority_macro_f1_pct=17.241379`
+
+Codec recommendation:
+
+* `baseline-pause`
+* `45` bytes
+* `71.052632%`
+
+Frontier recommendation:
+
+* `best-field`
+* `85` bytes
+* `73.684211%`
+* `17.241379` non-majority macro F1
+
+---
+
+## 7) What these results mean in plain English
+
+### Case
+
+Case is solved enough for now:
+
+* trivial all-lower plus sparse uppercase corrections beats ApexTrace
+* stop trying to make case into a 95%+ prediction breakthrough
+* case should be used as a baseline lane in the lane table, not a frontier lane
+
+### Punct-kind
+
+Punct-kind is more nuanced:
+
+* it is **not** a codec win
+* but it is **not** totally empty
+* it has text-sensitive structure, especially visible on Genesis2
+
+So punct-kind belongs in the project as:
+
+* a comparison lane
+* a structure-diagnostics lane
+* maybe a future component in a richer representation
+* not as the lane that saves the budget
+
+### Larger meaning
+
+The project is getting clearer about what each lane is **for**:
+
+* **whitespace/class** = still the best candidate predictor lane
+* **case** = sparse baseline lane
+* **punct-kind** = diagnostic frontier lane, not codec lane
+* **letters** = real unresolved frontier
+
+That is progress.
+
+---
+
+## 8) What remains unfinished
+
+A lot remains unfinished, and the next instance should be very clear about it.
+
+### A) We still do not have the unified lane-table / truth-surface command
+
+This is now the most obvious missing system.
+
+We need one command that compares, across both Genesis1 and Genesis2:
+
+* whitespace/class
+* case baseline + case-anchor truth surface
+* punct-kind baseline + frontier
+* eventually letters baseline + frontier
+
+For each lane/text pair we should print:
+
+* text id
+* lane id
+* target length
+* majority class + baseline %
+* best raw match %
+* balanced accuracy
+* macro F1
+* non-majority or minority F1
+* patch entries
+* patch bytes
+* total payload
+* codec recommendation
+* frontier recommendation
+
+Until that exists, too much truth is scattered across ad hoc run outputs.
+
+### B) Whitespace/class needs the same dual-Genesis honesty pass
+
+Whitespace/class has been treated as the strongest lane, but it has not yet gone through the same dual-target gate punct-kind just passed.
+
+That is the next honest check.
+
+### C) Letters have not been entered as a truth-surface lane
+
+This is now the biggest missing frontier.
+
+The blueprint still points to letters as a critical entropy-bearing lane, and because case/punctuation are no longer plausible saviors, letters matter more now.
+
+### D) Word-shape / spelling factorization is still waiting in reserve
+
+If letters do not show a knee:
+
+* word shape
+* word length
+* lowercased spelling lanes
+
+remain valid next representation shifts. The blueprint explicitly leaves this door open.
+
+### E) Budget-honest end-to-end measurement is still not the main workflow
+
+The blueprint’s real destination is still:
+
+* `encode2kb`
+* `lane_sweep`
+* honest budget accounting
+* total artifact gates
+* knee-curve CSVs
+
+Those concepts are present in the blueprint and the code tree, but they are not yet the dominant project truth surface.
+
+### F) The 2KB dream remains unproven
+
+Nothing in this session changed the deepest feasibility status:
+
+* the 2KB total miracle is still only possible if a real representation shift makes the data algorithmically simple
+* current byte budgets remain far away from that
+* the project still needs an actual knee, not just local lane anecdotes.
+
+---
+
+## 9) Recommended next implementation order
+
+This is the most important practical section for the next instance.
+
+## Next step 1: Build the dual-Genesis lane table command
+
+This is now the highest-value missing tool.
+
+It should run, in one place:
+
+* whitespace/class on Genesis1 + Genesis2
+* case baseline / case-anchor summary on Genesis1 + Genesis2
+* punct-kind baseline / frontier summary on Genesis1 + Genesis2
+* later letters
+
+Output should explicitly separate:
+
+* **codec recommendation**
+* **frontier recommendation**
+
+That distinction is now essential.
+
+### Why this matters
+
+Because we now know a lane can have:
+
+* some frontier signal
+* but no codec value
+
+and those are not the same thing.
+
+## Next step 2: Rerun whitespace/class under dual-Genesis discipline
+
+Whitespace remains the strongest ApexTrace candidate lane from prior work, but now it needs cross-text honesty.
+
+Questions to answer:
+
+* does whitespace stay strong on Genesis2?
+* does boundary band still help?
+* does field margin stay inert?
+* does its payload story remain better than case and punct-kind?
+
+## Next step 3: Build the letters lane truth surface
+
+Do not skip to exotic transforms before giving letters a clean, honest test.
+
+Likely first version:
+
+* lowercased letters only
+* alphabet `{a..z}`
+* baseline comparisons
+* chunked vs field vs stability
+* dual-Genesis runs by default
+
+## Next step 4: Only after letters, consider shape/spelling factorization
+
+If raw letters do not show promising knee behavior, then move to:
+
+* word shape
+* word length
+* lowercased spelling lanes
+
+That follows the blueprint and stays corpus-free.
+
+## Next step 5: Keep punct-kind parked except as a reference lane
+
+Do not spend the next high-impact batch trying to “save” punct-kind.
+
+It has already told us what it needed to tell us:
+
+* not a codec winner
+* mildly informative frontier lane
+* useful comparison point
+
+---
+
+## 10) Recommended files to inspect first next time
+
+Use this order.
+
+### First: doctrine / truth criteria
+
+* `BLUEPRINT.MD`
+* `NOTES.MD`
+  These still define the real success condition, lane ladder, and knee-curve logic.
+
+### Then: current repo snapshot
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_lane.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_case_anchor.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_punct_kind.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/baselines.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/symbol_metrics.rs`
+* `scripts/run_apextrace_dual_genesis.sh`
+  These are all present in the current codebundle snapshot. 
+
+### Still relevant core lane infrastructure
+
+* `crates/k8dnz-core/src/repr/ws_lanes.rs`
+* `crates/k8dnz-core/src/repr/punct_lanes.rs`
+* `crates/k8dnz-core/src/repr/punct_kind_lanes.rs`
+* `crates/k8dnz-core/src/repr/case_lanes.rs`
+
+### Parked / de-prioritized
+
+* `apex_map_dibit.rs`
+* `apex_map_dibit_other.rs`
+
+Keep them compiling, but they should not drive next-strategy decisions.
+
+---
+
+## 11) Small technical truths from this batch worth preserving
+
+### A) `chunk=32` was best for punct-kind on both texts
+
+That is now a useful empirical hint.
+
+For punct-kind:
+
+* Genesis1 best field tied baseline with `chunk=32`
+* Genesis2 best field beat baseline with `chunk=32`
+
+So if punct-kind is ever revisited diagnostically, `32` is the current anchor chunk size.
+
+### B) `boundary_band` still matters more than `field_margin`
+
+Again:
+
+* `field_margin=4` and `8` kept repeating identical results
+* `boundary_band` moved outcomes more meaningfully
+
+This matches earlier lessons and should continue to shape how sweeps are prioritized.
+
+### C) Dual-Genesis produced asymmetry, not symmetry
+
+That is important.
+
+Genesis1 punct-kind:
+
+* no real raw-match gain over baseline
+
+Genesis2 punct-kind:
+
+* modest raw-match gain over baseline
+
+This means lane behavior is text-sensitive, and future truth-surface tools must preserve that rather than collapsing everything into one averaged story.
+
+### D) “codec recommendation” and “frontier recommendation” are now separate concepts
+
+This is one of the best conceptual upgrades of the recent work.
+
+For punct-kind:
+
+* codec recommendation = baseline-pause
+* frontier recommendation = best-field or stability candidate
+
+That distinction should be generalized to other lanes.
+
+---
+
+## 12) Honest feasibility statement at the end of this session
+
+Here is the honest state of the project.
+
+### What looks genuinely alive
+
+* deterministic Cadence doctrine
+* lane ladder approach
+* sparse residual framing
+* baseline-vs-frontier honesty
+* dual-text evaluation discipline
+* whitespace still likely alive
+* letters still a real frontier candidate
+
+### What looks weaker than before
+
+* the idea that every small lane will turn into a codec win
+* punct-kind as a compression savior
+* case as a predictor frontier
+* dibit hopes as a mainline path
+
+### What still has upside
+
+* whitespace/class on dual-Genesis
+* letters
+* word-shape / spelling factorization
+* unified lane-table / truth surface
+* budget-honest knee-curve tooling
+
+### What remains unproven
+
+* actual knee behavior
+* end-to-end budget viability
+* full-book feasibility
+* the 2KB miracle
+
+That is a narrower but clearer map than before, and that is real progress.
+
+---
+
+## 13) Recommended first commands for the next instance
+
+Start with honest re-grounding, not random new sweeps.
+
+```bash
+cargo build
+bash scripts/run_apextrace_dual_genesis.sh apex-map-punct-kind --seed-count 512 --chunk-sweep 32,64 --chunk-search-objective raw --boundary-band-sweep 12,16,20 --field-margin-sweep 4,8 --format txt
+```
+
+Then the next real implementation move should be:
+
+* build the dual-Genesis lane-table / truth-surface command
+
+After that, run:
+
+* whitespace/class on Genesis1 + Genesis2
+* case-anchor reference on Genesis1 + Genesis2
+* punct-kind reference on Genesis1 + Genesis2
+* then letters
+
+---
+
+## 14) Paste-first summary for the next instance
+
+Paste this first thing next time:
+
+> K8DNZ remains on the same honest path: deterministic Cadence core, fixed-point turns, recipe+residual, no corpus cheating, and the real success condition is residual collapse under a general reversible representation, not packaging tricks. The blueprint still says the correct climb is lane-by-lane — whitespace, punctuation, case, letters — measured by residual entries, packed residual bytes, total artifact bytes, and knee-curve behavior. Case is now effectively resolved as a codec lane: the prior case-anchor truth surface showed `baseline-all-lower` winning at `177` bytes and `97.284496%` raw match while the best field result was `3100` bytes at `88.980107%`, so case should be treated as a sparse baseline lane, not a frontier. In the latest batch, punct-kind was fixed and run honestly across both `Genesis1.txt` and `Genesis2.txt` using the dual-Genesis script. On Genesis1, punct-kind tied the majority baseline at best (`73.387097%`) but only at `116` bytes versus the trivial baseline’s `63`, so it is not a codec win. On Genesis2, punct-kind did show real signal — best field reached `73.684211%` against a `71.052632%` majority baseline — but it still lost on payload (`85` bytes versus a `45` byte baseline), so it is still not a codec recommendation. Therefore punct-kind is not dead, but it is no longer a mainline compression frontier; it is better understood as a diagnostic / structure-sensitive lane. The next high-impact move is not more punct-kind tuning. It is to build a unified dual-Genesis lane-table / truth-surface command, rerun whitespace/class under the same dual-text discipline, and then move into letters, because letters are now the clearest unresolved entropy frontier.
+
+If you want, I can also turn these carry-over notes into a clean repo-ready `NOTES_NEXT_INSTANCE.md` text block.
+
+
+
+### END NOTE - MARCH 20 2026 - 23:55 CST
+
+
+### BEGIN NOTE - MARCH 21 2026 - 11:00 CST
+
+Here is a full carry-over pack you can hand to the next instance.
+
+---
+
+# K8DNZ carry-over notes — March 21, 2026
+
+## 0) Executive snapshot
+
+K8DNZ is no longer in the “prove the basic idea exists” stage. The project now has a real deterministic Cadence core, a serious multi-crate Rust workspace, lane representations, ApexTrace tooling, a dual-Genesis comparison surface, and now a first working **piecewise local-law atlas**. The repo snapshot generated today shows a **163-file** workspace with `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace`, and the new ApexTrace commands `apex_lane_table.rs` and `apex_lane_atlas.rs` are now part of the tree. 
+
+The most important thing that happened in this instance is not just that new commands were added. It is that the project’s search philosophy pivoted in a way that better matches the original Cadence vision:
+
+* not “find one global law for all of Genesis1”
+* but “map the data into smaller deterministic local regimes”
+* then eventually express those recurring regimes as **replayable knobs / formulas** that the Cadence engine can regenerate.
+
+That is a meaningful conceptual advance, and it is now backed by a real run, not just brainstorming. The latest `apex-lane-atlas` run completed successfully on Genesis1 and found **2 distinct reusable laws across 12 overlapping windows**, merged into **5 segments** with the law path `L0,L0,L0,L1,L0,L0,L0,L1,L0,L0,L0,L0`. 
+
+This does **not** mean the compression problem is solved. It does mean the project now has its first concrete evidence that Genesis1 may contain a small vocabulary of recurring local whitespace-class regimes under ApexTrace, instead of requiring one monolithic global law. That is the first thing in a while that actually looks closer to the original frustum / color-field intuition than the blunt whole-file experiments did. 
+
+---
+
+## 1) North Star remains unchanged
+
+The project’s doctrine is still the same and should not drift.
+
+Cadence is still the core machine:
+
+* A and C orbit with different speeds in FREE_ORBIT
+* when they align within an epsilon window, they enter lockstep on the frustum
+* in lockstep they remain in perfect tandem at fixed separation
+* they spiral upward to the large rim
+* emission occurs as a paired token / color pair at the rim
+* then the cycle resets
+
+Engineering invariants remain:
+
+* fixed-point turns only in the core
+* no dependence on π for correctness
+* deterministic recipe + seed reproduction
+* exact reversibility
+* same input recipe/seed must regenerate the same output stream everywhere.
+
+This should continue to be treated as sacred. Any higher-level discovery layer such as ApexTrace or a future law-dictionary/segment manifest is downstream of this engine and must not smuggle in non-deterministic or target-specific shortcuts.
+
+---
+
+## 2) Repo state as of this session
+
+The new codebundle confirms the workspace is now substantial and coherent:
+
+* `k8dnz-core`
+* `k8dnz-cli`
+* `k8dnz-apextrace`
+* lane representation modules for whitespace, punctuation, punctuation-kind, case, text normalization
+* multiple ApexTrace map commands
+* tests for determinism, invariants, roundtrips, golden streams
+* the new `apex_lane_table.rs`
+* the new `apex_lane_atlas.rs`
+* helper scripts including `run_apextrace_dual_genesis.sh` and `run_apextrace_lane_atlas.sh`. 
+
+The codebase is now a real experimentation platform. That matters because the next stage is less about proving architecture and more about choosing the right truth surfaces and accounting models.
+
+---
+
+## 3) What we accomplished before this session, now consolidated
+
+These were the major truths already established coming into this instance:
+
+### 3.1 The blueprint direction was already “blockwise / per-lane / sparse residual”
+
+The original blueprint and notes explicitly pointed toward:
+
+* lane-based reversible representations
+* blockwise compression
+* per-block recipe selection
+* recipe reuse across blocks
+* sparse-first residual encoding
+* knee-curve experiments on increasing difficulty
+* lane order: whitespace → punctuation → case → letters.
+
+This matters because the current pivot is not a betrayal of the project. It is actually closer to the project’s own written doctrine than the whole-file ApexTrace averages were.
+
+### 3.2 ApexTrace had already shown local refinement can beat broader summaries
+
+Before this instance, there was already evidence that chunked and field-refined local approaches can improve payloads compared to broader/global paths on at least some lanes. That prior evidence is what justified trying a piecewise map in the first place.
+
+### 3.3 Whole-file lane truths had started narrowing the search
+
+The project had already reached the point where some lanes looked diagnostic but not codec-worthy. The latest lane-table run in this instance made that narrowing explicit and reproducible.
+
+---
+
+## 4) What we accomplished in this instance
+
+### 4.1 We built and ran `apex-lane-table`
+
+The project now has a unified dual-Genesis lane comparison command instead of scattered run logs. The completed run analyzed:
+
+* whitespace-class
+* case-anchor
+* punct-kind
+
+on both Genesis1 and Genesis2. It completed end-to-end in about **829.98 seconds**. 
+
+### 4.2 The lane-table gave us a much more honest truth surface
+
+The biggest takeaways from that run:
+
+#### Whitespace-class is losing badly in current global form
+
+On Genesis1:
+
+* majority baseline: **79.600095%**
+* best field raw: **66.555582%**
+* best field payload: **2560 bytes**
+
+On Genesis2:
+
+* majority baseline: **78.649922%**
+* best field raw: **66.656201%**
+* best field payload: **1946 bytes**. 
+
+This means current whole-file whitespace-class ApexTrace is not a codec win and not even a raw-match win against majority baseline. That is a hard truth.
+
+#### Case-anchor is useful diagnostically, not as a codec
+
+On Genesis1:
+
+* baseline-all-lower codec: **177 bytes**, **97.284496%**
+* best field: **4939 bytes**, **97.126618%**
+
+On Genesis2:
+
+* baseline-all-lower codec: **148 bytes**, **96.943049%**
+* best field: **3754 bytes**, **96.817420%**. 
+
+So case-anchor can still be informative as a field-analysis surface, but it is not presently the compression frontier.
+
+#### Punct-kind is not dead, but still not the codec answer
+
+On Genesis1:
+
+* codec winner baseline-pause: **63 bytes**, **73.387097%**
+* field path: larger and worse
+
+On Genesis2:
+
+* field path improves some frontier metrics
+* but baseline still wins codec on total bytes. 
+
+This means punct-kind has some structure sensitivity, especially on Genesis2, but is still not the mainline path to compression victory.
+
+### 4.3 We diagnosed runtime truth, not just score truth
+
+The lane-table run also exposed where the time goes:
+
+* whitespace-class is very expensive
+* case-anchor is also expensive
+* punct-kind is relatively cheap. 
+
+This matters operationally because future command design must distinguish “fast exploratory mode” from “full honest mode.” Otherwise iteration speed dies.
+
+### 4.4 We pivoted from global laws to piecewise local laws
+
+This was the deepest conceptual move of the session.
+
+The user’s framing was essentially:
+
+* ApexTrace should map data into a more predictable structure
+* eventually the “knobs” should correspond to Cadence-like replay parameters
+* smaller chunks with different settings may be acceptable if a higher-order algorithmic system can describe them compactly
+* local efficiency may be much better than one-law-for-all.
+
+That led to the decision to build `apex-lane-atlas` as a **regional knob mapper**.
+
+### 4.5 We built and ran `apex-lane-atlas`
+
+`apex-lane-atlas` now exists in the repo and ran successfully on Genesis1 with this profile:
+
+* `window-bytes=256`
+* `step-bytes=128`
+* `max-windows=12`
+* `seed-count=64`
+* `chunk-sweep=32,64`
+* `boundary-band-sweep=8,12`
+* `field-margin-sweep=4,8`
+* `newline-demote-margin-sweep=0,4`.
+
+The run results were:
+
+* `windows_analyzed=12`
+* `distinct_law_count=2`
+* `segment_count=5`
+* `law_switch_count=4`
+* `total_elapsed_ms=32137`
+* `law_path=L0,L0,L0,L1,L0,L0,L0,L1,L0,L0,L0,L0`. 
+
+This is the first concrete evidence that the whitespace-class lane, when examined regionally, may be describable as a tiny vocabulary of local regimes rather than a huge bag of unrelated behaviors.
+
+---
+
+## 5) Interpretation of the atlas run
+
+This needs to be read carefully and honestly.
+
+### 5.1 The good news
+
+The atlas did **not** explode into 12 distinct laws. It found only **2** laws across 12 windows. That is encouraging because it suggests nontrivial reuse. The dominant law `L0` covered 10 windows and 1664 bytes; `L1` appeared only twice. 
+
+That means the local-law vocabulary may be small.
+
+This is exactly the kind of structure the project hoped might exist:
+
+* a repeating small law vocabulary
+* segment boundaries where local behavior changes
+* reuse of a few knob tuples rather than a fresh custom solution everywhere.
+
+### 5.2 The bad news
+
+The actual quality of these whitespace-class local laws is still poor in absolute predictive terms.
+
+For both laws:
+
+* mean field match is around **69.5–69.6%**
+* mean field match vs majority is about **-9.96%**
+* newline F1 is very weak
+* most windows are still dominated by `other`
+* the local laws are still losing to the majority baseline in raw match. 
+
+So the atlas found **reuse**, but not yet **good reuse**.
+
+This is crucial. The pivot has improved our odds of discovering structure, but the discovered structure is not yet compression-grade.
+
+### 5.3 The law vocabulary itself is very narrow
+
+The two laws differ only slightly:
+
+* `L0`: `chunk_bytes=64 boundary_band=12 field_margin=4 newline_demote_margin=4`
+* `L1`: `chunk_bytes=64 boundary_band=8 field_margin=4 newline_demote_margin=4`. 
+
+That is both encouraging and limiting.
+
+Encouraging because:
+
+* the system is not flailing wildly
+* the chosen local regimes are closely related
+
+Limiting because:
+
+* the atlas did not yet discover a rich vocabulary
+* it mostly found one near-uniform answer with a mild band-width variation.
+
+This could mean either:
+
+1. whitespace-class genuinely has a narrow local law family under current ApexTrace
+2. or the current atlas search space is too weak / too constrained to expose better regional laws.
+
+### 5.4 Overlap caveat
+
+These windows overlap by 128 bytes, so this run is a **discovery pass**, not a final MDL pass. It is good for detecting recurrence, but it can overstate reuse because neighboring windows share content. The next instance must not forget this. Overlap is for scouting. Final accounting must eventually use a non-overlapping segmentation or otherwise charge boundaries honestly.
+
+---
+
+## 6) Strategic conclusion after this session
+
+The project is now in a much better place intellectually than before.
+
+### The old question was:
+
+“Which global lane law wins on the whole file?”
+
+### The better question is now:
+
+“Can Genesis be described as a short path through a small vocabulary of local Cadence-like laws, with sparse residual?”
+
+That is a major upgrade.
+
+And it aligns far better with:
+
+* the original blockwise doctrine in NOTES/BLUEPRINT
+* the user’s frustum / orbit / color-regime intuition
+* the actual empirical fact that whole-file averages were not finding the win.
+
+---
+
+## 7) What remains unresolved
+
+### 7.1 We still do not have the compression win
+
+The project has **not** yet shown a path to ≤2KB Genesis1, much less the larger mountain. The blueprint’s budget is still brutal:
+
+* header + recipe + seeds around ≤512 bytes
+* residual pack around ≤1536 bytes
+* near-zero effective residual per chunk would be required. 
+
+We are still far from that.
+
+### 7.2 The atlas is structurally promising but not yet MDL-honest
+
+The current atlas does **not** yet charge for:
+
+* law dictionary bytes
+* segment path bytes
+* boundary/run-length encoding
+* any future per-law residual payloads combined into one honest report
+
+So it is a discovery tool, not yet a final compression evaluator.
+
+### 7.3 Whitespace-class is still not good enough
+
+Even under the new local-law view, the current whitespace-class predictor is still substantially below majority baseline in raw match. So piecewise structure alone is not sufficient yet.
+
+### 7.4 Letters lane remains the biggest unresolved frontier
+
+The blueprint always said the difficulty ladder is:
+
+1. whitespace
+2. punctuation
+3. case
+4. letters.
+
+Whitespace and case have now largely been scoped:
+
+* whitespace: reusable local structure exists, but predictive quality is poor
+* case: not the codec answer
+* punct-kind: diagnostic only
+
+That pushes the next serious unexplored frontier toward **letters** or richer structural lanes around letters / word-shape / deterministic grammar-like factorization.
+
+### 7.5 We still need a better mapping from “Apex knobs” to “Cadence knobs”
+
+A deep issue remains:
+
+* current ApexTrace knobs are analysis knobs: chunk size, boundary band, field margin, newline demotion, etc.
+* the long-term dream is to derive a compact **formula / law system** that feels more like actual Cadence replay mechanics.
+
+So eventually the project must bridge:
+
+* surface-fitting knobs
+* into a more principled family of law IDs / parameter families
+* that can be described compactly and replayed through the engine.
+
+That bridge is not built yet.
+
+---
+
+## 8) Most important lessons learned this instance
+
+### 8.1 The project should stop expecting a single global law to save it
+
+That approach has now been tested enough to justify moving away from it as the primary frontier.
+
+### 8.2 Local-law discovery is a meaningful upgrade
+
+The atlas run is the first piece of evidence that a tiny repeated vocabulary may exist, at least on whitespace-class.
+
+### 8.3 Reuse is not enough; MDL is the real judge
+
+A small law vocabulary is encouraging, but it only matters if:
+
+* dictionary bytes stay tiny
+* path bytes stay tiny
+* residual stays sparse
+* the combined total beats the old baselines.
+
+### 8.4 Determinism language must remain precise
+
+Correct invariant:
+
+* same recipe + same seed + same input → same atlas output
+
+A separate study can later ask:
+
+* how stable are discovered regional laws across nearby seeds?
+
+Those are different questions.
+
+### 8.5 Overlapping atlas results are scouting results
+
+Do not mistake them for final segmentation evidence.
+
+---
+
+## 9) Recommended next actions for the next instance
+
+These are in priority order.
+
+### 9.1 Highest-priority next build: manifest-aware piecewise evaluator
+
+Build the next command around this question:
+
+> If we represent the text as a short sequence of law IDs plus per-law knob tuples plus residual, does total description length go down?
+
+This command should charge honest bytes for:
+
+* law dictionary
+* segment path / boundaries
+* any law metadata
+* residual patch payload
+* optional one-frame packing
+
+This is the true successor to `apex-lane-atlas`. The atlas discovered reuse; now the repo needs an MDL accountant for piecewise laws.
+
+A good future name might be something like:
+
+* `apex-lane-manifest`
+* `apex-piecewise-eval`
+* `apex-law-pack`
+
+### 9.2 Add fast mode / filter mode to heavy Apex commands
+
+`apex-lane-table` and similar commands need:
+
+* `--fast`
+* optional text filters
+* optional lane filters
+* smaller default sweeps for interactive use
+
+The current heavy defaults are too slow for tight iteration.
+
+### 9.3 Rerun the atlas with falsification-oriented variants
+
+The next instance should **not** just celebrate the 2-law result. It should test whether it survives.
+
+Recommended checks:
+
+* rerun same atlas twice with same seed and verify identical output
+* rerun with different seed only as sensitivity study
+* run `window-bytes=128 step-bytes=64`
+* run `window-bytes=256 step-bytes=256` non-overlapping
+* compare distinct law count, segment count, law dominance, and quality.
+
+If the law vocabulary stays small across these variants, confidence goes up.
+
+### 9.4 Extend atlas concept beyond whitespace-class
+
+After the whitespace-class atlas has an MDL evaluator, the next serious extension should likely be:
+
+* punctuation lane atlas
+* then possibly a richer letters / word-shape atlas
+
+The ultimate goal is not to optimize whitespace forever. It is to see whether multiple lanes each admit a small repeating vocabulary and whether their combined description collapses.
+
+### 9.5 Start formulating “law families,” not just raw knob tuples
+
+The current atlas law is just a tuple of search settings. The next conceptual leap is to promote this into a more principled abstraction:
+
+* law family
+* law parameters
+* segment applicability
+* residual burden
+
+That is closer to the long-term “formula / replayable knobs” dream.
+
+### 9.6 Keep letters / word-shape / deterministic grammar in view
+
+The blueprint’s strongest unresolved ideas remain:
+
+* letters lane
+* word-shape + spelling factorization
+* deterministic grammar-like representations
+* verse/digit structure.
+
+These may end up mattering more than continued squeezing of whitespace.
+
+---
+
+## 10) Concrete status of commands added this instance
+
+### `apex-lane-table`
+
+Status:
+
+* built
+* ran successfully
+* produced a 6-row dual-Genesis truth table
+* high value
+* slow
+* exposed that current global whitespace/class and case are not codec wins. 
+
+### `apex-lane-atlas`
+
+Status:
+
+* initial parser bug fixed
+* now runs successfully
+* produced first local-law map on Genesis1
+* found 2 laws, 5 segments, 12 windows
+* discovery success
+* not yet an honest compression evaluator.
+
+---
+
+## 11) Compile / warning state
+
+The current repo builds successfully. The terminal output shows:
+
+* `cargo build` succeeds
+* multiple warnings remain, mostly about unused variables, unused fields, and dead code
+* none of these blocked the atlas run. 
+
+Warnings are not the current bottleneck. Discovery quality and honest accounting are the bottlenecks.
+
+---
+
+## 12) What the next instance should remember emotionally / strategically
+
+This session was a win even though it did not produce a compression breakthrough.
+
+Why it was a win:
+
+* we got an honest whole-lane truth surface
+* it ruled out some false hopes
+* we changed the search frame in a better direction
+* we got the first concrete evidence of reusable local law structure
+* the repo now contains the tooling needed to evolve that idea further.
+
+The project should now think of itself less as:
+
+* “searching for one magic predictor”
+
+and more as:
+
+* “discovering a small reusable vocabulary of local structural laws that can be packed and replayed deterministically.”
+
+That is much more aligned with both the written blueprint and the original Cadence vision.
+
+---
+
+## 13) One-paragraph handoff summary for a fresh instance
+
+K8DNZ now has a deterministic Cadence core plus a mature ApexTrace experimentation layer. The new dual-Genesis `apex-lane-table` proved that current whole-file whitespace-class, case-anchor, and punct-kind are not the codec breakthrough: whitespace/class loses badly to majority baseline, case is diagnostic not codec, punct-kind is diagnostic with some frontier signal on Genesis2. In response, the project pivoted toward **piecewise local laws** and added `apex-lane-atlas`, which ran successfully on Genesis1 and found **2 distinct whitespace-class laws across 12 overlapping windows**, merged into **5 segments** with a strongly dominant `L0` law path. This is the first real evidence that Genesis1 may admit a small vocabulary of local regimes, but the local predictors still underperform the majority baseline, so the win is structural discovery, not compression yet. The next priority is to build a **manifest-aware piecewise MDL evaluator** that charges for law dictionary + segment path + residual, then test whether this local-law vocabulary actually reduces total bytes.
+
+---
+
+## 14) Suggested next commands to run in the next instance
+
+These are not promises of success; they are the cleanest falsification / continuation steps.
+
+```bash
+cargo build
+cargo run -p k8dnz-cli --bin k8dnz-cli -- apextrace apex-lane-atlas \
+  --recipe configs/tuned_validated.k8r \
+  --in text/Genesis1.txt \
+  --window-bytes 256 \
+  --step-bytes 256 \
+  --max-windows 12 \
+  --seed-count 64 \
+  --chunk-sweep 32,64 \
+  --boundary-band-sweep 8,12 \
+  --field-margin-sweep 4,8 \
+  --newline-demote-margin-sweep 0,4 \
+  --format txt
+```
+
+```bash
+cargo run -p k8dnz-cli --bin k8dnz-cli -- apextrace apex-lane-atlas \
+  --recipe configs/tuned_validated.k8r \
+  --in text/Genesis1.txt \
+  --window-bytes 128 \
+  --step-bytes 64 \
+  --max-windows 24 \
+  --seed-count 64 \
+  --chunk-sweep 32,64 \
+  --boundary-band-sweep 8,12 \
+  --field-margin-sweep 4,8 \
+  --newline-demote-margin-sweep 0,4 \
+  --format txt
+```
+
+And after that, the next code target should be the manifest-aware piecewise evaluator, not just another report.
+
+---
+
+If you want, I can turn this into an even tighter “paste directly into NOTES.MD” version next.
+
+
+
+### END NOTE - MARCH 21 2026 - 11:00 CST
+
+
+
+### BEGIN NOTE - MARCH 21 2026 - 15:15 CST
+
+Below is the carry-over pack I would want the next instance to inherit.
+
+It is grounded in the latest codebundle state, which now shows a **168-file** workspace and includes the new ApexTrace surfaces we built this session: `apex_lane_manifest.rs`, `apex_lane_manifest_compare.rs`, and `apex_lane_law_profile.rs`, along with their run scripts.  
+
+---
+
+# K8DNZ carry-over notes — March 21, 2026, late session
+
+## 0) Executive snapshot
+
+K8DNZ is no longer in the “are piecewise local laws even real?” stage.
+
+That question has now been answered well enough to change project priorities.
+
+The recent work established that the **ApexTrace pivot is valid**:
+
+* the lane/atlas/manifest framing is producing **small, reusable replay-law vocabularies**
+* those laws are stable enough to be shared across files
+* the global law layer is **not** where most remaining bytes live
+* the dominant remaining cost is the **local compact payload** inside the dominant law regime
+
+This means the project should stop spending most of its effort on inventing more law IDs or more law-dictionary machinery, and should instead focus on:
+
+1. **freezing or partially freezing the dominant law recipe**
+2. **making windows under that dominant law cheaper locally**
+3. **expanding the cross-file falsification set only after the dominant-law economics are better understood**
+
+That is the main project-state transition from this session.
+
+---
+
+## 1) The long-term project doctrine is still intact
+
+The original machine/vision remains the conceptual root:
+
+* FREE_ORBIT → ALIGN → LOCKSTEP FRUSTUM → EMIT PAIR → RESET
+* deterministic state machine
+* fixed-point turns
+* no π in core logic
+* recipe/program + residual as the honest engineering translation of the vision  
+
+The key principle from the notes still holds and should remain the governing doctrine:
+
+**Cadence compression = shortest deterministic recipe that explains the data + minimal residual.** 
+
+That principle is now even more important, because the recent results showed that “better match rate” is only useful if it actually lowers total description length. The law-profile runs reinforced that distinction.
+
+---
+
+## 2) State of the repo right now
+
+The workspace currently has:
+
+* `k8dnz-core`
+* `k8dnz-cli`
+* `k8dnz-apextrace` 
+
+The current bundle shows a mature repo shape with:
+
+* core deterministic mechanics in `k8dnz-core/src/dynamics`, `field`, `fixed`, `repr`, `symbol`
+* ApexTrace tooling in `k8dnz-cli/src/cmd/apextrace`
+* tests across core, CLI, and apextrace
+* helper scripts for atlas, compare, law-profile, decode, sim, and sweeps 
+
+The important repo-state change from earlier bundles is that the workspace now includes:
+
+* `apex_lane_manifest.rs`
+* `apex_lane_manifest_compare.rs`
+* `apex_lane_law_profile.rs`
+* `scripts/run_apextrace_manifest_compare.sh`
+* `scripts/run_apextrace_law_profile.sh`  
+
+That means the project now has a real progression of surfaces:
+
+1. atlas discovery
+2. honest per-file manifest accounting
+3. cross-file shared-law accounting
+4. dominant-law profiling
+
+That progression did not exist in the earlier codebundle snapshot.  
+
+---
+
+## 3) What we accomplished before this session that still matters
+
+Earlier work had already pushed the project away from naive byte prediction and toward **structure prediction via lanes**, which is still the right blueprint. The `BLUEPRINT.MD` doctrine remains sound:
+
+* stop predicting bytes directly
+* predict structure
+* use lane decomposition
+* measure whether residual collapses
+* let the knee curve decide whether the law is real or not   
+
+The candidate lane doctrine remains:
+
+1. whitespace lane
+2. punctuation lane
+3. case lane
+4. letters lane 
+
+The current ApexTrace work is best understood as a concrete local-law analysis stage inside that broader lane-first doctrine.
+
+---
+
+## 4) What we accomplished this session
+
+### 4.1 Manifest command was built and stabilized
+
+We added and debugged `apex-lane-manifest`, which became the first honest evaluator for:
+
+* local compact payload bytes
+* shared replay header bytes
+* law dictionary bytes
+* window-path vs segment-path bytes
+* total piecewise payload exact accounting
+
+This was important because the atlas by itself could discover local laws, but it could not tell us whether those laws were actually worth paying for.
+
+The manifest command is now part of the workspace.  
+
+### 4.2 The two important reporting bugs were fixed
+
+Two major correctness issues were found and corrected:
+
+* **overlap accounting bug**
+  Overlapping windows were initially being misreported as honest/non-overlapping.
+
+* **false determinism diff from timing fields**
+  Output artifacts were differing across reruns because timing data was embedded in the report.
+
+Those were fixed, and after the fixes the honest manifest run became byte-stable under rerun.
+
+This matters because deterministic artifact equality is one of the project’s non-negotiable trust surfaces.
+
+### 4.3 Manifest tests were repaired and made meaningful
+
+Two failing tests were resolved:
+
+* a segment-path size expectation in the manifest encoder
+* a newline demotion floor test fixture mismatch in `apex_map_lane`
+
+After those fixes, the test suite passed again.
+
+### 4.4 Genesis1 honest manifest run validated the pivot
+
+The first honest manifest run showed:
+
+* a **tiny replay-law dictionary**
+* a **small segment path**
+* and most bytes still living in local compact payloads
+
+That was the first strong sign that the law atlas overhead was not the main remaining problem.
+
+### 4.5 Overlap scouting was falsified for now
+
+The overlap scouting run became honest after the accounting fix and showed that overlap was **worse**, not better, for the tested regime:
+
+* more switches
+* noisier segmentation
+* slightly worse total piecewise bytes
+
+This means overlap should remain a scouting-only mode, not part of the honest accounting path.
+
+### 4.6 Cross-file shared-law comparison now works
+
+We added `apex-lane-manifest-compare` and debugged its child-process invocation.
+
+The compare run across Genesis1 and Genesis2 succeeded and showed:
+
+* the union global law set is only **2 laws**
+* the shared dictionary is only **13 bytes**
+* the separate total piecewise payload was **4399**
+* the shared total piecewise payload was **4386**
+* savings from sharing the dictionary were **13 bytes**
+
+This was a real confirmation that the same law family is being reused across files.
+
+### 4.7 Law-profile run proved the dominant-law story
+
+We added `apex-lane-law-profile` and ran it successfully on Genesis1 and Genesis2.
+
+That run showed:
+
+* only **2 global laws**
+* **G1** is the dominant global law
+* **21 of 24 path hits** fall under G1
+* total piecewise payload across both files is **4399**
+* the dominant knob signature for G1 is stable:
+  `chunk_bytes=64 | chunk_search_objective=raw | chunk_raw_slack=1`
+
+This is one of the most important findings of the entire session.
+
+The project is no longer just discovering that local laws exist.
+It is now discovering that the **dominant law is knob-stable**, which means the next byte savings are probably not hiding in ever-more-per-window search diversity.
+
+---
+
+## 5) The biggest scientific conclusions from the latest runs
+
+### 5.1 The shared-law atlas is real
+
+The compare and law-profile results strongly suggest that the local-law layer is not an artifact of one file. The same two-law family was reused across Genesis1 and Genesis2.
+
+That means the piecewise local-law pivot has crossed from “interesting idea” into “empirically supported working direction.”
+
+### 5.2 The law dictionary is cheap
+
+The law dictionary and path bytes are small enough that they are no longer the main battlefield.
+
+This is strategically huge.
+
+It means future work should **not** be dominated by building more law-ID infrastructure unless new evidence demands it.
+
+### 5.3 The dominant remaining cost is local compact payload
+
+This is the real mountain now.
+
+The manifest results showed that the vast majority of total piecewise bytes are still inside:
+
+* `local_compact_payload_bytes_exact`
+
+So even if the global dictionary gets a little better, the big gains are unlikely to come from there.
+
+### 5.4 G1 is the real target now
+
+The law-profile run showed:
+
+* G1 dominates the path
+* G1 is knob-stable
+* G1 still has payload spread between best and worst windows
+
+That suggests the next compression question is not:
+“Can we find more global laws?”
+
+It is:
+“Given that most windows are G1, how do we make G1 windows cheaper?”
+
+That is the new center of gravity.
+
+### 5.5 Better match metrics are not the same as better compression
+
+This point needs to be remembered explicitly.
+
+The project should not drift into optimizing match rate or balanced metrics in isolation.
+The objective is still **total description length**.
+
+A better match metric only matters if it leads to:
+
+* simpler replay law
+* smaller path/dictionary
+* smaller local compact payload
+* smaller residual
+
+Anything else is just an attractive metric plateau.
+
+---
+
+## 6) Current best interpretation of the architecture
+
+The codebase now implicitly contains a staged research funnel:
+
+### Stage A — discover local replay laws
+
+`apex_lane_atlas`
+
+### Stage B — charge them honestly
+
+`apex_lane_manifest`
+
+### Stage C — see if they reuse across files
+
+`apex_lane_manifest_compare`
+
+### Stage D — profile the dominant shared laws
+
+`apex_lane_law_profile`
+
+This is a very good shape. It means the project has moved from raw exploration into falsifiable accounting and profiling.
+
+The next stage should **not** be another broad scouting surface.
+
+The next stage should be something like:
+
+### Stage E — test frozen dominant-law recipes
+
+A command that asks whether the dominant law can be frozen into a per-law recipe without meaningful loss, and whether doing so reduces local compact payload or search overhead.
+
+---
+
+## 7) What remains unresolved
+
+### 7.1 The main unresolved problem
+
+The dominant unresolved problem is:
+
+**Can we reduce the local compact payload inside the dominant law family enough to materially move total description length?**
+
+That is the most important open question now.
+
+### 7.2 We still do not know whether full per-window search is actually necessary
+
+Because G1 appears knob-stable, the next falsification question is:
+
+* if we freeze a G1 recipe, do we lose little or nothing?
+* or is per-window search still buying meaningful local wins?
+
+This should be tested directly.
+
+### 7.3 We have only two actual chapter files right now
+
+Genesis3/Genesis4 are not present yet.
+So all current cross-file claims are supported only by Genesis1 and Genesis2.
+
+That is enough to justify the direction, but not enough to declare broad corpus stability.
+
+Once more files exist, the shared-law and law-profile surfaces should be re-run immediately.
+
+### 7.4 Later lanes remain future work
+
+The current momentum is around the whitespace/class-lane/local-law framing.
+The broader blueprint still calls for punctuation, case, and letters lanes, but those should not distract from the current high-leverage question until the dominant-law economics are better understood. 
+
+---
+
+## 8) High-priority next work for the next instance
+
+### Priority 1 — frozen dominant-law experiment
+
+The next instance should strongly consider building a command that tests something like:
+
+* detect or assume dominant global law G1
+* run windows under a frozen G1 recipe
+* compare total bytes vs full per-window search
+* report where fixed-law performance loses or wins
+
+This is the natural next experiment because the law-profile run already suggested that G1’s knob signature is stable.
+
+Possible names:
+
+* `apex-lane-law-freeze`
+* `apex-lane-fixed-law-eval`
+* `apex-lane-g1-eval`
+
+### Priority 2 — profile payload spread under G1 more deeply
+
+The next instance should examine:
+
+* which G1 windows are cheapest
+* which are most expensive
+* whether their difference is caused by content class, boundary placement, patch burden, or something else
+
+That could be done by expanding law-profile output or adding a focused per-law diagnostics command.
+
+### Priority 3 — expand compare/profile once more chapter files exist
+
+As soon as Genesis3/Genesis4 or a larger text set exists:
+
+* rerun compare
+* rerun law-profile
+* see whether union law count stays tiny
+* see whether G1 remains dominant
+* see whether the same knob signature remains dominant
+
+That is the next real falsification step for cross-file generality.
+
+### Priority 4 — only after the above, consider extending local-law machinery to additional lanes
+
+The blueprint still supports punctuation/case/letters lane progression, but doing that too early risks restarting broad exploration before the current dominant-law regime is fully exploited. 
+
+---
+
+## 9) Medium-priority cleanup
+
+These are real but not strategic blockers:
+
+* dead code warnings like `gen_pred_stream_with_omega`
+* unused variable warnings in some ApexTrace surfaces
+* possible output/report simplifications
+* hygiene improvements in scripts and CSV/TXT renderers
+
+These should stay below the dominant-law experiment in priority.
+
+---
+
+## 10) Project truths the next instance must not forget
+
+### 10.1 Determinism is sacred
+
+Anything that causes rerun artifacts to differ without semantic reason is a bug, not a cosmetic issue.
+
+### 10.2 Honest accounting matters more than nice charts
+
+Overlap runs are scouting only unless they are honestly charged and clearly better.
+
+### 10.3 Shared-law wins are real but currently small
+
+The dictionary reuse is real, but the savings are small because the dictionary was already cheap.
+
+### 10.4 Local compact payload is where the big bytes live
+
+That is the key insight from this session. Do not lose it.
+
+### 10.5 The project’s strongest current evidence is for a small reusable law family
+
+Do not reflexively broaden the law space until the dominant family has been exploited.
+
+### 10.6 The blueprint still says structure first
+
+The broader project north star is still:
+
+* predict structure
+* use lanes
+* measure residual collapse
+* trust the knee curve, not hope  
+
+---
+
+## 11) Current recommended working interpretation
+
+The best current interpretation of K8DNZ is:
+
+A deterministic, lane-aware, piecewise local-law codec prototype where:
+
+* the cadence-inspired engine supplies structured law surfaces
+* local windows collapse onto a tiny replay-law family
+* those laws can be reused across files
+* the remaining compression challenge is mostly **within-law local payload reduction**, not discovering more global law IDs
+
+That is a much more mature project posture than where this session started.
+
+---
+
+## 12) Practical next-instance starting point
+
+When the next instance begins, it should assume:
+
+* build is green
+* tests are green
+* `apex_lane_manifest` exists and is stabilized
+* `apex_lane_manifest_compare` exists and runs
+* `apex_lane_law_profile` exists and runs
+* only `Genesis1` and `Genesis2` are currently available
+* the next high-value question is whether freezing the dominant law meaningfully hurts or helps
+
+The next instance should probably start by inspecting:
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_lane_law_profile.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_lane_manifest.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_map_lane.rs`
+* current Genesis1/Genesis2 law-profile outputs
+
+Then it should design the frozen dominant-law experiment.
+
+---
+
+## 13) One-paragraph handoff summary
+
+K8DNZ has successfully pivoted from broad local-law exploration into honest piecewise accounting and cross-file law reuse analysis. The current workspace now includes `apex_lane_manifest`, `apex_lane_manifest_compare`, and `apex_lane_law_profile`, bringing the repo to 168 files and giving the project a real discovery → accounting → sharing → profiling workflow.   Recent Genesis1/Genesis2 experiments showed that only two global replay laws are needed, that one dominant law (`G1`) covers most windows and is knob-stable, and that the law dictionary/path overhead is already cheap. The dominant remaining problem is the local compact payload under the dominant law family. The next instance should therefore focus on a frozen dominant-law evaluation or similarly targeted per-law payload reduction experiment, not more broad law-dictionary exploration.
+
+---
+
+If you want, next time you can paste these notes plus the newest terminal output and say “continue from the frozen G1 experiment.”
+
+
+### END NOTE - MARCH 21 2026 - 15:15 CST
+
+
+
+
+
+### BEGIN NOTE - MARCH 21 2026 - 18:10 CST
+
+Below is a carry-over pack built to be dropped into the next instance and used as the project north star.
+
+---
+
+# K8DNZ carry-over notes — March 21, 2026
+
+## The project doctrine at the top
+
+**The missing X is closed-form law-to-engine closure.**
+ApexTrace / atlas discovers empirical knob tuples, but the final codec needs a **low-dimensional cadence recipe family** — orbit velocities, alignment window, lockstep pitch, and field-wave families — that regenerates the dominant `law_path` **without per-window search**. Bridge-freeze is the prototype shape: **dominant core + sparse interruptions**. Solve this across whitespace/class, punctuation, and case lanes with **true residual collapse** (sparse patches, not raw bytes), and the odds of final success jump above 90%; after that, the remaining work is mostly packaging and optimization under the budget gate. 
+
+---
+
+## 0) Executive snapshot
+
+K8DNZ is in a materially stronger position than before. The core cadence engine still matches the original geometric doctrine: counter-rotating A/C in FREE_ORBIT, deterministic alignment window ε, LOCKSTEP on the frustum with fixed separation Δ, deterministic field sampling, and pair-token emission at the large rim. The same recipe+seed still reproduces the same output, and the current repo already contains the modular core, CLI, ApexTrace crate, lane representations, recipe format, merkle tools, timemap tools, and the new atlas / freeze / manifest surfaces.   
+
+The project has also crossed an important conceptual threshold: it is no longer just “trying knobs.” It now has a plausible **structure-discovery layer**. The atlas idea turns local winning knob tuples into law IDs, merges adjacent identical regimes, and produces a `law_path` that can later be driven by a closed-form cadence family instead of brute search. That is the right direction and it is still faithful to the blueprint.  
+
+---
+
+## 1) What we have actually accomplished
+
+### A. The original cadence machine is intact
+
+The project has preserved the original invariants from the February notes and blueprint: fixed-point turns, no float dependence in core, deterministic state evolution, alignment-gated entry into lockstep, fixed-separation tandem motion on the frustum, and recipe+seed reproducibility. The repo still reflects that architecture through `k8dnz-core` dynamics, field, fixed, recipe, signal, lane, and representation modules.  
+
+### B. The workspace is no longer hypothetical
+
+The current bundle shows a real integrated workspace, not a sketch: `k8dnz-core`, `k8dnz-cli`, and `k8dnz-apextrace` are all present, along with command surfaces for `apex_lane_atlas`, `apex_lane_law_bridge_freeze`, `apex_lane_law_profile`, `apex_lane_manifest`, `apex_lane_manifest_compare`, `apex_map_case`, `apex_map_punct`, `apex_map_punct_kind`, `lane_sweep`, `encode2kb`, `regen`, `sim`, `timemap`, `merkle-zip`, and `merkle-unzip`. 
+
+### C. ApexTrace found something real, but only in the right place
+
+The notes are clear that ApexTrace earned the right to stay **inside** K8DNZ, but only as a **lane predictor / discovery surface**, not as a replacement for the whole codec doctrine and not as a dibit miracle. Whitespace/class is the current serious signal surface; dibit-first experiments are not where the breakthrough is hiding. The next lane is punctuation, then case, then letters, following the lane ladder from the blueprint. 
+
+### D. Local regimes are now more important than one giant law
+
+Recent results already showed useful local structure wins: whitespace/class compact payloads improved materially, case-lane compact payloads also showed meaningful gains, and shallow bridge-freeze produced a small but honest payload reduction while preserving the dominant payload shape. That matters because it suggests the data is not one monolithic law; it has a **stable core regime with sparse interruptions**. 
+
+### E. The project moved from blind search toward manifest structure
+
+This is the big conceptual gain. The `law_path` is becoming a higher-order object: windows produce local winning tuples, tuples become law IDs, neighboring identical laws merge, and that merged sequence becomes the thing we need to explain with a smaller closed-form cadence family. That is exactly the bridge from “empirical knobs” to “formula.” 
+
+---
+
+## 2) What remains unsolved
+
+### A. The decisive knee curve has not been shown yet
+
+The notes are explicit: the project still has not shown the final knee curve proving multi-lane residual collapse across scales. That means there is still no final truth surface proving the codec wins under strict artifact accounting rather than just producing better local match numbers. 
+
+### B. Newline control remains unresolved
+
+The notes also say newline gating still is not biting meaningfully on the benchmark. Multiple gating attempts were made, but the histogram behavior did not change in the way hoped. That makes newline pathology one of the clearest open predictor issues. 
+
+### C. Strong lane factorization beyond whitespace is still missing
+
+Both the blueprint and the notes agree that the clean path is the lane ladder: whitespace/class first, then punctuation, then case, then letters. Right now the project has meaningful motion on whitespace/class, but not enough cross-lane evidence yet.  
+
+### D. Residual is not yet in its final sparse-first form
+
+The blueprint is very direct: byte-level XOR residual is not the breakthrough path. Residual must become sparse-first — skip lists, patch lists, runs of correctness, or similar — because only sparse semantic mistakes collapse hard enough under a tiny artifact budget. 
+
+### E. The final codec cannot depend on per-window search
+
+This is the heart of the missing X. Atlas is allowed to discover. The final artifact is not allowed to carry an expensive search history as its essence. It needs a tiny rule family that **regenerates** the dominant law path. Until that exists, the project is still in discovery rather than closure. 
+
+---
+
+## 3) The full picture: what the project is really trying to do now
+
+The project is no longer best described as “compress Genesis with Cadence.” It is better described as:
+
+**Find a reversible, deterministic representation in which the text splits into low-alphabet lanes, discover recurring local law regimes on those lanes, and then replace the empirical regime sequence with a tiny closed-form cadence recipe family plus sparse correction patches.**  
+
+That statement preserves all the right things:
+
+* the cadence engine is still the source-of-truth machine;
+* the lane ladder is still the blueprint path;
+* ApexTrace is still useful, but as a discovery layer;
+* bridge-freeze is still the prototype of the final shape;
+* the budget gate remains the only honest judge.   
+
+---
+
+## 4) The missing variable, stated precisely
+
+**X = closed-form law-to-engine closure**
+
+This means:
+
+1. Atlas can discover a small vocabulary of reusable local law IDs.
+2. Those law IDs correspond to recognizable cadence-family states, not arbitrary tuples.
+3. A small rule family over cadence parameters can regenerate the dominant sequence of those law IDs over the file.
+4. Only sparse interruptions remain.
+5. Those interruptions can be encoded as tiny patches rather than large raw residual blocks. 
+
+The “formula” is not just a nicer way to store window winners. The formula must **replace** the window winners as the primary explanation. That is the closure event.
+
+---
+
+## 5) What success looks like from here
+
+The next instance should treat the project as having three success layers:
+
+### Layer 1: Discovery success
+
+ApexTrace / atlas shows that the strongest lanes are made of a **small set of repeating local regimes** rather than a giant explosion of one-off winners. Metrics: low distinct law count, long merged segments, dominant IDs covering most of the stream, stable repeated behavior across Genesis1 and Genesis2. 
+
+### Layer 2: Closure success
+
+Those recurring law IDs can be explained by a **tiny cadence family** using parameters like `vA`, `vC`, `ε`, `vL`, pitch, and field-wave family choices, not by storing a search record. Metrics: dominant `law_path` reproduced from recipe family with little or no per-window search. 
+
+### Layer 3: Codec success
+
+After closure, residual becomes sparse-first and collapses across lanes under exact artifact accounting. Metrics: lane payload totals, patch counts, packed patch bytes, final artifact size, and decode exactness.  
+
+---
+
+## 6) Structured plan to get to success
+
+## Phase 1 — Lock down the atlas truth surface on the strongest lane
+
+**Goal:** Prove whether whitespace/class really has a small repeating law vocabulary.
+
+Use the atlas / manifest / compare surfaces already in the repo, not ad hoc experiments. Measure at least:
+
+* `distinct_law_count`
+* full `law_path`
+* merged segment count
+* longest merged segment
+* top-1 / top-2 / top-3 law coverage
+* per-law compact payload means
+* per-window `collapse_90_flag`
+* newline recall / extinction behavior
+* determinism across repeated runs.  
+
+**Exit condition:** whitespace/class must show a clearly reusable regime vocabulary rather than near-random ID explosion.
+
+**Why this matters:** If this fails, closure is premature. If this succeeds, the project has a real law vocabulary to abstract.
+
+---
+
+## Phase 2 — Extend bridge-freeze from proof-of-shape to proof-of-mechanism
+
+**Goal:** Confirm that the dominant-core + sparse interruption model scales beyond a shallow win.
+
+Take the dominant law ID and interruption logic and push it across the full current benchmark stream, while preserving exact artifact accounting and minority-class guards. The point is not a small extra win by itself; the point is to confirm that interruptions are truly sparse and structurally local. 
+
+**Exit condition:** interruptions remain sparse, law reuse remains stable, and payload does not blow up when applied across the full active benchmark.
+
+---
+
+## Phase 3 — Attempt actual closure on the dominant lane
+
+**Goal:** Convert law IDs into a small cadence-family rule system.
+
+This is the hardest and most important step. For each dominant law ID, try to map it to a small family of cadence parameters:
+
+* orbit family: `vA`, `vC`, `ε`
+* lockstep family: `vL`, `Δ`, pitch / lock ticks
+* field family: wave set / amplitude / phase family
+* optional regime switch rule driven by deterministic position, local context, or a low-dimensional cadence state.  
+
+The key question is: can the merged `law_path` be approximated by a tiny rule family, not just described after the fact?
+
+**Exit condition:** a closed-form candidate reproduces most of the dominant lane path with only sparse corrections.
+
+**This is the actual X step.**
+
+---
+
+## Phase 4 — Move up the lane ladder in order
+
+Do **not** jump to letters too early. The notes and blueprint agree on the order:
+
+1. whitespace/class
+2. punctuation
+3. case
+4. letters.  
+
+Use the same atlas parameters on punctuation once whitespace/class shows reuse. Then compare:
+
+* distinct law count
+* reuse stability
+* path complexity
+* patch sparsity
+* cross-lane alignment of regime boundaries. 
+
+**Exit condition:** punctuation and case also show a small reusable regime vocabulary, not just whitespace/class.
+
+---
+
+## Phase 5 — Replace raw residual with sparse-first residual
+
+Once a lane has a dominant closed-form path, residual must be encoded as semantic sparse patches:
+
+* mismatch skiplist
+* patch list
+* run-lengths of correct spans
+* single global patch frame. 
+
+Do not let “better match” distract from this. The final breakthrough is not match percentage alone. It is **residual collapse under exact budget**.
+
+**Exit condition:** patch bytes become tiny relative to prior raw residuals.
+
+---
+
+## Phase 6 — Rejoin everything on the exact truth surface
+
+At that point, all work has to live or die on the single exact scoreboard:
+
+* total artifact bytes
+* recipe bytes
+* path bytes
+* patch bytes
+* decode exactness
+* lane-by-lane totals
+* comparison to baselines.  
+
+The repo already has the skeleton for this worldview via `encode2kb`, `lane_sweep`, `timemap`, and the merkle path. 
+
+---
+
+## 7) Immediate next-instance run order
+
+This is the practical order the next instance should follow.
+
+### 1. Run atlas on whitespace/class as the first action
+
+Use the existing atlas surface / script and record law reuse statistics, merged segments, and minority-class behavior. The March 21 analysis explicitly calls this the next diagnostic microscope. 
+
+### 2. Repeat the same atlas run for determinism
+
+Same inputs, same seeds, same knobs. Confirm byte-identical `law_path` and merged segments. Determinism here is non-negotiable. 
+
+### 3. If reuse is clear, extend bridge-freeze on the full active benchmark
+
+Test the dominant law plus sparse interruptions at full scale. Confirm it preserves the dominant payload while keeping interruptions sparse. 
+
+### 4. Run punctuation on the same atlas worldview
+
+Do not go back to dibit. The notes are explicit that punctuation is the next right lane. 
+
+### 5. Compare whitespace/class + punctuation jointly
+
+Measure whether the joint law path stays compact or whether complexity explodes. That is the first real multi-lane structure test. 
+
+### 6. Start closure work only after the atlas proves reuse
+
+Do not invent formula families before the atlas proves a small stable vocabulary exists. But once it does, switch focus from “find better tuples” to “replace tuples with tiny law families.”
+
+---
+
+## 8) What the next instance must not forget
+
+* **ApexTrace is a discovery layer, not the whole codec.** 
+* **Dibit-first is parked.** Keep it compiling, but do not let it hijack the roadmap. 
+* **Whitespace/class is the current strongest signal, but it is not enough by itself.** 
+* **Punctuation is next.** 
+* **Residual collapse is still the mountain.** Better local payload numbers are progress, not completion. 
+* **No target-specific cheats.** The codec must remain deterministic and general, with exact reversible lane reconstruction and no baked-in Genesis dictionary.  
+* **The budget gate is the judge.** Raw match rates are supporting evidence, not the final truth.
+
+---
+
+## 9) Odds update for the next instance to inherit
+
+The best current interpretation is still:
+
+* **Broad project success** — meaning reusable cadence recipes, meaningful multi-lane structure wins, honest deterministic codec progress — is high, because the engine is solid, the architecture is right, the repo is real, and the atlas / bridge-freeze direction is scientifically sound.  
+* **Final breakthrough success right now** is still much lower, because the budget gate is brutal and residual has not collapsed yet. 
+* **If X is solved** — meaning closed-form law-to-engine closure across whitespace/class + punctuation + case, with sparse patch residual rather than raw bytes — then the odds of final success become very high, because the remaining work becomes integration, packaging, and optimization rather than fundamental discovery. 
+
+That is the right confidence model to carry forward.
+
+---
+
+## 10) Bottom-line carry-forward statement
+
+> K8DNZ is no longer searching blindly. It now has a deterministic cadence engine, a real integrated Rust workspace, a lane-ladder blueprint, and a new atlas / bridge-freeze discovery surface that appears to expose a small vocabulary of repeating local regimes. The project’s missing variable is no longer vague: it is closed-form law-to-engine closure. The next instance should focus on proving that the dominant `law_path` on the strongest lanes can be regenerated by a tiny cadence recipe family, leaving only sparse interruption patches. If that happens across whitespace/class, punctuation, and case, the project likely crosses from “interesting progress” into “high-probability final success.”   
+
+And for repo continuity, the latest uploaded workspace snapshot is the March 21 code bundle. 
+
+
+
+### END NOTE - MARCH 21 2026 - 18:10 CST

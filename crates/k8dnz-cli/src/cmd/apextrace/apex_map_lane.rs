@@ -2254,7 +2254,7 @@ mod tests {
 
     #[test]
     fn capped_newline_demotion_keeps_floor() {
-        let field_source = vec![0u8, 0, 0, 0, 2, 2, 2, 2];
+        let field_source = vec![0u8, 0, 0, 0, 0, 0, 2, 2];
         let map = ApexMap::from_symbols(
             &field_source,
             ApexMapCfg {
