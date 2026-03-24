@@ -1,12 +1,15 @@
 use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
+use super::plan::compute_closure_shape_metrics;
 use super::types::{
-    LawProgramArtifact, ProgramFile, ProgramOverride, ProgramSummary, ProgramWindow, ReplayConfig,
+    LawProgramArtifact, OverridePathMode, ProgramFile, ProgramOverride, ProgramSummary,
+    ProgramWindow, ReplayConfig,
 };
 
 const ARTIFACT_MAGIC: &[u8; 4] = b"AKLP";
-const ARTIFACT_VERSION: u8 = 1;
+const ARTIFACT_VERSION: u8 = 2;
 
 impl LawProgramArtifact {
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
@@ -44,17 +47,17 @@ impl LawProgramArtifact {
         }
 
         let version = r.u8()?;
-        if version != ARTIFACT_VERSION {
+        if version != 1 && version != ARTIFACT_VERSION {
             bail!("unsupported artifact version {}", version);
         }
 
         let config = ReplayConfig::decode(&mut r)?;
-        let summary = ProgramSummary::decode(&mut r)?;
+        let summary = ProgramSummary::decode(&mut r, version)?;
 
         let file_len = r.uvar()? as usize;
         let mut files = Vec::with_capacity(file_len);
         for _ in 0..file_len {
-            files.push(ProgramFile::decode(&mut r)?);
+            files.push(ProgramFile::decode(&mut r, version)?);
         }
 
         let window_len = r.uvar()? as usize;
@@ -73,13 +76,19 @@ impl LawProgramArtifact {
             bail!("trailing bytes after artifact decode");
         }
 
-        Ok(Self {
+        let mut artifact = Self {
             config,
             summary,
             files,
             windows,
             overrides,
-        })
+        };
+
+        if version == 1 {
+            hydrate_closure_metrics(&mut artifact);
+        }
+
+        Ok(artifact)
     }
 }
 
@@ -371,10 +380,19 @@ impl ProgramSummary {
         w.uvar(self.improved_target_window_count as u64);
         w.uvar(self.equal_target_window_count as u64);
         w.uvar(self.worsened_target_window_count as u64);
+        w.uvar(self.closure_override_count as u64);
+        w.uvar(self.closure_override_run_count as u64);
+        w.uvar(self.closure_max_override_run_length as u64);
+        w.uvar(self.closure_untouched_window_count as u64);
+        w.uvar(self.closure_override_density_ppm as u64);
+        w.uvar(self.closure_untouched_window_pct_ppm as u64);
+        w.uvar(self.closure_mode_penalty_exact as u64);
+        w.uvar(self.closure_penalty_exact as u64);
+        w.ivar(self.closure_total_exact);
     }
 
-    fn decode(r: &mut BinReader<'_>) -> Result<Self> {
-        Ok(Self {
+    fn decode(r: &mut BinReader<'_>, version: u8) -> Result<Self> {
+        let mut out = Self {
             recipe: r.string()?,
             file_count: r.uvar()? as usize,
             honest_file_count: r.uvar()? as usize,
@@ -414,7 +432,30 @@ impl ProgramSummary {
             improved_target_window_count: r.uvar()? as usize,
             equal_target_window_count: r.uvar()? as usize,
             worsened_target_window_count: r.uvar()? as usize,
-        })
+            closure_override_count: 0,
+            closure_override_run_count: 0,
+            closure_max_override_run_length: 0,
+            closure_untouched_window_count: 0,
+            closure_override_density_ppm: 0,
+            closure_untouched_window_pct_ppm: 0,
+            closure_mode_penalty_exact: 0,
+            closure_penalty_exact: 0,
+            closure_total_exact: 0,
+        };
+
+        if version >= 2 {
+            out.closure_override_count = r.uvar()? as usize;
+            out.closure_override_run_count = r.uvar()? as usize;
+            out.closure_max_override_run_length = r.uvar()? as usize;
+            out.closure_untouched_window_count = r.uvar()? as usize;
+            out.closure_override_density_ppm = r.uvar()? as u32;
+            out.closure_untouched_window_pct_ppm = r.uvar()? as u32;
+            out.closure_mode_penalty_exact = r.uvar()? as usize;
+            out.closure_penalty_exact = r.uvar()? as usize;
+            out.closure_total_exact = r.ivar()?;
+        }
+
+        Ok(out)
     }
 }
 
@@ -429,10 +470,19 @@ impl ProgramFile {
         w.string(&self.override_path_mode);
         w.uvar(self.override_path_bytes_exact as u64);
         w.uvar(self.selected_override_window_count as u64);
+        w.uvar(self.closure_override_count as u64);
+        w.uvar(self.closure_override_run_count as u64);
+        w.uvar(self.closure_max_override_run_length as u64);
+        w.uvar(self.closure_untouched_window_count as u64);
+        w.uvar(self.closure_override_density_ppm as u64);
+        w.uvar(self.closure_untouched_window_pct_ppm as u64);
+        w.uvar(self.closure_mode_penalty_exact as u64);
+        w.uvar(self.closure_penalty_exact as u64);
+        w.ivar(self.closure_total_exact);
     }
 
-    fn decode(r: &mut BinReader<'_>) -> Result<Self> {
-        Ok(Self {
+    fn decode(r: &mut BinReader<'_>, version: u8) -> Result<Self> {
+        let mut out = Self {
             input: r.string()?,
             searched_total_piecewise_payload_exact: r.ivar()?,
             projected_default_total_piecewise_payload_exact: r.ivar()?,
@@ -442,7 +492,30 @@ impl ProgramFile {
             override_path_mode: r.string()?,
             override_path_bytes_exact: r.uvar()? as usize,
             selected_override_window_count: r.uvar()? as usize,
-        })
+            closure_override_count: 0,
+            closure_override_run_count: 0,
+            closure_max_override_run_length: 0,
+            closure_untouched_window_count: 0,
+            closure_override_density_ppm: 0,
+            closure_untouched_window_pct_ppm: 0,
+            closure_mode_penalty_exact: 0,
+            closure_penalty_exact: 0,
+            closure_total_exact: 0,
+        };
+
+        if version >= 2 {
+            out.closure_override_count = r.uvar()? as usize;
+            out.closure_override_run_count = r.uvar()? as usize;
+            out.closure_max_override_run_length = r.uvar()? as usize;
+            out.closure_untouched_window_count = r.uvar()? as usize;
+            out.closure_override_density_ppm = r.uvar()? as u32;
+            out.closure_untouched_window_pct_ppm = r.uvar()? as u32;
+            out.closure_mode_penalty_exact = r.uvar()? as usize;
+            out.closure_penalty_exact = r.uvar()? as usize;
+            out.closure_total_exact = r.ivar()?;
+        }
+
+        Ok(out)
     }
 }
 
@@ -510,4 +583,89 @@ impl ProgramOverride {
             gain_exact: r.uvar()? as usize,
         })
     }
+}
+
+fn hydrate_closure_metrics(artifact: &mut LawProgramArtifact) {
+    let mut ordinals_by_input = BTreeMap::<String, Vec<usize>>::new();
+    for row in &artifact.overrides {
+        ordinals_by_input
+            .entry(row.input.clone())
+            .or_default()
+            .push(row.target_ordinal);
+    }
+
+    let mut closure_override_count = 0usize;
+    let mut closure_override_run_count = 0usize;
+    let mut closure_max_override_run_length = 0usize;
+    let mut closure_untouched_window_count = 0usize;
+    let mut closure_mode_penalty_exact = 0usize;
+    let mut closure_penalty_exact = 0usize;
+
+    for file in &mut artifact.files {
+        let ordinals = ordinals_by_input.remove(&file.input).unwrap_or_default();
+        let shape = compute_closure_shape_metrics(
+            override_path_mode_from_str(&file.override_path_mode),
+            file.override_path_bytes_exact,
+            &ordinals,
+            file.target_window_count,
+        );
+
+        file.closure_override_count = shape.override_count;
+        file.closure_override_run_count = shape.override_run_count;
+        file.closure_max_override_run_length = shape.max_override_run_length;
+        file.closure_untouched_window_count = shape.untouched_window_count;
+        file.closure_override_density_ppm = shape.override_density_ppm;
+        file.closure_untouched_window_pct_ppm = shape.untouched_window_pct_ppm;
+        file.closure_mode_penalty_exact = shape.mode_penalty_exact;
+        file.closure_penalty_exact = shape.closure_penalty_exact;
+        file.closure_total_exact = file
+            .selected_total_piecewise_payload_exact
+            .saturating_add(shape.closure_penalty_exact as i64);
+
+        closure_override_count += shape.override_count;
+        closure_override_run_count += shape.override_run_count;
+        closure_max_override_run_length =
+            closure_max_override_run_length.max(shape.max_override_run_length);
+        closure_untouched_window_count += shape.untouched_window_count;
+        closure_mode_penalty_exact += shape.mode_penalty_exact;
+        closure_penalty_exact += shape.closure_penalty_exact;
+    }
+
+    artifact.summary.closure_override_count = closure_override_count;
+    artifact.summary.closure_override_run_count = closure_override_run_count;
+    artifact.summary.closure_max_override_run_length = closure_max_override_run_length;
+    artifact.summary.closure_untouched_window_count = closure_untouched_window_count;
+    artifact.summary.closure_override_density_ppm = if artifact.summary.target_window_count == 0 {
+        0
+    } else {
+        scaled_ppm(closure_override_count, artifact.summary.target_window_count)
+    };
+    artifact.summary.closure_untouched_window_pct_ppm = if artifact.summary.target_window_count == 0 {
+        1_000_000
+    } else {
+        scaled_ppm(closure_untouched_window_count, artifact.summary.target_window_count)
+    };
+    artifact.summary.closure_mode_penalty_exact = closure_mode_penalty_exact;
+    artifact.summary.closure_penalty_exact = closure_penalty_exact;
+    artifact.summary.closure_total_exact = artifact
+        .summary
+        .selected_total_piecewise_payload_exact
+        .saturating_add(closure_penalty_exact as i64);
+}
+
+fn override_path_mode_from_str(raw: &str) -> OverridePathMode {
+    match raw {
+        "none" => OverridePathMode::None,
+        "delta" => OverridePathMode::Delta,
+        "runs" => OverridePathMode::Runs,
+        "ordinals" => OverridePathMode::Ordinals,
+        _ => OverridePathMode::Ordinals,
+    }
+}
+
+fn scaled_ppm(num: usize, den: usize) -> u32 {
+    if den == 0 {
+        return 0;
+    }
+    (((num as u128) * 1_000_000u128) / den as u128) as u32
 }

@@ -114,12 +114,27 @@ pub(crate) fn run_surface_scoreboard(
         _ => run_surface_scoreboard_parallel_three(cli_exe, artifact)?,
     };
 
-    eprintln!(
-        "apex-law-program compare-surfaces: done elapsed_ms={} frozen_total_piecewise_payload_exact={} split_total_piecewise_payload_exact={} bridge_total_piecewise_payload_exact={}",
-        started.elapsed().as_millis(),
+    let (best_surface, best_total_piecewise_payload_exact) = select_best_surface(
+        artifact.summary.selected_total_piecewise_payload_exact,
+        replay_selected_total_piecewise_payload_exact,
         frozen_total,
         split_total,
         bridge_total,
+    );
+    let best_delta_vs_artifact_exact =
+        best_total_piecewise_payload_exact - artifact.summary.selected_total_piecewise_payload_exact;
+
+    eprintln!(
+        "apex-law-program compare-surfaces: done elapsed_ms={} artifact_selected_total_piecewise_payload_exact={} replay_selected_total_piecewise_payload_exact={} frozen_total_piecewise_payload_exact={} split_total_piecewise_payload_exact={} bridge_total_piecewise_payload_exact={} best_surface={} best_total_piecewise_payload_exact={} best_delta_vs_artifact_exact={}",
+        started.elapsed().as_millis(),
+        artifact.summary.selected_total_piecewise_payload_exact,
+        replay_selected_total_piecewise_payload_exact,
+        frozen_total,
+        split_total,
+        bridge_total,
+        best_surface,
+        best_total_piecewise_payload_exact,
+        best_delta_vs_artifact_exact,
     );
 
     Ok(SurfaceScoreboard {
@@ -133,6 +148,9 @@ pub(crate) fn run_surface_scoreboard(
         frozen_total_piecewise_payload_exact: Some(frozen_total),
         split_total_piecewise_payload_exact: Some(split_total),
         bridge_total_piecewise_payload_exact: Some(bridge_total),
+        best_surface,
+        best_total_piecewise_payload_exact,
+        best_delta_vs_artifact_exact,
     })
 }
 
@@ -217,7 +235,7 @@ fn run_surface_total_logged(
     let total = run_surface_total(cli_exe, artifact, subcmd)?;
 
     eprintln!(
-        "apex-law-program compare-surfaces: surface-done subcmd={} elapsed_ms={} frozen_total_piecewise_payload_exact={}",
+        "apex-law-program compare-surfaces: surface-done subcmd={} elapsed_ms={} total_piecewise_payload_exact={}",
         subcmd,
         started.elapsed().as_millis(),
         total,
@@ -260,6 +278,29 @@ pub(crate) fn run_surface_total(
 
     let map = parse_txt_summary(&output.stdout)?;
     parse_required_i64(&map, "frozen_total_piecewise_payload_exact")
+}
+
+fn select_best_surface(
+    artifact_selected_total_piecewise_payload_exact: i64,
+    replay_selected_total_piecewise_payload_exact: i64,
+    frozen_total_piecewise_payload_exact: i64,
+    split_total_piecewise_payload_exact: i64,
+    bridge_total_piecewise_payload_exact: i64,
+) -> (String, i64) {
+    let candidates = [
+        ("artifact", artifact_selected_total_piecewise_payload_exact),
+        ("replay", replay_selected_total_piecewise_payload_exact),
+        ("freeze", frozen_total_piecewise_payload_exact),
+        ("split-freeze", split_total_piecewise_payload_exact),
+        ("bridge-freeze", bridge_total_piecewise_payload_exact),
+    ];
+
+    let (name, value) = candidates
+        .into_iter()
+        .min_by_key(|(_, total)| *total)
+        .expect("surface candidates should not be empty");
+
+    (name.to_string(), value)
 }
 
 fn append_manifest_base_args(cmd: &mut Command, args: &BuildArgs) {
@@ -359,11 +400,7 @@ fn append_local_mix_only_args(cmd: &mut Command, args: &BuildArgs) {
     }
 }
 
-fn append_surface_replay_args(
-    cmd: &mut Command,
-    artifact: &LawProgramArtifact,
-    subcmd: &str,
-) {
+fn append_surface_replay_args(cmd: &mut Command, artifact: &LawProgramArtifact, subcmd: &str) {
     cmd.arg("--max-ticks")
         .arg(artifact.config.max_ticks.to_string())
         .arg("--window-bytes")

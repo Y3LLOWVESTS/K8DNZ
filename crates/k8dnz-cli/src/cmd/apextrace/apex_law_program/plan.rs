@@ -430,9 +430,10 @@ mod tests {
         );
 
         assert_eq!(plan.selected_window_ordinals, vec![3, 4]);
-        assert_eq!(plan.mode, OverridePathMode::Runs);
+        assert_eq!(plan.path_bytes_exact, 4);
         assert_eq!(plan.closure_shape.override_count, 2);
         assert_eq!(plan.closure_shape.override_run_count, 1);
+        assert_eq!(plan.closure_shape.max_override_run_length, 2);
     }
 
     #[test]

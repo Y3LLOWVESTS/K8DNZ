@@ -53,7 +53,7 @@ fn run_build(args: BuildArgs) -> Result<()> {
     if let Some(path) = args.out_report.as_deref() {
         fs::write(path, report).with_context(|| format!("write report {}", path))?;
         eprintln!(
-            "apex-law-program build: artifact={} bytes={} windows={} overrides={} target={} body_select_objective={} override_path_mode={} override_path_bytes_exact={} selected_total_piecewise_payload_exact={}",
+            "apex-law-program build: artifact={} bytes={} windows={} overrides={} target={} body_select_objective={} override_path_mode={} override_path_bytes_exact={} selected_total_piecewise_payload_exact={} closure_total_exact={} closure_penalty_exact={}",
             args.out,
             bytes.len(),
             materialized.artifact.windows.len(),
@@ -63,6 +63,8 @@ fn run_build(args: BuildArgs) -> Result<()> {
             materialized.artifact.summary.override_path_mode,
             materialized.artifact.summary.override_path_bytes_exact,
             materialized.artifact.summary.selected_total_piecewise_payload_exact,
+            materialized.artifact.summary.closure_total_exact,
+            materialized.artifact.summary.closure_penalty_exact,
         );
     } else {
         print!("{report}");
@@ -123,11 +125,14 @@ fn run_replay(args: ReplayArgs) -> Result<()> {
         )?;
 
         eprintln!(
-            "apex-law-program replay: compare-surfaces finished elapsed_ms={} frozen_total_piecewise_payload_exact={:?} split_total_piecewise_payload_exact={:?} bridge_total_piecewise_payload_exact={:?}",
+            "apex-law-program replay: compare-surfaces finished elapsed_ms={} frozen_total_piecewise_payload_exact={:?} split_total_piecewise_payload_exact={:?} bridge_total_piecewise_payload_exact={:?} best_surface={} best_total_piecewise_payload_exact={} best_delta_vs_artifact_exact={}",
             compare_started.elapsed().as_millis(),
             board.frozen_total_piecewise_payload_exact,
             board.split_total_piecewise_payload_exact,
             board.bridge_total_piecewise_payload_exact,
+            board.best_surface,
+            board.best_total_piecewise_payload_exact,
+            board.best_delta_vs_artifact_exact,
         );
 
         Some(board)

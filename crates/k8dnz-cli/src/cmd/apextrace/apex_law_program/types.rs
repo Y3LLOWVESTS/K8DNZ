@@ -88,6 +88,15 @@ pub(crate) struct ProgramSummary {
     pub(crate) improved_target_window_count: usize,
     pub(crate) equal_target_window_count: usize,
     pub(crate) worsened_target_window_count: usize,
+    pub(crate) closure_override_count: usize,
+    pub(crate) closure_override_run_count: usize,
+    pub(crate) closure_max_override_run_length: usize,
+    pub(crate) closure_untouched_window_count: usize,
+    pub(crate) closure_override_density_ppm: u32,
+    pub(crate) closure_untouched_window_pct_ppm: u32,
+    pub(crate) closure_mode_penalty_exact: usize,
+    pub(crate) closure_penalty_exact: usize,
+    pub(crate) closure_total_exact: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +110,15 @@ pub(crate) struct ProgramFile {
     pub(crate) override_path_mode: String,
     pub(crate) override_path_bytes_exact: usize,
     pub(crate) selected_override_window_count: usize,
+    pub(crate) closure_override_count: usize,
+    pub(crate) closure_override_run_count: usize,
+    pub(crate) closure_max_override_run_length: usize,
+    pub(crate) closure_untouched_window_count: usize,
+    pub(crate) closure_override_density_ppm: u32,
+    pub(crate) closure_untouched_window_pct_ppm: u32,
+    pub(crate) closure_mode_penalty_exact: usize,
+    pub(crate) closure_penalty_exact: usize,
+    pub(crate) closure_total_exact: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,6 +206,9 @@ pub(crate) struct SurfaceScoreboard {
     pub(crate) frozen_total_piecewise_payload_exact: Option<i64>,
     pub(crate) split_total_piecewise_payload_exact: Option<i64>,
     pub(crate) bridge_total_piecewise_payload_exact: Option<i64>,
+    pub(crate) best_surface: String,
+    pub(crate) best_total_piecewise_payload_exact: i64,
+    pub(crate) best_delta_vs_artifact_exact: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -232,6 +253,7 @@ pub(crate) struct BodyCandidateScore {
     pub(crate) selected_total_piecewise_payload_exact: i64,
     pub(crate) closure_total_exact: i64,
     pub(crate) closure_penalty_exact: usize,
+    pub(crate) mode_penalty_exact: usize,
     pub(crate) selected_target_window_payload_exact: usize,
     pub(crate) selected_override_window_count: usize,
     pub(crate) override_run_count: usize,

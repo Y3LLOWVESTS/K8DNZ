@@ -8,11 +8,12 @@ use super::parse::{
     parse_csv_sections, parse_csv_usize_list, parse_manifest_positions, parse_required_i64,
     parse_required_string, parse_required_u64, parse_required_usize, parse_txt_summary,
 };
-use super::plan::{compute_closure_shape_metrics, select_override_plan};
+use super::plan::select_override_plan;
+use super::replay::canonicalize_artifact_selected_payloads;
 use super::types::{
-    BodyCandidateScore, BodySelectObjective, BuildMaterialized, ClosureShapeMetrics,
-    LawProgramArtifact, ManifestWindowPos, OverrideCandidateRef, OverridePathMode, ProgramFile,
-    ProgramOverride, ProgramSummary, ProgramWindow, ReplayConfig,
+    BodyCandidateScore, BodySelectObjective, BuildMaterialized, LawProgramArtifact,
+    ManifestWindowPos, OverrideCandidateRef, ProgramFile, ProgramOverride, ProgramSummary,
+    ProgramWindow, ReplayConfig,
 };
 
 pub(crate) fn materialize_build(cli_exe: &Path, args: &BuildArgs) -> Result<BuildMaterialized> {
@@ -38,13 +39,25 @@ pub(crate) fn materialize_build(cli_exe: &Path, args: &BuildArgs) -> Result<Buil
         let txt_summary = parse_txt_summary(&txt_out.stdout)?;
         let csv_sections = parse_csv_sections(&csv_out.stdout)?;
 
-        let artifact = build_artifact_from_outputs(
+        let mut artifact = build_artifact_from_outputs(
             &trial_args,
             objective,
             &txt_summary,
             &csv_sections,
             &manifest_positions,
         )?;
+
+        eprintln!(
+            "apex-law-program build: canonical replay for chunk_bytes={} windows={}",
+            chunk_bytes,
+            artifact.windows.len()
+        );
+        canonicalize_artifact_selected_payloads(cli_exe, &mut artifact).with_context(|| {
+            format!(
+                "canonicalize artifact selected payloads chunk_bytes={}",
+                chunk_bytes
+            )
+        })?;
 
         materials.push(BuildMaterialized {
             body_scores: vec![body_score_from_artifact(&artifact)],
@@ -68,28 +81,25 @@ pub(crate) fn materialize_build(cli_exe: &Path, args: &BuildArgs) -> Result<Buil
 }
 
 fn body_score_from_artifact(artifact: &LawProgramArtifact) -> BodyCandidateScore {
-    let closure = summarize_artifact_closure_shape(artifact);
+    let summary = &artifact.summary;
 
     BodyCandidateScore {
-        chunk_bytes: artifact.summary.default_local_chunk_bytes,
-        selected_total_piecewise_payload_exact: artifact.summary.selected_total_piecewise_payload_exact,
-        closure_total_exact: artifact
-            .summary
-            .selected_total_piecewise_payload_exact
-            .saturating_add(closure.closure_penalty_exact as i64),
-        closure_penalty_exact: closure.closure_penalty_exact,
-        selected_target_window_payload_exact: artifact.summary.selected_target_window_payload_exact,
-        selected_override_window_count: artifact.summary.selected_override_window_count,
-        override_run_count: closure.override_run_count,
-        max_override_run_length: closure.max_override_run_length,
-        override_path_bytes_exact: artifact.summary.override_path_bytes_exact,
-        projected_default_total_piecewise_payload_exact: artifact
-            .summary
+        chunk_bytes: summary.default_local_chunk_bytes,
+        selected_total_piecewise_payload_exact: summary.selected_total_piecewise_payload_exact,
+        closure_total_exact: summary.closure_total_exact,
+        closure_penalty_exact: summary.closure_penalty_exact,
+        mode_penalty_exact: summary.closure_mode_penalty_exact,
+        selected_target_window_payload_exact: summary.selected_target_window_payload_exact,
+        selected_override_window_count: summary.selected_override_window_count,
+        override_run_count: summary.closure_override_run_count,
+        max_override_run_length: summary.closure_max_override_run_length,
+        override_path_bytes_exact: summary.override_path_bytes_exact,
+        projected_default_total_piecewise_payload_exact: summary
             .projected_default_total_piecewise_payload_exact,
-        target_window_count: artifact.summary.target_window_count,
-        untouched_window_count: closure.untouched_window_count,
-        override_density_ppm: closure.override_density_ppm,
-        untouched_window_pct_ppm: closure.untouched_window_pct_ppm,
+        target_window_count: summary.target_window_count,
+        untouched_window_count: summary.closure_untouched_window_count,
+        override_density_ppm: summary.closure_override_density_ppm,
+        untouched_window_pct_ppm: summary.closure_untouched_window_pct_ppm,
     }
 }
 
@@ -276,6 +286,15 @@ fn build_artifact_from_outputs(
                     row,
                     "selected_override_window_count",
                 )?,
+                closure_override_count: 0,
+                closure_override_run_count: 0,
+                closure_max_override_run_length: 0,
+                closure_untouched_window_count: 0,
+                closure_override_density_ppm: 0,
+                closure_untouched_window_pct_ppm: 0,
+                closure_mode_penalty_exact: 0,
+                closure_penalty_exact: 0,
+                closure_total_exact: 0,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -344,6 +363,12 @@ fn build_artifact_from_outputs(
     let mut improved_target_window_count = 0usize;
     let mut equal_target_window_count = 0usize;
     let mut worsened_target_window_count = 0usize;
+    let mut closure_override_count = 0usize;
+    let mut closure_override_run_count = 0usize;
+    let mut closure_max_override_run_length = 0usize;
+    let mut closure_untouched_window_count = 0usize;
+    let mut closure_mode_penalty_exact = 0usize;
+    let mut closure_penalty_exact = 0usize;
     let mut overrides = Vec::<ProgramOverride>::new();
 
     for file in &mut files {
@@ -362,10 +387,12 @@ fn build_artifact_from_outputs(
             .map(|idx| windows[*idx].best_payload_exact)
             .sum::<usize>();
 
-        let base_default_total =
-            file.searched_total_piecewise_payload_exact + default_target as i64 - searched_target as i64;
-        let base_best_mix_total =
-            file.searched_total_piecewise_payload_exact + best_target as i64 - searched_target as i64;
+        let base_default_total = file.searched_total_piecewise_payload_exact
+            + default_target as i64
+            - searched_target as i64;
+        let base_best_mix_total = file.searched_total_piecewise_payload_exact
+            + best_target as i64
+            - searched_target as i64;
 
         let candidates = window_indexes
             .iter()
@@ -439,6 +466,10 @@ fn build_artifact_from_outputs(
             - searched_target as i64
             + selected_plan.path_bytes_exact as i64;
 
+        let shape = selected_plan.closure_shape;
+        let file_closure_total_exact =
+            file_selected_total.saturating_add(shape.closure_penalty_exact as i64);
+
         file.projected_default_total_piecewise_payload_exact = base_default_total;
         file.projected_unpriced_best_mix_total_piecewise_payload_exact = base_best_mix_total;
         file.selected_total_piecewise_payload_exact = file_selected_total;
@@ -446,6 +477,15 @@ fn build_artifact_from_outputs(
         file.override_path_mode = selected_plan.mode.as_str().to_string();
         file.override_path_bytes_exact = selected_plan.path_bytes_exact;
         file.selected_override_window_count = selected_plan.selected_window_ordinals.len();
+        file.closure_override_count = shape.override_count;
+        file.closure_override_run_count = shape.override_run_count;
+        file.closure_max_override_run_length = shape.max_override_run_length;
+        file.closure_untouched_window_count = shape.untouched_window_count;
+        file.closure_override_density_ppm = shape.override_density_ppm;
+        file.closure_untouched_window_pct_ppm = shape.untouched_window_pct_ppm;
+        file.closure_mode_penalty_exact = shape.mode_penalty_exact;
+        file.closure_penalty_exact = shape.closure_penalty_exact;
+        file.closure_total_exact = file_closure_total_exact;
 
         projected_default_total_piecewise_payload_exact += base_default_total;
         projected_unpriced_best_mix_total_piecewise_payload_exact += base_best_mix_total;
@@ -456,9 +496,29 @@ fn build_artifact_from_outputs(
         selected_target_window_payload_exact += file_selected_target;
         override_path_bytes_exact += selected_plan.path_bytes_exact;
         selected_override_window_count += selected_plan.selected_window_ordinals.len();
+        closure_override_count += shape.override_count;
+        closure_override_run_count += shape.override_run_count;
+        closure_max_override_run_length =
+            closure_max_override_run_length.max(shape.max_override_run_length);
+        closure_untouched_window_count += shape.untouched_window_count;
+        closure_mode_penalty_exact += shape.mode_penalty_exact;
+        closure_penalty_exact += shape.closure_penalty_exact;
     }
 
     overrides.sort_by_key(|row| (row.input_index, row.target_ordinal, row.window_idx));
+
+    let closure_override_density_ppm = if windows.is_empty() {
+        0
+    } else {
+        scaled_ppm(closure_override_count, windows.len())
+    };
+    let closure_untouched_window_pct_ppm = if windows.is_empty() {
+        1_000_000
+    } else {
+        scaled_ppm(closure_untouched_window_count, windows.len())
+    };
+    let closure_total_exact =
+        selected_total_piecewise_payload_exact.saturating_add(closure_penalty_exact as i64);
 
     let summary = ProgramSummary {
         recipe: parse_required_string(txt_summary, "recipe")?,
@@ -520,6 +580,15 @@ fn build_artifact_from_outputs(
         improved_target_window_count,
         equal_target_window_count,
         worsened_target_window_count,
+        closure_override_count,
+        closure_override_run_count,
+        closure_max_override_run_length,
+        closure_untouched_window_count,
+        closure_override_density_ppm,
+        closure_untouched_window_pct_ppm,
+        closure_mode_penalty_exact,
+        closure_penalty_exact,
+        closure_total_exact,
     };
 
     Ok(LawProgramArtifact {
@@ -574,74 +643,6 @@ fn build_artifact_from_outputs(
     })
 }
 
-fn summarize_artifact_closure_shape(artifact: &LawProgramArtifact) -> ClosureShapeMetrics {
-    let mut ordinals_by_input = BTreeMap::<String, Vec<usize>>::new();
-    for row in &artifact.overrides {
-        ordinals_by_input
-            .entry(row.input.clone())
-            .or_default()
-            .push(row.target_ordinal);
-    }
-
-    let mut closure_penalty_exact = 0usize;
-    let mut mode_penalty_exact = 0usize;
-    let mut override_run_count = 0usize;
-    let mut max_override_run_length = 0usize;
-
-    for file in &artifact.files {
-        let ordinals = ordinals_by_input
-            .remove(&file.input)
-            .unwrap_or_default();
-        let shape = compute_closure_shape_metrics(
-            override_path_mode_from_str(&file.override_path_mode),
-            file.override_path_bytes_exact,
-            &ordinals,
-            file.target_window_count,
-        );
-        closure_penalty_exact = closure_penalty_exact.saturating_add(shape.closure_penalty_exact);
-        mode_penalty_exact = mode_penalty_exact.saturating_add(shape.mode_penalty_exact);
-        override_run_count = override_run_count.saturating_add(shape.override_run_count);
-        max_override_run_length = max_override_run_length.max(shape.max_override_run_length);
-    }
-
-    let override_count = artifact.overrides.len();
-    let target_window_count = artifact.summary.target_window_count;
-    let untouched_window_count = target_window_count.saturating_sub(override_count);
-
-    let override_density_ppm = if target_window_count == 0 {
-        0
-    } else {
-        scaled_ppm(override_count, target_window_count)
-    };
-
-    let untouched_window_pct_ppm = if target_window_count == 0 {
-        1_000_000
-    } else {
-        scaled_ppm(untouched_window_count, target_window_count)
-    };
-
-    ClosureShapeMetrics {
-        override_count,
-        override_run_count,
-        max_override_run_length,
-        untouched_window_count,
-        override_density_ppm,
-        untouched_window_pct_ppm,
-        mode_penalty_exact,
-        closure_penalty_exact,
-    }
-}
-
-fn override_path_mode_from_str(raw: &str) -> OverridePathMode {
-    match raw {
-        "none" => OverridePathMode::None,
-        "delta" => OverridePathMode::Delta,
-        "runs" => OverridePathMode::Runs,
-        "ordinals" => OverridePathMode::Ordinals,
-        _ => OverridePathMode::Ordinals,
-    }
-}
-
 fn scaled_ppm(num: usize, den: usize) -> u32 {
     if den == 0 {
         return 0;
@@ -669,6 +670,18 @@ fn aggregate_override_path_mode(files: &[ProgramFile]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::plan::compute_closure_shape_metrics;
+    use super::super::types::OverridePathMode;
+
+    fn override_path_mode_from_str(raw: &str) -> OverridePathMode {
+        match raw {
+            "none" => OverridePathMode::None,
+            "delta" => OverridePathMode::Delta,
+            "runs" => OverridePathMode::Runs,
+            "ordinals" => OverridePathMode::Ordinals,
+            _ => OverridePathMode::Ordinals,
+        }
+    }
 
     fn make_test_materialized(
         chunk: usize,
@@ -681,6 +694,12 @@ mod tests {
         override_ordinals: &[usize],
     ) -> BuildMaterialized {
         let input = "text/Genesis1.txt".to_string();
+        let shape = compute_closure_shape_metrics(
+            override_path_mode_from_str(override_mode),
+            override_path,
+            override_ordinals,
+            target_window_count,
+        );
 
         BuildMaterialized {
             body_scores: Vec::new(),
@@ -769,6 +788,15 @@ mod tests {
                     improved_target_window_count: 0,
                     equal_target_window_count: 0,
                     worsened_target_window_count: 0,
+                    closure_override_count: shape.override_count,
+                    closure_override_run_count: shape.override_run_count,
+                    closure_max_override_run_length: shape.max_override_run_length,
+                    closure_untouched_window_count: shape.untouched_window_count,
+                    closure_override_density_ppm: shape.override_density_ppm,
+                    closure_untouched_window_pct_ppm: shape.untouched_window_pct_ppm,
+                    closure_mode_penalty_exact: shape.mode_penalty_exact,
+                    closure_penalty_exact: shape.closure_penalty_exact,
+                    closure_total_exact: selected_total + shape.closure_penalty_exact as i64,
                 },
                 files: vec![ProgramFile {
                     input: input.clone(),
@@ -780,6 +808,15 @@ mod tests {
                     override_path_mode: override_mode.to_string(),
                     override_path_bytes_exact: override_path,
                     selected_override_window_count: override_ordinals.len(),
+                    closure_override_count: shape.override_count,
+                    closure_override_run_count: shape.override_run_count,
+                    closure_max_override_run_length: shape.max_override_run_length,
+                    closure_untouched_window_count: shape.untouched_window_count,
+                    closure_override_density_ppm: shape.override_density_ppm,
+                    closure_untouched_window_pct_ppm: shape.untouched_window_pct_ppm,
+                    closure_mode_penalty_exact: shape.mode_penalty_exact,
+                    closure_penalty_exact: shape.closure_penalty_exact,
+                    closure_total_exact: selected_total + shape.closure_penalty_exact as i64,
                 }],
                 windows: Vec::new(),
                 overrides: override_ordinals
@@ -804,8 +841,26 @@ mod tests {
     #[test]
     fn selected_total_breaks_ties_toward_better_default_body() {
         let items = vec![
-            make_test_materialized(32, 2123, 2400, 507, 3, "runs", 12, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-            make_test_materialized(64, 2123, 2200, 507, 3, "runs", 12, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            make_test_materialized(
+                32,
+                2123,
+                2400,
+                507,
+                3,
+                "runs",
+                12,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            ),
+            make_test_materialized(
+                64,
+                2123,
+                2200,
+                507,
+                3,
+                "runs",
+                12,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            ),
             make_test_materialized(96, 2124, 2128, 508, 4, "delta", 12, &[2, 9]),
         ];
 
@@ -817,7 +872,16 @@ mod tests {
     #[test]
     fn closure_total_prefers_sparse_body_over_dense_body() {
         let items = vec![
-            make_test_materialized(64, 2123, 2200, 507, 3, "runs", 12, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            make_test_materialized(
+                64,
+                2123,
+                2200,
+                507,
+                3,
+                "runs",
+                12,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            ),
             make_test_materialized(96, 2124, 2128, 508, 4, "delta", 12, &[2, 9]),
         ];
 
@@ -829,8 +893,26 @@ mod tests {
     #[test]
     fn selected_target_breaks_ties_toward_better_default_body() {
         let items = vec![
-            make_test_materialized(32, 2123, 2400, 507, 3, "runs", 12, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-            make_test_materialized(64, 2123, 2200, 507, 3, "runs", 12, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            make_test_materialized(
+                32,
+                2123,
+                2400,
+                507,
+                3,
+                "runs",
+                12,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            ),
+            make_test_materialized(
+                64,
+                2123,
+                2200,
+                507,
+                3,
+                "runs",
+                12,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            ),
         ];
 
         let idx =

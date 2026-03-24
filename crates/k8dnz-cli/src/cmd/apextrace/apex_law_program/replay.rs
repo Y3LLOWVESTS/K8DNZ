@@ -53,6 +53,97 @@ pub(crate) fn replay_artifact(
     Ok((rows, file_summaries))
 }
 
+
+pub(crate) fn canonicalize_artifact_selected_payloads(
+    cli_exe: &Path,
+    artifact: &mut LawProgramArtifact,
+) -> Result<()> {
+    let (rows, file_summaries) = replay_artifact(cli_exe, artifact)?;
+    apply_replay_rows_to_artifact(artifact, &rows, &file_summaries)
+}
+
+pub(crate) fn apply_replay_rows_to_artifact(
+    artifact: &mut LawProgramArtifact,
+    rows: &[ReplayEvalRow],
+    file_summaries: &[ReplayFileSummary],
+) -> Result<()> {
+    let row_map = rows
+        .iter()
+        .map(|row| ((row.input_index, row.target_ordinal, row.window_idx), row))
+        .collect::<BTreeMap<_, _>>();
+
+    for window in &mut artifact.windows {
+        let row = row_map
+            .get(&(window.input_index, window.target_ordinal, window.window_idx))
+            .ok_or_else(|| {
+                anyhow!(
+                    "missing replay row for input={} input_index={} window_idx={} target_ordinal={}",
+                    window.input,
+                    window.input_index,
+                    window.window_idx,
+                    window.target_ordinal
+                )
+            })?;
+        window.selected_payload_exact = row.replay_payload_exact;
+        window.selected_gain_exact =
+            window.default_payload_exact as i64 - row.replay_payload_exact as i64;
+    }
+
+    let mut file_summary_by_input = BTreeMap::<String, &ReplayFileSummary>::new();
+    for summary in file_summaries {
+        file_summary_by_input.insert(summary.input.clone(), summary);
+    }
+
+    for file in &mut artifact.files {
+        let summary = file_summary_by_input
+            .get(&file.input)
+            .copied()
+            .ok_or_else(|| anyhow!("missing replay file summary for {}", file.input))?;
+        file.selected_total_piecewise_payload_exact =
+            summary.replay_selected_total_piecewise_payload_exact;
+        file.target_window_count = summary.target_window_count;
+        file.closure_total_exact = summary
+            .replay_selected_total_piecewise_payload_exact
+            .saturating_add(file.closure_penalty_exact as i64);
+    }
+
+    let selected_target_window_payload_exact =
+        rows.iter().map(|row| row.replay_payload_exact).sum::<usize>();
+    let replay_selected_total_piecewise_payload_exact = file_summaries
+        .iter()
+        .map(|row| row.replay_selected_total_piecewise_payload_exact)
+        .sum::<i64>();
+
+    let mut improved_target_window_count = 0usize;
+    let mut equal_target_window_count = 0usize;
+    let mut worsened_target_window_count = 0usize;
+
+    for row in rows {
+        match row.delta_vs_searched_exact.cmp(&0) {
+            std::cmp::Ordering::Less => improved_target_window_count += 1,
+            std::cmp::Ordering::Equal => equal_target_window_count += 1,
+            std::cmp::Ordering::Greater => worsened_target_window_count += 1,
+        }
+    }
+
+    artifact.summary.selected_target_window_payload_exact = selected_target_window_payload_exact;
+    artifact.summary.delta_selected_target_window_payload_exact =
+        selected_target_window_payload_exact as i64
+            - artifact.summary.searched_target_window_payload_exact as i64;
+    artifact.summary.selected_total_piecewise_payload_exact =
+        replay_selected_total_piecewise_payload_exact;
+    artifact.summary.delta_selected_total_piecewise_payload_exact =
+        replay_selected_total_piecewise_payload_exact
+            - artifact.summary.searched_total_piecewise_payload_exact;
+    artifact.summary.improved_target_window_count = improved_target_window_count;
+    artifact.summary.equal_target_window_count = equal_target_window_count;
+    artifact.summary.worsened_target_window_count = worsened_target_window_count;
+    artifact.summary.closure_total_exact = replay_selected_total_piecewise_payload_exact
+        .saturating_add(artifact.summary.closure_penalty_exact as i64);
+
+    Ok(())
+}
+
 fn replay_rows_serial(
     cli_exe: &Path,
     artifact: &LawProgramArtifact,
@@ -429,4 +520,243 @@ fn eval_window_fixed(
     }
 
     parse_best_line(&output.stderr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_artifact() -> LawProgramArtifact {
+        LawProgramArtifact {
+            config: super::super::types::ReplayConfig {
+                recipe: "configs/tuned_validated.k8r".to_string(),
+                inputs: vec!["text/Genesis1.txt".to_string()],
+                max_ticks: 20,
+                window_bytes: 256,
+                step_bytes: 256,
+                max_windows: 2,
+                seed_from: 0,
+                seed_count: 64,
+                seed_step: 1,
+                recipe_seed: 1,
+                chunk_sweep: "32,64".to_string(),
+                chunk_search_objective: "raw".to_string(),
+                chunk_raw_slack: 1,
+                map_max_depth: 0,
+                map_depth_shift: 1,
+                boundary_band_sweep: "8,12".to_string(),
+                boundary_delta: 1,
+                field_margin_sweep: "4,8".to_string(),
+                newline_margin_add: 0,
+                space_to_newline_margin_add: 0,
+                newline_share_ppm_min: 0,
+                newline_override_budget: 0,
+                newline_demote_margin_sweep: "0,4".to_string(),
+                newline_demote_keep_ppm_min: 0,
+                newline_demote_keep_min: 0,
+                newline_only_from_spacelike: true,
+                merge_gap_bytes: 0,
+                allow_overlap_scout: false,
+                freeze_boundary_band: Some(12),
+                freeze_field_margin: Some(4),
+                freeze_newline_demote_margin: Some(0),
+                local_chunk_sweep: "32,64,96".to_string(),
+                local_chunk_search_objective: None,
+                local_chunk_raw_slack: None,
+                default_local_chunk_bytes_arg: Some(96),
+                tune_default_body: true,
+                default_body_chunk_sweep: Some("64,96".to_string()),
+                body_select_objective: "default-total".to_string(),
+                emit_body_scoreboard: false,
+                min_override_gain_exact: 1,
+                exact_subset_limit: 8,
+                global_law_id_arg: None,
+            },
+            summary: super::super::types::ProgramSummary {
+                recipe: "configs/tuned_validated.k8r".to_string(),
+                file_count: 1,
+                honest_file_count: 1,
+                union_law_count: 1,
+                target_global_law_id: "G1".to_string(),
+                target_global_law_path_hits: 1,
+                target_global_law_file_count: 1,
+                target_global_law_total_window_count: 2,
+                target_global_law_total_segment_count: 0,
+                target_global_law_total_covered_bytes: 512,
+                target_global_law_dominant_knob_signature: "sig".to_string(),
+                eval_boundary_band: 12,
+                eval_field_margin: 4,
+                eval_newline_demote_margin: 0,
+                eval_chunk_search_objective: "raw".to_string(),
+                eval_chunk_raw_slack: 1,
+                eval_chunk_candidates: "32,64".to_string(),
+                eval_chunk_candidate_count: 2,
+                default_local_chunk_bytes: 96,
+                default_local_chunk_window_wins: 2,
+                searched_total_piecewise_payload_exact: 1000,
+                projected_default_total_piecewise_payload_exact: 980,
+                delta_default_total_piecewise_payload_exact: -20,
+                projected_unpriced_best_mix_total_piecewise_payload_exact: 975,
+                delta_unpriced_best_mix_total_piecewise_payload_exact: -25,
+                selected_total_piecewise_payload_exact: 985,
+                delta_selected_total_piecewise_payload_exact: -15,
+                target_window_count: 2,
+                searched_target_window_payload_exact: 220,
+                default_target_window_payload_exact: 200,
+                best_mix_target_window_payload_exact: 195,
+                selected_target_window_payload_exact: 200,
+                delta_selected_target_window_payload_exact: -20,
+                override_path_mode: "delta".to_string(),
+                override_path_bytes_exact: 5,
+                selected_override_window_count: 1,
+                improved_target_window_count: 2,
+                equal_target_window_count: 0,
+                worsened_target_window_count: 0,
+                closure_override_count: 1,
+                closure_override_run_count: 1,
+                closure_max_override_run_length: 1,
+                closure_untouched_window_count: 1,
+                closure_override_density_ppm: 500_000,
+                closure_untouched_window_pct_ppm: 500_000,
+                closure_mode_penalty_exact: 0,
+                closure_penalty_exact: 106,
+                closure_total_exact: 1091,
+            },
+            files: vec![super::super::types::ProgramFile {
+                input: "text/Genesis1.txt".to_string(),
+                searched_total_piecewise_payload_exact: 1000,
+                projected_default_total_piecewise_payload_exact: 980,
+                projected_unpriced_best_mix_total_piecewise_payload_exact: 975,
+                selected_total_piecewise_payload_exact: 985,
+                target_window_count: 2,
+                override_path_mode: "delta".to_string(),
+                override_path_bytes_exact: 5,
+                selected_override_window_count: 1,
+                closure_override_count: 1,
+                closure_override_run_count: 1,
+                closure_max_override_run_length: 1,
+                closure_untouched_window_count: 1,
+                closure_override_density_ppm: 500_000,
+                closure_untouched_window_pct_ppm: 500_000,
+                closure_mode_penalty_exact: 0,
+                closure_penalty_exact: 106,
+                closure_total_exact: 1091,
+            }],
+            windows: vec![
+                super::super::types::ProgramWindow {
+                    input_index: 0,
+                    input: "text/Genesis1.txt".to_string(),
+                    window_idx: 0,
+                    target_ordinal: 0,
+                    start: 0,
+                    end: 256,
+                    span_bytes: 256,
+                    searched_payload_exact: 100,
+                    default_payload_exact: 90,
+                    best_payload_exact: 88,
+                    selected_payload_exact: 90,
+                    searched_chunk_bytes: 64,
+                    best_chunk_bytes: 96,
+                    selected_chunk_bytes: 96,
+                    selected_gain_exact: 0,
+                },
+                super::super::types::ProgramWindow {
+                    input_index: 0,
+                    input: "text/Genesis1.txt".to_string(),
+                    window_idx: 1,
+                    target_ordinal: 1,
+                    start: 256,
+                    end: 512,
+                    span_bytes: 256,
+                    searched_payload_exact: 120,
+                    default_payload_exact: 110,
+                    best_payload_exact: 105,
+                    selected_payload_exact: 110,
+                    searched_chunk_bytes: 64,
+                    best_chunk_bytes: 96,
+                    selected_chunk_bytes: 96,
+                    selected_gain_exact: 5,
+                },
+            ],
+            overrides: vec![super::super::types::ProgramOverride {
+                input_index: 0,
+                input: "text/Genesis1.txt".to_string(),
+                window_idx: 1,
+                target_ordinal: 1,
+                best_chunk_bytes: 96,
+                default_payload_exact: 110,
+                best_payload_exact: 105,
+                gain_exact: 5,
+            }],
+        }
+    }
+
+    #[test]
+    fn apply_replay_rows_to_artifact_updates_canonical_selected_totals() {
+        let mut artifact = fixture_artifact();
+        let rows = vec![
+            ReplayEvalRow {
+                input_index: 0,
+                input: "text/Genesis1.txt".to_string(),
+                window_idx: 0,
+                target_ordinal: 0,
+                start: 0,
+                end: 256,
+                selected_chunk_bytes: 96,
+                searched_payload_exact: 100,
+                artifact_selected_payload_exact: 90,
+                replay_payload_exact: 89,
+                delta_vs_artifact_exact: -1,
+                delta_vs_searched_exact: -11,
+                field_match_pct: 90.0,
+                collapse_90_flag: false,
+                newline_extinct_flag: false,
+                newline_floor_used: 0,
+            },
+            ReplayEvalRow {
+                input_index: 0,
+                input: "text/Genesis1.txt".to_string(),
+                window_idx: 1,
+                target_ordinal: 1,
+                start: 256,
+                end: 512,
+                selected_chunk_bytes: 96,
+                searched_payload_exact: 120,
+                artifact_selected_payload_exact: 110,
+                replay_payload_exact: 115,
+                delta_vs_artifact_exact: 5,
+                delta_vs_searched_exact: -5,
+                field_match_pct: 85.0,
+                collapse_90_flag: false,
+                newline_extinct_flag: false,
+                newline_floor_used: 0,
+            },
+        ];
+        let file_summaries = vec![ReplayFileSummary {
+            input: "text/Genesis1.txt".to_string(),
+            searched_total_piecewise_payload_exact: 1000,
+            artifact_selected_total_piecewise_payload_exact: 985,
+            replay_selected_total_piecewise_payload_exact: 989,
+            searched_target_window_payload_exact: 220,
+            artifact_selected_target_window_payload_exact: 200,
+            replay_target_window_payload_exact: 204,
+            override_path_bytes_exact: 5,
+            target_window_count: 2,
+            drift_exact: 4,
+            improved_vs_searched_count: 2,
+            equal_vs_searched_count: 0,
+            worsened_vs_searched_count: 0,
+        }];
+
+        apply_replay_rows_to_artifact(&mut artifact, &rows, &file_summaries).unwrap();
+
+        assert_eq!(artifact.windows[0].selected_payload_exact, 89);
+        assert_eq!(artifact.windows[1].selected_payload_exact, 115);
+        assert_eq!(artifact.summary.selected_target_window_payload_exact, 204);
+        assert_eq!(artifact.summary.selected_total_piecewise_payload_exact, 989);
+        assert_eq!(artifact.summary.delta_selected_total_piecewise_payload_exact, -11);
+        assert_eq!(artifact.summary.closure_total_exact, 1095);
+        assert_eq!(artifact.files[0].selected_total_piecewise_payload_exact, 989);
+        assert_eq!(artifact.files[0].closure_total_exact, 1095);
+    }
 }

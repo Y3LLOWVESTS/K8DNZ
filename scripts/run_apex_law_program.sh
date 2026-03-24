@@ -1,9 +1,14 @@
 set -euo pipefail
 
 MODE="${1:-quick}"
+: "${K8DNZ_REPLAY_JOBS:=4}"
+: "${K8DNZ_SURFACE_JOBS:=3}"
 
 cargo build -p k8dnz-cli --bin k8dnz-cli --bin apex_law_program --bin apex_law_program_audit
 cargo test -p k8dnz-cli --bin apex_law_program_audit
+
+LAW_BIN="target/debug/apex_law_program"
+AUDIT_BIN="target/debug/apex_law_program_audit"
 
 build_case() {
   local label="$1"
@@ -14,10 +19,10 @@ build_case() {
   local replay_report="/tmp/${label}_replay.txt"
 
   echo "== build_case ${label}: build =="
-  cargo run -p k8dnz-cli --bin apex_law_program -- build "$@" --out "$artifact" --out-report "$build_report"
+  "$LAW_BIN" build "$@" --out "$artifact" --out-report "$build_report"
 
   echo "== build_case ${label}: replay =="
-  cargo run -p k8dnz-cli --bin apex_law_program -- replay --artifact "$artifact" --compare-surfaces --out-report "$replay_report"
+  "$LAW_BIN" replay --artifact "$artifact" --compare-surfaces --out-report "$replay_report"
 
   echo "built_case=${label}"
   echo "artifact=${artifact}"
@@ -89,5 +94,5 @@ if [ "$MODE" = "full" ]; then
   )
 fi
 
-cargo run -p k8dnz-cli --bin apex_law_program_audit -- "${AUDIT_ARGS[@]}" > /tmp/apex_law_program_audit.txt
+"$AUDIT_BIN" "${AUDIT_ARGS[@]}" > /tmp/apex_law_program_audit.txt
 cat /tmp/apex_law_program_audit.txt
