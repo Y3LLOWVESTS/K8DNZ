@@ -1425,6 +1425,43 @@ fn print_summary(
             );
         }
     }
+
+    for run in runs {
+        let row = &run.report;
+        eprintln!(
+            "apextrace apex-map-punct-kind row: chunk_bytes={} boundary_band={} field_margin={} chunk_search_objective={} chunk_raw_slack={} field_total_payload_exact={} field_patch_bytes={} field_match_pct={:.6} field_balanced_accuracy_pct={:.6} field_macro_f1_pct={:.6} field_non_majority_macro_f1_pct={:.6} codec_recommendation={} frontier_recommendation={}",
+            row.chunk_bytes,
+            row.boundary_band,
+            row.field_margin,
+            row.chunk_search_objective,
+            row.chunk_raw_slack,
+            row.field_total_payload_exact,
+            row.field_patch_bytes,
+            row.field_match_pct,
+            row.field_balanced_accuracy_pct,
+            row.field_macro_f1_pct,
+            row.field_non_majority_macro_f1_pct,
+            recommended_codec.label,
+            recommended_frontier.label,
+        );
+    }
+
+    eprintln!(
+        "apextrace apex-map-punct-kind best-field: chunk_bytes={} boundary_band={} field_margin={} chunk_search_objective={} chunk_raw_slack={} field_total_payload_exact={} field_patch_bytes={} field_match_pct={:.6} field_balanced_accuracy_pct={:.6} field_macro_f1_pct={:.6} field_non_majority_macro_f1_pct={:.6} codec_recommendation={} frontier_recommendation={}",
+        best.chunk_bytes,
+        best.boundary_band,
+        best.field_margin,
+        best.chunk_search_objective,
+        best.chunk_raw_slack,
+        best.field_total_payload_exact,
+        best.field_patch_bytes,
+        best.field_match_pct,
+        best.field_balanced_accuracy_pct,
+        best.field_macro_f1_pct,
+        best.field_non_majority_macro_f1_pct,
+        recommended_codec.label,
+        recommended_frontier.label,
+    );
 }
 
 fn render_prediction_ascii(predicted: &[u8]) -> String {

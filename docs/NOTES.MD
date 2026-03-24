@@ -26141,3 +26141,1329 @@ And for repo continuity, the latest uploaded workspace snapshot is the March 21 
 
 
 ### END NOTE - MARCH 21 2026 - 18:10 CST
+
+
+
+### BEGIN NOTE - MARCH 22 2026 - 12:35 CST
+
+
+Below is a paste-ready note pack you can fold into `NOTES.MD`.
+
+The newest codebundle snapshot shows the repo has grown to 182 files and now includes the whitespace/class law surfaces plus the new punct-kind atlas / manifest / compare surfaces and their helper scripts, so the project has materially expanded its honest accounting and lane-analysis tooling this instance.  
+
+## Concise fold-in summary
+
+This instance converted a promising idea into a validated structure layer. We successfully compiled and exercised the new `apex-lane-law-local-profile` surface and proved that the dominant whitespace/class law is not just reusable across Genesis1 and Genesis2, but also locally improvable: the cross-file searched total piecewise payload was 4399 bytes, the projected best local mix reduced that to 4255 bytes, the gain was 144 bytes, and the dominant best local chunk was 96 bytes. That means the next serious whitespace/class move is not more law discovery, but a frozen dominant-law local-mix / override-charging experiment.  
+
+We also built and validated the punct-kind lane as a real supporting structure lane. The standalone `apex-map-punct-kind` run on Genesis1 showed that the best field configuration still loses to the trivial baseline on bytes (`baseline-pause` payload 63 vs best-field payload 124), so punct-kind is not a primary compression driver yet. But the new punct-kind atlas / manifest / compare surfaces showed something important: punct-kind is structurally stable, collapsing to a single reusable law (`P0` / `PG0`) across both Genesis1 and Genesis2, with tiny dictionary overhead and honest non-overlapping accounting.    
+
+The deepest conclusion remains the same as the doctrine already forming in the notes: the missing X is closed-form law-to-engine closure. Atlas/profile surfaces can discover empirical knob families, but the finished codec must regenerate the dominant law path from a low-dimensional cadence recipe family rather than paying for free local search window by window. This instance strengthened that doctrine because whitespace/class now looks like “dominant frozen body + sparse local interruptions,” while punct-kind looks like “small, stable supporting lane with payload still to shave.” 
+
+## What we completed in this instance
+
+First, repo health stayed strong. The punct-kind roundtrip test and the broader CLI/core test sweep completed successfully, so the new ApexTrace surfaces landed without breaking the basic determinism / roundtrip trust surfaces. The warnings are real but non-blocking. 
+
+Second, we got the whitespace/class local-profile microscope working and running end-to-end. That run established a precise next target: across Genesis1 and Genesis2 there are only 2 union laws, the target dominant global law is `G1`, it has 21 path hits and covers 5376 bytes, the searched total piecewise payload is 4399 bytes, and the projected best mix improves that to 4255 bytes for a 144-byte reduction. Within the target-law windows, chunk 96 is the dominant best local override, winning 13 windows and improving 18 of 21 windows; chunk 128 helps sometimes but less overall, while chunk 32 is actively harmful on total bytes despite looking better on some predictive-style metrics.   
+
+Third, we validated a crucial scientific warning: better local match-looking metrics do not automatically mean better compression. The local-profile output shows chunk 32 increasing some apparent predictive qualities while driving projected total piecewise payload all the way up to 4806, much worse than the searched baseline. That is an important anti-self-deception result, and it should stay prominent in the notes because it tells us to optimize byte-honest payload surfaces rather than pleasant-looking classifier metrics. 
+
+Fourth, we successfully built and ran the punct-kind lane pipeline. The base `apex-map-punct-kind` run on Genesis1 showed the best field config at `chunk_bytes=32`, `boundary_band=8`, `field_margin=4`, but the codec recommendation still remained `baseline-pause`: baseline total payload was 63 bytes, while best-field cost 124 bytes. That means punct-kind is not yet a standalone compression win. 
+
+Fifth, the punct-kind atlas results were excellent structurally. On Genesis1, the atlas found exactly one law, `P0`, with one segment covering all 12 windows, law path `P0` repeated throughout, and mean field payload about 29.17 bytes/window. On Genesis2, the same thing happened: one law, one segment, same knobs (`chunk_bytes=32`, `boundary_band=8`, `field_margin=4`), law path repeated, and mean field payload about 28.33 bytes/window. This is exactly what you want from a supporting lane: not big compression yet, but strong stability and no law explosion.   
+
+Sixth, the punct-kind manifests proved that honest accounting is already healthy even though payload is still fat. Genesis1 punct-kind manifest came out honest and non-overlapping with `distinct_law_count=1`, `local_compact_payload_bytes_exact=350`, `law_dictionary_bytes_exact=9`, `selected_path_mode=segment`, `selected_path_bytes_exact=13`, and total piecewise payload 391. Genesis2 was the same shape with local compact payload 340 and total piecewise payload 381. So punct-kind’s problem is clearly not dictionary/path overhead; it is local payload mass.  
+
+Seventh, the punct-kind compare run closed the loop. Across Genesis1 and Genesis2, punct-kind compare reported `file_count=2`, `honest_file_count=2`, `union_law_count=1`, shared dictionary bytes 9, separate total piecewise payload 772, shared total piecewise payload 763, and dictionary savings 9. The shared law family collapses cleanly to a single global law `PG0` with `boundary_band=8` and `field_margin=4`. So punct-kind is now a proven, tiny-law, cross-text-stable supporting lane. 
+
+## Exhaustive next steps
+
+The highest-priority next step is to return to whitespace/class and turn the projected local win into an honest frozen-law artifact. The local-profile result already told us what to try: default to the dominant `G1` replay law, treat chunk 96 as the dominant local body, then pay explicitly for sparse overrides where 128 or 64 beat it. The project now needs a surface that answers the real codec question: after charging the override path honestly, how much of the 144-byte projected win survives? That is the most important unresolved measurement in the entire repo right now. 
+
+That means the next code batch should be centered on a whitespace/class “local-mix freeze” experiment, not more broad law hunting. The likely target is a new command that freezes the replay-law tuple and evaluates a compact override encoding against the already-discovered dominant law family. Inference: this is the most justified next move because the current law-profile/local-profile surfaces have already shown that global law reuse is cheap and stable, while remaining bytes still live inside local compact payloads.  
+
+A good concrete order for the next instance is:
+
+1. Run or inspect the existing whitespace/class freeze family already present in the bundle: `apex-lane-law-freeze`, `apex-lane-law-split-freeze`, and especially `apex-lane-law-bridge-freeze`. Those scripts are already in the repo, so the surface area exists for testing whether dominant-body + sparse interruption handling is paying real bytes or not.  
+
+2. Add or refine a `local-mix-freeze` surface for whitespace/class. The command should:
+
+   * freeze the replay law tuple for `G1`
+   * choose a default local chunk, likely 96 first
+   * encode sparse per-window overrides honestly
+   * compare default-96-plus-overrides against searched-per-window best
+   * report total piecewise bytes, local compact bytes, override-path bytes, and delta versus searched baseline
+
+   This is the exact bridge from “discovery” to “codec closure,” because it answers whether the dominant-body hypothesis can be represented compactly. This is an inference from the local-profile results and current repo surfaces, but it is the strongest inference available from the evidence.  
+
+3. Compare three whitespace/class shapes honestly:
+
+   * pure searched per-window best
+   * pure frozen dominant law, no local overrides
+   * frozen dominant law + sparse local overrides
+   * optionally bridge-freeze / split-freeze forms for interruptions
+
+   The point is to learn whether the dominant structure is best described as:
+
+   * uniform frozen law,
+   * frozen law plus sparse chunk overrides,
+   * or frozen law plus sparse interruption segments.
+
+4. Keep punct-kind alive, but demote it from lead lane to supporting lane. Punct-kind no longer needs more discovery plumbing right away; it already has atlas, manifest, and compare, and those outputs showed one stable law across both Genesis files. The correct next punct-kind work is payload shaving only: local chunk-mix, split/bridge handling, or eventual joint-lane accounting with whitespace/class. More punct-kind law discovery would probably be low leverage right now because law explosion has already been falsified at this scale.   
+
+5. Preserve the doctrine that the endgame is still closed-form cadence law families, not a garden of bespoke local search artifacts. Atlas, manifest, compare, profile, freeze, split, bridge, and punct-kind are now doing the right scientific job: they are mapping the dominant body and the interruptions. But the final codec needs to regenerate those bodies from a lower-dimensional recipe family tied back to the engine’s orbit / alignment / lockstep / field language. That doctrine should stay at the top of the notes because it prevents the project from getting lost in ever-larger empirical reporting surfaces. 
+
+## Carry-over notes for the next instance
+
+### BEGIN NOTE — MARCH 22 2026 — carry-over pack
+
+# K8DNZ carry-over notes — March 22, 2026
+
+## 0) North-star doctrine
+
+**The missing X is still closed-form law-to-engine closure.**
+Atlas/profile/freeze surfaces are discovering empirical law families, but the final codec must be able to regenerate the dominant `law_path` from a low-dimensional cadence recipe family instead of paying for free local search window by window. The prototype shape remains: **dominant frozen body + sparse interruptions**. This instance strengthened that doctrine rather than weakening it. 
+
+## 1) Repo state at handoff
+
+Latest bundle snapshot shows a materially expanded ApexTrace workspace with whitespace/class atlas / manifest / compare / law-profile / freeze / split-freeze / bridge-freeze / local-profile surfaces, plus punct-kind atlas / manifest / compare and their helper scripts. Repo snapshot is 182 files.  
+
+Important helper scripts now present in the repo include:
+
+* `run_apextrace_law_local_profile.sh`
+* `run_apextrace_law_freeze.sh`
+* `run_apextrace_law_split_freeze.sh`
+* `run_apextrace_law_bridge_freeze.sh`
+* `run_apextrace_punct_kind_atlas.sh`
+* `run_apextrace_punct_kind_manifest.sh`
+* `run_apextrace_punct_kind_manifest_compare.sh`  
+
+## 2) What we accomplished in this instance
+
+### 2.1 Repo health and tests stayed good
+
+The punct-kind roundtrip test and broader CLI/core test sweep passed. Warnings exist, but the trust surfaces still held. 
+
+### 2.2 We validated the whitespace/class dominant-law local-mix story
+
+`apex-lane-law-local-profile` ran successfully on Genesis1 + Genesis2 and produced the strongest actionable result of the instance:
+
+* `union_law_count=2`
+* target dominant law = `G1`
+* `target_global_law_path_hits=21`
+* `target_global_law_total_covered_bytes=5376`
+* searched total piecewise payload = `4399`
+* projected best-mix total piecewise payload = `4255`
+* improvement = `-144`
+* dominant best local chunk = `96`
+* dominant best chunk count = `13`
+* improved target windows = `19`, equal target windows = `2`, worsened target windows = `0` 
+
+Candidate-level read:
+
+* `chunk_bytes=96` was the best overall local candidate:
+
+  * `best_for_window_count=13`
+  * `improved_window_count=18`
+  * `worsened_window_count=3`
+* `chunk_bytes=128` helped some windows but was weaker overall
+* `chunk_bytes=64` was the searched baseline
+* `chunk_bytes=32` was actively bad on honest bytes and pushed projected total piecewise payload to `4806`  
+
+This is one of the most important anti-self-deception findings so far:
+**better predictive-looking metrics are not the same thing as better compression.**
+
+### 2.3 We validated punct-kind as a supporting lane
+
+Base `apex-map-punct-kind` result on Genesis1:
+
+* best field knobs: `chunk_bytes=32`, `boundary_band=8`, `field_margin=4`
+* best-field payload = `124`
+* baseline-pause payload = `63`
+* codec recommendation stayed `baseline-pause`
+* frontier recommendation stayed `best-field` 
+
+Interpretation:
+punct-kind is not yet a standalone codec win, but it may still be useful structurally.
+
+### 2.4 Punct-kind atlas is stable and tiny-law
+
+Genesis1 punct-kind atlas:
+
+* `distinct_law_count=1`
+* `segment_count=1`
+* law path = `P0` repeated across all 12 windows
+* law `P0`:
+
+  * `boundary_band=8`
+  * `field_margin=4`
+  * `window_count=12`
+  * `covered_bytes=3072`
+  * mean field payload ≈ `29.166667` bytes/window 
+
+Genesis2 punct-kind atlas:
+
+* `distinct_law_count=1`
+* `segment_count=1`
+* law path = `P0` repeated across all 12 windows
+* same dominant knobs:
+
+  * `boundary_band=8`
+  * `field_margin=4`
+  * mean field payload ≈ `28.333333` bytes/window 
+
+Interpretation:
+punct-kind is not exploding into many laws. That is an excellent structural result.
+
+### 2.5 Punct-kind manifests showed honest accounting and where the bytes really are
+
+Genesis1 punct-kind manifest:
+
+* `honest_non_overlapping=true`
+* `distinct_law_count=1`
+* `local_compact_payload_bytes_exact=350`
+* `shared_header_bytes_exact=19`
+* `law_dictionary_bytes_exact=9`
+* `selected_path_mode=segment`
+* `selected_path_bytes_exact=13`
+* `total_piecewise_payload_exact=391` 
+
+Genesis2 punct-kind manifest:
+
+* `honest_non_overlapping=true`
+* `distinct_law_count=1`
+* `local_compact_payload_bytes_exact=340`
+* `shared_header_bytes_exact=19`
+* `law_dictionary_bytes_exact=9`
+* `selected_path_mode=segment`
+* `selected_path_bytes_exact=13`
+* `total_piecewise_payload_exact=381` 
+
+Interpretation:
+punct-kind’s problem is **not** law dictionary bloat or path bloat.
+Its problem is **local compact payload mass**.
+
+### 2.6 Punct-kind compare closed the loop across files
+
+Cross-file punct-kind compare reported:
+
+* `file_count=2`
+* `honest_file_count=2`
+* `union_law_count=1`
+* shared dictionary bytes = `9`
+* separate total piecewise payload = `772`
+* shared total piecewise payload = `763`
+* dictionary savings = `9`
+* shared global law = `PG0`, with `boundary_band=8`, `field_margin=4` 
+
+Interpretation:
+punct-kind is now a proven **small-law, cross-text-stable supporting lane**.
+
+## 3) Scientific conclusions at handoff
+
+### 3.1 Whitespace/class remains the lead compression lane
+
+The most important bytes are still in whitespace/class local payloads under the dominant law family. That is where the next serious project win is most likely. 
+
+### 3.2 The dominant whitespace/class law is stable enough to freeze
+
+`G1` now looks less like “one more exploratory regime” and more like the actual body of the codec. The project should increasingly treat it as a frozen dominant regime with sparse local interruptions/overrides rather than continue searching as if every window were equally unconstrained. 
+
+### 3.3 Punct-kind is validated, but supporting
+
+Punct-kind is not useless. Quite the opposite:
+it is stable, honest, tiny-law, and cross-file reusable.
+But it is not the primary compression driver at this stage.
+Its next role is likely:
+
+* supporting lane in joint accounting
+* minority-structure microscope
+* future payload shaving target
+  not lead-lane replacement for whitespace/class.  
+
+### 3.4 The project now has a clear hierarchy of problems
+
+1. **Whitespace/class dominant-law closure**
+2. **Honest local-mix / override charging**
+3. **Sparse interruption modeling (split / bridge / override maps)**
+4. **Joint multi-lane accounting**
+5. **Closed-form law-to-engine closure**
+
+That ordering is much clearer now than it was before this instance.
+
+## 4) Exact next steps for the next instance
+
+### Step 1 — inspect / run whitespace/class freeze-family surfaces
+
+Start with the existing commands/scripts already in the repo:
+
+* `apex-lane-law-freeze`
+* `apex-lane-law-split-freeze`
+* `apex-lane-law-bridge-freeze`
+
+Why:
+the local-profile result already says the structure is “dominant law + sparse local deviations.” The freeze/split/bridge family is the natural next truth surface for testing that shape honestly. 
+
+### Step 2 — build or refine a true whitespace/class local-mix-freeze command
+
+Target behavior:
+
+* freeze replay law tuple for `G1`
+* default to local chunk `96` first
+* allow sparse overrides to `128` or `64`
+* charge override map/path bytes honestly
+* compare against searched-per-window best
+* report:
+
+  * total piecewise payload exact
+  * local compact payload bytes exact
+  * override path bytes exact
+  * savings vs searched baseline
+  * savings vs pure frozen law
+
+This is the single most important unresolved measurement right now. It is the bridge from empirical atlas discovery to actual codec closure. Inference grounded by the local-profile results. 
+
+### Step 3 — explicitly compare these whitespace/class shapes
+
+You want a scoreboard for:
+
+* searched per-window best
+* pure frozen `G1`
+* frozen `G1` + sparse local chunk overrides
+* split-freeze
+* bridge-freeze
+
+The winner of that scoreboard should become the current best “dominant body” hypothesis.
+
+### Step 4 — only touch punct-kind again if it is payload-focused
+
+Do **not** spend the next batch on more punct-kind atlas/compare plumbing. That part is already good enough.
+
+Future punct-kind work should be one of:
+
+* punct-kind local chunk mix
+* punct-kind split / bridge
+* joint whitespace/class + punct-kind accounting
+* residual collapse analysis from lane combination
+
+### Step 5 — keep doctrine honest
+
+Do not let the project become an ever-larger reporting framework detached from the cadence engine. Every successful discovery surface should eventually be translated back into:
+
+* orbit law family
+* alignment/window family
+* lockstep pitch family
+* field-wave family
+
+That translation is still the final objective.
+
+## 5) Suggested opening prompt for the next instance
+
+“Continue K8DNZ from the March 22 carry-over pack. Focus on whitespace/class closure, not new lane exploration. The key unresolved question is whether frozen dominant law `G1` plus sparse local overrides can preserve most of the 144-byte projected gain from local-profile after honest override charging. Inspect and use the existing freeze / split-freeze / bridge-freeze surfaces, then build the next highest-impact artifact around local-mix freeze accounting.”
+
+### END NOTE — MARCH 22 2026
+
+The short version is: this instance was not just maintenance. It materially improved the project map. We now know much more clearly where the next real bytes are, and we also know which tempting directions are lower leverage right now. Whitespace/class dominant-law closure is the lead path; punct-kind is validated but supporting.  
+
+
+
+### END NOTE - MARCH 22 2026 - 12:35 CST
+
+
+
+
+### BEGIN NOTE - MARCH 22 2026 - 14:10 CST
+
+Below is a carry-over pack built to be pasted into the next instance and used as the starting doctrine.
+
+---
+
+# K8DNZ carry-over notes — March 22, 2026
+
+## 0) Executive snapshot
+
+K8DNZ has advanced from “interesting atlas findings” into the first genuinely promising **dominant-body codec shape**.
+
+The most important new fact is no longer just that `G1` exists or that it is knob-stable. The new fact is that **freezing the dominant body and allowing only sparse honest interruptions already beats the searched baseline in exact piecewise bytes**.
+
+Across `Genesis1 + Genesis2`, the new `apex-lane-law-local-mix-freeze` run showed:
+
+* searched total piecewise payload exact = `4399`
+* projected default frozen local body at chunk `96` = `4302`
+* projected unpriced best mix = `4255`
+* honest selected mix = `4275`
+* net gain vs searched = `-124`
+* default local chunk = `96`
+* only `2` union laws
+* target global law `G1`
+* `21` target path hits
+* `5` total target segments 
+
+On `Genesis1` alone, the forced-`96` run also held up:
+
+* searched total piecewise payload exact = `2200`
+* selected total piecewise payload exact = `2126`
+* net gain = `-74`
+* default local chunk = `96`
+* projected default = `2128`
+* projected unpriced best mix = `2119` 
+
+This is the first strong evidence that the project’s current best path is:
+
+**dominant frozen shared law + sparse priced local interruptions + no unnecessary per-window search at replay time**
+
+That is the bridge from “search-assisted evidence” to “codec object.” Grok’s latest analysis agreed with that read, calling the Law Program MVP the highest-leverage one-hour move and rating the plan `9.7/10`. 
+
+---
+
+## 1) The doctrine that must stay at the top
+
+The top doctrine remains:
+
+**The missing X is closed-form law-to-engine closure.**
+
+ApexTrace and the atlas stack have already shown that the whitespace/class surface contains a dominant shared structure. The next success condition is not “discover more windows” or “hunt more knobs.” The next success condition is to turn the discovered dominant body into a **first-class deterministic artifact** that can be replayed without per-window search. That is the exact closure step the project has been approaching. 
+
+The practical form of that doctrine is now:
+
+* dominant replay law = `G1`
+* dominant default local chunk = `96`
+* allow only sparse overrides that survive honest path charging
+* make this replayable directly
+* score it honestly against searched, frozen, bridge, and split surfaces
+* only then begin deeper back-solving into cadence-family recipe laws
+
+Do not let the next instance drift away from this center of gravity.
+
+---
+
+## 2) What we accomplished in this instance
+
+### 2.1 The local-mix-freeze surface is now real
+
+The repo now contains the new local-mix freeze command and runner, and the command compiles and passes targeted tests. This means the project has a real experimental surface for testing dominant-body plus sparse-interruption structure, not just notes about it. The attached project analysis explicitly recognizes this as consistent with the original invariant-preserving architecture. 
+
+### 2.2 The project crossed a real byte-evidence threshold
+
+This is the deepest accomplishment of the session.
+
+Previously, the project had good evidence for:
+
+* a tiny law family
+* a cheap dictionary
+* knob-stable dominant law reuse
+* local payload as the real cost center
+
+All of that was necessary, but not sufficient.
+
+Now the project also has evidence that:
+
+* a frozen dominant body at chunk `96` is already better than searched
+* sparse interruptions improve it further
+* honest accounting does **not** erase the win 
+
+That is a much more mature state than “the atlas looks promising.”
+
+### 2.3 The dominant-body shape is now numerically concrete
+
+The current best shape is no longer abstract. It has real numbers:
+
+For `Genesis1 + Genesis2`:
+
+* frozen body at `96` beats searched by `97`
+* selected sparse override mix beats searched by `124` 
+
+For `Genesis1`:
+
+* forced `96` beats searched by `74` 
+
+That means the doctrine candidate is not hypothetical. It is already partially validated.
+
+### 2.4 The local payload mountain remains the real mountain
+
+Older notes already established that dictionary/path overhead is cheap and the real bytes live in local compact payload. That conclusion still stands and is strengthened by the latest runs. The project should continue to treat local compact payload reduction under the dominant law family as the main problem. 
+
+### 2.5 The architecture is still faithful to the blueprint and invariants
+
+Grok’s latest analysis correctly confirmed that none of this pivot violates the core geometric/deterministic doctrine:
+
+* fixed-point turns
+* no floats/π in core math
+* deterministic FREE_ORBIT → alignment → LOCKSTEP → emission
+* recipe+seed stability
+* lane reversibility
+* exact tests still matter
+* the proposed Law Program MVP is downstream of the engine, not a change to the engine itself 
+
+This is important. The project is not drifting away from the original vision. It is getting more precise about where the win actually lives.
+
+---
+
+## 3) The most important scientific conclusions right now
+
+### 3.1 The law family is small and real
+
+The cross-file surface still points to only `2` union laws, with `G1` dominant. That remains one of the strongest signs that the piecewise law approach is not random overfitting but actual reusable structure. 
+
+### 3.2 G1 is the real center of gravity
+
+This is no longer debatable in the current data.
+
+`G1` dominates the path and keeps winning under the local-mix freeze surface. The project should stop behaving as though the most likely next gain is broad law diversification. The most likely next gain is still better exploitation of `G1`.
+
+### 3.3 Chunk `96` is now the strongest current body candidate
+
+This is crucial.
+
+The local-mix runs showed that chunk `96` is the best current default body candidate for the dominant law family. It beats the searched baseline both cross-file and on `Genesis1`. That makes `96` the current doctrine body, not just another point in a sweep.
+
+### 3.4 Sparse interruptions are the right shape
+
+The selected mix is not winning because everything is chaotic. It is winning because the body is stable and only a few interruptions are worth paying for. That is exactly the project shape you have been orbiting conceptually: a dominant frozen regime plus sparse corrections.
+
+### 3.5 Honest accounting remains sacred
+
+This must remain explicit in the notes.
+
+Anything that looks better only because it is undercharged or overlaps dishonestly is scouting, not progress. The current work matters because the selected mix is already winning **after** honest charging, which is why this session actually moved the project forward.
+
+---
+
+## 4) What remains unresolved
+
+### 4.1 The project still has not completed the law-to-codec closure step
+
+Even though the latest numbers are strong, the project still does **not** yet have the decisive artifact that says:
+
+* here is the dominant law program
+* here is the override path
+* here is the direct replay
+* here is the exact same outcome without local search
+
+That is still the missing step.
+
+### 4.2 The current win is still expressed through an evaluation surface, not a codec artifact
+
+This matters a lot.
+
+Right now the project can show that a selected local mix wins. But it still has to convert that into a **portable deterministic object**. Until then, it is still closer to research output than final codec architecture.
+
+### 4.3 Cross-file confidence is good but still narrow
+
+Current evidence is based on `Genesis1` and `Genesis2`. That is enough to justify the direction, but not enough to declare broad corpus stability. Once more chapter files exist, the current dominant-body hypothesis should be revalidated immediately. 
+
+### 4.4 The deeper cadence-family back-solve remains future work
+
+The project has not yet solved the deepest dream step:
+
+derive the dominant body directly from a low-dimensional cadence-family law set rather than from the current discovery/evaluation funnel.
+
+That remains Phase 5, not the immediate next step. The immediate next step is to freeze and replay the discovered body.
+
+---
+
+## 5) The one-hour plan that must become the next-instance plan
+
+If only one hour were available, the correct move would be:
+
+**Build the Law Program MVP.**
+
+That means:
+
+* freeze dominant replay law `G1`
+* freeze default local chunk `96`
+* encode the sparse override windows and override choices
+* make that artifact directly replayable
+* score it against searched/frozen/bridge/split surfaces
+* require deterministic replay without rerunning local search
+
+This is now the next-instance plan, not just an interesting scenario. Grok explicitly agreed that this is the highest-leverage move possible at the current state and that it directly attacks the missing closure step. 
+
+---
+
+## 6) Exact next-instance priorities
+
+### Priority 1 — build the Law Program MVP artifact
+
+The next instance should start here immediately.
+
+The artifact should minimally contain:
+
+* target global law id: `G1`
+* dominant replay-law signature
+* dominant search-law signature if needed for provenance
+* default local chunk bytes: `96`
+* selected override windows
+* override chunk choice per selected window
+* honest override-path bytes
+* any needed coverage/segment metadata for deterministic replay
+
+This should be minimal and deterministic, not ornamental.
+
+### Priority 2 — add a direct replay/eval surface for the law program
+
+The next command should answer:
+
+“If I replay this law program directly, with no local search, what total piecewise payload do I get?”
+
+The answer should be compared against:
+
+* searched baseline
+* frozen `G1`
+* local-mix selected surface
+* bridge-freeze
+* split-freeze
+
+This is the real scoreboard the project now needs. 
+
+### Priority 3 — verify exact determinism of the law program
+
+Run the law-program replay twice and assert:
+
+* identical artifact bytes
+* identical override window set
+* identical merged segments
+* identical totals
+
+This is non-negotiable because deterministic identity is one of the core trust surfaces. The attached analysis explicitly calls this out as a required edge-case validation. 
+
+### Priority 4 — preserve the minority-class floor and extinction guards
+
+The next instance must explicitly verify:
+
+* `field_pred_collapse_90_flag=false`
+* newline recall never zero
+* sparse override selection does not accidentally extinguish minority behavior
+
+That guardrail stays in place even if the body win looks great. 
+
+### Priority 5 — compress the override path harder
+
+The latest analysis makes it clear that the override path is already small, which is precisely why it is now attractive to harden and compress:
+
+* delta-encode target ordinals
+* encode override symbols compactly
+* look for run/group structure if neighboring overrides share type
+
+Do not do this before the Law Program MVP exists. Do it immediately after.
+
+### Priority 6 — only then begin deeper back-solve work
+
+Only after the law program exists and replays correctly should the next instance ask the deeper question:
+
+“What cadence-family law would generate this dominant body directly?”
+
+That is the real holy grail, but it is not the next move. The next move is artifact closure.
+
+---
+
+## 7) Recommended next-instance execution order
+
+The next instance should proceed in this order:
+
+1. Treat `G1 + default chunk 96 + sparse overrides` as the current winning body.
+2. Inspect the existing `apex_lane_law_local_mix_freeze` output/report code and build the smallest deterministic Law Program artifact from it.
+3. Add a direct replay/eval command for that artifact.
+4. Run the new direct replay twice and verify byte-identical artifacts/results.
+5. Compare direct replay against searched, frozen, bridge, and split surfaces.
+6. If replay stays near the current selected total, promote the law program to the new project center of gravity.
+7. Only then optimize override-path encoding.
+8. Only after that consider deeper cadence-family back-solving.
+
+The next instance should **not** begin by broadening atlas work, inventing more surfaces, or jumping to later lanes.
+
+---
+
+## 8) Success criteria for the next instance
+
+The next instance should count as a real success if it achieves most of the following:
+
+* a concrete Law Program MVP artifact exists
+* replay requires no local candidate search
+* artifact generation is deterministic
+* replay totals are close to current selected mix totals
+* honest charging is preserved
+* minority-class floors remain safe
+* scoreboard comparison against searched/frozen/bridge/split is real
+
+The strongest single success signal would be:
+
+**Law Program replay total stays effectively near `4275` on `Genesis1+Genesis2` and near `2126` on `Genesis1`, without rerunning local search.**
+
+If that happens, the project will have crossed from “promising evaluation result” into the first real deterministic codec-body artifact.
+
+---
+
+## 9) Failure modes to watch
+
+The next instance should watch for these failure modes:
+
+* the artifact quietly depends on hidden search state
+* override windows are not stable across reruns
+* replay totals drift materially above selected totals
+* path encoding cost was undercounted
+* bridge/split still beat the law program decisively
+* sparse overrides explode when window/step settings change
+* minority-class behavior collapses under the frozen body
+
+Any of those would mean the project is not yet at closure and needs another round of refinement.
+
+---
+
+## 10) Project odds and current posture
+
+Current honest read:
+
+* odds that the current architectural direction is correct: high
+* odds that a meaningful reusable dominant-body codec artifact is now within reach: materially higher than before
+* odds that the final tiny self-contained artifact dream is already solved: still not proven
+* odds that this session increased the project’s success probability: yes, meaningfully
+
+Why? Because the project now has evidence that the winning shape is **structured and sparse**, not chaotic and search-hungry. That is a major shift in scientific posture.
+
+---
+
+## 11) Working interpretation of K8DNZ after this session
+
+The best current interpretation of K8DNZ is now:
+
+A deterministic, lane-aware, piecewise local-law codec prototype in which the engine generates structured law surfaces, a tiny reusable law family dominates cross-file structure, one dominant body (`G1`) can be frozen with default local chunk `96`, sparse honest interruptions improve it further, and the next essential step is to freeze that body into a replayable law-program artifact that removes per-window search from the critical path.
+
+That is a far stronger and more codec-like posture than where the project stood before the local-mix-freeze run.
+
+---
+
+## 12) User workflow/preferences to preserve in the next instance
+
+Keep these operational preferences in mind:
+
+* provide **full paste-ready files**, not partial snippets, when changing code
+* include the **file path** for every file to be replaced
+* do **not** use Python in code examples for this project
+* use bash for run commands
+* when giving bash commands, **omit `cd` into the working directory** because the user is already there
+* prioritize deterministic MVPs first
+* keep the project modular and aligned with the original geometry/invariants
+
+---
+
+## 13) One-paragraph handoff summary
+
+K8DNZ has now reached its strongest state yet on the whitespace/class dominant-law path. The new `apex-lane-law-local-mix-freeze` surface compiled, tested cleanly, and produced the first honest numeric evidence that a frozen dominant body plus sparse priced overrides beats the searched baseline: `4399 → 4275` across `Genesis1+Genesis2`, and `2200 → 2126` on `Genesis1`, with default local chunk `96` emerging as the best current body. This materially strengthens the doctrine that the missing step is no longer more atlas exploration but **closed-form law-to-engine closure through a Law Program MVP**: a deterministic artifact encoding `G1`, default chunk `96`, and sparse overrides, replayable with zero per-window search and scored honestly against searched/frozen/bridge/split baselines. The next instance should start there immediately.
+
+---
+
+
+
+
+### END NOTE - MARCH 22 2026 - 14:10 CST
+
+
+
+### BEGIN NOTE - MARCH 22 2026 - 23:45 CST
+
+
+I folded the latest progress into the doctrine.
+
+The big update is that the law-program branch is now doing honest artifact build + replay with exact determinism, but the charged selector changed the shape of the winner. The earlier March 22 result said the promising closure shape was `G1 + chunk 96 + sparse overrides`, with `4275` on `Genesis1+Genesis2`, `2126` on `Genesis1`, exact replay, and only a few overrides.  
+
+The newest charged run improved the raw artifact totals again to `4263` on `Genesis1+Genesis2` and `2123` on `Genesis1`, still with `drift_exact=0`, but it did it by switching the winner to `default_local_chunk_bytes=32` with `override_path_mode=runs` and overriding nearly everything. On `g12` that means `21` overrides across `21` target windows; on `g1` it means `11` overrides across `11` target windows. That is a real byte win, but it is less elegant and less “closed-form” than the earlier sparse `96` body.  
+
+So the project has advanced in two different senses at once. As a codec artifact, it got stronger. As a proof of X, it got more ambiguous. The repo is no longer blocked on compile or replay trust; the warning wall is mostly noise, and the run completed end-to-end. 
+
+## What this instance accomplished
+
+This instance was productive because it converted the March 22 doctrine into a real test of the next layer. The repo already had the discovery ladder — atlas, manifest, compare, law-profile, freeze, split-freeze, bridge-freeze — and this session pushed beyond that into a law-program artifact branch that can now build, replay, and compare deterministically.  
+
+The most important truth it exposed is this:
+
+**the project can now buy a few extra bytes by encoding a dense override schedule cheaply.**
+
+That means the next unresolved question is no longer “can we freeze and replay a law artifact?” It can. The unresolved question is whether the true solution to X is still the original sparse bridge-freeze shape, or whether the current surface wants a different interruption language than simple sparse chunk overrides. The current logs say the dense run-coded schedule wins bytes, but that does not automatically mean it is the right closed-form explanation.  
+
+## How close are we to solving X
+
+My honest estimate:
+
+For **artifact closure on whitespace/class**, about **70%**.
+
+For **true X**, meaning closed-form law-to-engine closure in the doctrinal sense, about **50%**.
+
+Why: the notes still define X as replacing empirical per-window search history with a low-dimensional cadence-family law that regenerates the dominant law path and leaves only sparse interruptions. That doctrine remains the top one and should not be diluted.  
+
+The latest run gets you closer because it proved the artifact layer is real. It gets you only halfway to X because the winner is currently “dense overrides packed efficiently,” not yet “dominant body regenerated by a tiny law family with sparse interruptions.” 
+
+## The one-hour plan that gives the highest chance of success
+
+I cannot honestly guarantee final project success in one hour. What I can do is define the one-hour plan that has the highest chance of either solving X on the current surface or proving exactly why X is not yet expressible there.
+
+### Success condition for the hour
+
+Success is **not** “get the absolute best byte score.”
+
+Success is:
+
+**determine whether X on whitespace/class is best expressed as**
+
+1. dominant body + sparse chunk overrides, or
+2. dominant body + sparse bridge segments,
+
+and freeze the winning form into the law-program artifact as the closure object.
+
+If the hour ends with that answer locked down, it is a profound success, even if the byte total is not the final endgame.
+
+### Minute 0–10: split the objective in two
+
+Add two explicit scoring modes inside the law-program branch:
+
+* `codec-best`: minimize final bytes, even if the schedule gets dense
+* `closure-best`: penalize override density, override count, and schedule complexity hard enough that the winner must stay “dominant body + sparse interruptions”
+
+This is the most important next step because the latest run proved the current charged selector will happily sacrifice closure elegance for a few bytes. That is useful for codec engineering, but it muddies X. The next hour must separate those two objectives cleanly. The current evidence for the sparse `96` body and the newer dense `32+runs` body is exactly why this split is now mandatory.  
+
+### Minute 10–20: define closure metrics, not just byte metrics
+
+Print these in the report:
+
+* override density
+* override count
+* path mode
+* path bytes
+* body chunk
+* contiguous interruption count
+* percentage of target windows left untouched by the default body
+
+The current logs already show that these structure metrics matter: `96` won the earlier sparse doctrine because it needed only a few overrides, while `32` won the charged run because `runs` encoded a dense schedule cheaply.  
+
+### Minute 20–35: run a closure-vs-codec matrix
+
+Run the same `g12` and `g1` benchmarks under both modes for candidate bodies `32,64,96,128`.
+
+Decision rule:
+
+* If `closure-best` still picks `96` or another sparse body and stays within about `10–15` bytes of `codec-best`, then the project has likely found the right closure object on this surface.
+* If `closure-best` loses badly unless it becomes dense, then chunk overrides are probably not the right interruption language for X.
+
+This is the shortest path to truth because it turns the current ambiguity into a measured fork instead of intuition.
+
+### Minute 35–50: promote bridge segments if chunk overrides fail closure
+
+If chunk overrides under `closure-best` cannot stay sparse without falling apart, immediately shift the interruption language upward one level:
+
+**dominant body + sparse bridge segments**
+
+That move is already foreshadowed in the notes. The bridge-freeze surfaces exist for exactly this reason: the final explanation may be about interruption segments rather than per-window chunk choices. The notes explicitly say the prototype shape remains dominant frozen body plus sparse interruptions, not dense local-search artifacts.  
+
+### Minute 50–60: freeze the doctrine decision
+
+At the end of the hour, write one short doctrine note that says one of these two things:
+
+* “X on whitespace/class is currently best expressed as dominant body + sparse chunk overrides.”
+* “X on whitespace/class is currently best expressed as dominant body + sparse bridge segments.”
+
+That single sentence is the hour’s victory condition, because once that is known, the next work becomes refinement instead of wandering.
+
+## How to solve X
+
+Solve X by forcing the project to stop confusing two different things:
+
+* **packed empirical history**
+* **closed-form regenerable structure**
+
+The latest charged selector proved that packed empirical history can now win a few bytes. That is not the same thing as closed-form law-to-engine closure. X is solved only when the dominant law path is regenerated by a small cadence-family rule and the remaining exceptions are sparse enough to look like true interruptions, not like a compressed per-window search transcript.  
+
+In practical repo terms, X is solved when all of these are true at once:
+
+* replay stays exact
+* the winner remains stable across reruns
+* the winner is a dominant body, not override-everything
+* the interruption language is sparse and cheap
+* the artifact beats searched honestly
+* the chosen form still aligns with the original cadence doctrine rather than becoming an arbitrary packer
+
+Right now you already have the first two and part of the fifth. The missing pieces are the third and fourth.  
+
+## Comprehensive carry-over notes for the next instance
+
+### North star
+
+The missing X is still **closed-form law-to-engine closure**. The repo must not drift into thinking that ever-cheaper empirical schedule packing is the same as solving X. The final codec still needs a low-dimensional cadence-family explanation for the dominant body, with sparse interruptions on top.  
+
+### Current repo posture
+
+K8DNZ now has a mature ApexTrace stack with discovery, manifest, compare, dominant-law profiling, and multiple freeze surfaces. The law-program branch is now a real deterministic artifact surface above that stack rather than just a note or hypothetical. 
+
+### What was true before this instance
+
+Before this session, the strongest result was the March 22 sparse-dominant-body doctrine:
+
+* `G1` as dominant replay law
+* `96` as dominant default local chunk
+* `4275` on `Genesis1+Genesis2`
+* `2126` on `Genesis1`
+* exact replay
+* sparse overrides that survived honest charging
+
+This was the first real bridge from discovery to codec object.  
+
+### What this instance added
+
+This instance proved that the law-program artifact can be pushed further with charged override selection and path-mode choice. The new branch found a lower raw total:
+
+* `4263` on `Genesis1+Genesis2`
+* `2123` on `Genesis1`
+* exact replay in both cases
+* `override_path_mode=runs`
+
+But it did so by choosing `chunk 32` and overriding almost every target window.  
+
+### The new central tension
+
+The project now has two competing winners:
+
+* **Sparse doctrine winner:** `G1 + chunk 96 + sparse overrides`
+* **Charged byte winner:** `G1 + chunk 32 + dense run-coded overrides`
+
+The first one looks more like X.
+The second one looks more like a stronger short-term codec artifact.
+
+The next instance must not blur those together.
+
+### Current best interpretation
+
+The latest result does **not** falsify the project. It sharpens it.
+
+The right interpretation is:
+
+K8DNZ has now crossed from “can we build a deterministic closure artifact?” to “what interruption language best expresses closure on whitespace/class?” The answer is not settled yet. Chunk overrides may still be right, but only if the closure-best objective forces sparsity. If not, bridge segments are the next likely abstraction.
+
+### What remains unfinished
+
+Whitespace/class is still the lead lane, but it is not the whole codec. Punctuation remains the next supporting lane, and later the case lane matters too. The notes are still right that the budget gate is the judge and residual collapse is still the mountain. 
+
+### What the next instance should do first
+
+Start exactly here:
+
+1. Split the law-program objective into `codec-best` and `closure-best`.
+2. Add closure metrics to the report.
+3. Re-run `g12` and `g1` across `32,64,96,128`.
+4. If chunk overrides fail closure-best, immediately test bridge-segment interruption artifacts.
+5. Freeze the winning interruption language into doctrine.
+
+### What the next instance must not forget
+
+Do not let the project slide into “dense schedule packer = solved.” The notes already warn against turning the discovery layer into the whole codec. The law-program branch is valuable because it makes that distinction measurable. Keep using it that way. 
+
+### Opening prompt for the next instance
+
+Continue K8DNZ from the March 23 carry-over pack. Focus on whitespace/class closure, not new lane exploration. The key unresolved question is whether X on the current surface is best expressed as dominant body plus sparse chunk overrides or dominant body plus sparse bridge segments. Split the law-program objective into `codec-best` vs `closure-best`, run the `g12` and `g1` matrices, and freeze the winning interruption language into doctrine.
+
+If you want, next I can turn this into a repo-ready `NOTES.MD` replacement text block.
+
+
+
+### END NOTE - MARCH 22 2026 - 23:45 CST
+
+
+
+### BEGIN NOTE - MARCH 23 2026 - 14:15 CST
+
+I cannot honestly guarantee final project success in one hour.
+
+What I can do is define the one-hour plan that has the highest chance of forcing the decisive answer the project needs **right now**, and that answer is no longer vague. The repo has already proved that the law-program artifact layer is real, deterministic, and replay-closed. The current measured fork is now explicit: on `Genesis1`, codec-best is `2123` with body `64` and `11` overrides, while closure-best is `2124` with body `96` and only `2` overrides; both replay exactly with `drift_exact=0`, `collapse_90_failures=0`, and `newline_extinct_failures=0`. 
+
+That means the highest-value one-hour mission is not “find a few more bytes.” It is to **freeze the winning explanation of X on whitespace/class**. Your own current notes already define that correctly: the hour succeeds if it determines whether X is best expressed as `dominant body + sparse chunk overrides` or `dominant body + sparse bridge segments`, and then freezes that doctrine into the artifact branch. 
+
+## My strongest recommendation
+
+Treat the next hour as a **doctrinal lock hour**, not a broad search hour.
+
+The repo is already scaffolded for this. The current codebundle shows the project now has a modular `apex_law_program/` subdir, an `apex_law_program_audit` binary, and a dedicated runner script, so you do not need to touch the core cadence engine to force this decision.
+
+## Where the project stands right now
+
+The most important truth is this:
+
+The project can now buy a real byte win by encoding a dense override schedule cheaply, but that does **not** yet prove X in the doctrinal sense. Your latest notes state this explicitly, and the measurements confirm it. The artifact branch is no longer blocked on compile, replay trust, or determinism; the remaining ambiguity is whether the right explanation language is sparse chunk overrides or bridge-style interruption segments.
+
+The current measured state is:
+
+* `codec-best` on `Genesis1`: `selected_total_piecewise_payload_exact=2123`, body `64`, `override_count=11`, replay exact. 
+* `closure-best` on `Genesis1`: `selected_total_piecewise_payload_exact=2124`, body `96`, `override_count=2`, `projected_default_total_piecewise_payload_exact=2128`, replay exact. 
+* The sparse explanation is only **1 byte worse** than codec-best, which is the strongest signal yet that the doctrinally cleaner explanation may also be the right one. 
+
+So the project is not “done,” but it is no longer searching blindly. The notes from both the internal carry-over and the external analysis converge on the same point: the remaining work is now **narrower and more measurable** than it has ever been.
+
+## How close we are to solving X
+
+My honest estimate, updated from the current frontier:
+
+* **Artifact closure on whitespace/class:** about **80%**
+* **True X on whitespace/class in the doctrinal sense:** about **60%**
+* **Broader K8DNZ final success:** about **35–40%**
+
+Why:
+
+The artifact layer is real and stable now. That is a major closure step. The remaining gap is not “does the branch work?” but “is the winning object truly a low-dimensional dominant law with sparse interruptions, or just efficient packing of empirical schedule history?” Your notes themselves frame X exactly that way.
+
+## Odds of 90%+ compression without cheating
+
+My current estimate for achieving **90% or more exact compression without a dictionary/corpus cheat** is **about 25%**.
+
+That is higher than “remote,” but lower than “likely.”
+
+Why not higher: the project has not yet shown whole-codec residual collapse. What it has shown is the first honest deterministic frontier where codec-best and closure-best can be separated and measured. That is a major prerequisite, but not the final proof of 90%+ exact compression. The older notes are still right that residual collapse remains the mountain and the exact budget gate is still the judge.
+
+What would raise that number sharply is this specific result: if closure-best continues to pick a sparse body like `96` on both `g1` and `g12`, stays within roughly `10–15` bytes of codec-best, and remains replay-exact, then the odds go up a lot because the project will have found a reusable explanation language rather than a one-off packed schedule. That decision rule is already written into the current notes and I agree with it.
+
+---
+
+# Carry-over notes for the next instance
+
+## Executive snapshot
+
+K8DNZ has reached the first real deterministic artifact frontier.
+
+The law-program branch now builds, replays, and compares honestly. The core engine invariants remain intact: unequal counter-rotating free orbit, deterministic lockstep on the frustum, fixed-point turns, deterministic emission, exact recipe+seed reproducibility, and no float/π dependence in core logic. The law-program artifact sits downstream of that engine and does not violate the core doctrine.
+
+The project’s current center of gravity is no longer broad knob hunting. It is the measured fork between:
+
+* **codec-best** = dense packed interruption schedule
+* **closure-best** = dominant body plus sparse interruptions
+
+On `Genesis1`, codec-best is now `2123` at body `64` with `11` overrides and replay exact; closure-best is `2124` at body `96` with `2` overrides and replay exact. That 1-byte gap is the most important fact in the repo right now. 
+
+## What this instance accomplished
+
+This instance turned the March doctrine into a real artifact branch.
+
+The repo now has a modular law-program implementation and audit surface under `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/`, plus `apex_law_program.rs`, `apex_law_program_audit.rs`, and dedicated scripts. This means the project now has a real place to express doctrine without destabilizing the core engine.
+
+The critical accomplishments are:
+
+* refactored the monolithic law-program surface into maintainable modules
+* fixed subprocess wiring bugs so build/manifest/local-mix/replay all run
+* produced the first honest `build → inspect → replay` law-program artifact flow
+* exposed the first measurable doctrinal fork in the project
+* proved exact replay closure for both codec-best and closure-best on `Genesis1`
+
+## The current measured frontier
+
+These are the facts the next instance must treat as ground truth:
+
+* `searched_total_piecewise_payload_exact=2200` on `Genesis1`. 
+* `default-total` chooses body `96`, gives `selected_total_piecewise_payload_exact=2124`, `projected_default_total_piecewise_payload_exact=2128`, `override_count=2`, `override_path_mode=delta`, `override_path_bytes_exact=4`. 
+* The body scoreboard for the same run shows:
+
+  * `32 → 2123`, but default total `2400`, overrides `11`
+  * `64 → 2123`, default total `2200`, overrides `11`
+  * `96 → 2124`, default total `2128`, overrides `2`
+  * `128 → 2127`, default total `2164`, overrides `8` 
+* `g1_selected` replay is exact: `replay_selected_total_piecewise_payload_exact=2123`, `drift_exact=0`, `collapse_90_failures=0`, `newline_extinct_failures=0`. 
+* `g1_default` replay is also exact, and the sparse body remains stable under replay. 
+
+Interpretation:
+
+The repo has now proved that a dense schedule can be cheaply encoded, but it has also proved that the sparse `96` explanation is almost equally good in byte terms and far better in closure terms. That is why the current notes say the project advanced as a codec artifact while becoming more ambiguous as a proof of X.
+
+## The one-hour plan with the highest chance of success
+
+I cannot guarantee final project completion in one hour. I can define the one-hour plan that gives the highest chance of answering the decisive question and locking the project onto the right rail.
+
+### Hour victory condition
+
+At the end of the hour, the project must be able to say one sentence with evidence:
+
+* “X on whitespace/class is currently best expressed as dominant body + sparse chunk overrides.”
+* or
+* “X on whitespace/class is currently best expressed as dominant body + sparse bridge segments.”
+
+That is already the correct success condition in the current notes and should remain the doctrinal target.
+
+### Minute 0–10: make `codec-best` and `closure-best` first-class
+
+Do not leave this as an implicit comparator accident.
+
+Inside the law-program branch, make the two objectives explicit in build/report/audit:
+
+* `codec-best`: minimize final bytes, even if interruption schedule gets dense
+* `closure-best`: penalize override density, override count, and schedule complexity hard enough that the winner must remain dominant-body-first
+
+This is the most important immediate move because the current charged selector can buy bytes by sacrificing closure elegance. The notes already say this split is now mandatory.
+
+### Minute 10–20: print the missing structure metrics
+
+The report surface must print, at minimum:
+
+* override density
+* override count
+* path mode
+* path bytes
+* body chunk
+* contiguous interruption count
+* untouched-window percentage
+
+These metrics are already called out in the current notes as the next truth surface, because byte totals alone are no longer enough to judge X.
+
+### Minute 20–35: run the closure-vs-codec matrix on both `g1` and `g12`
+
+Do not stop at `g1`.
+
+Run both objectives across bodies `32,64,96,128` on `g1` and `g12`.
+
+Decision rule:
+
+* if `closure-best` still lands on `96` or another sparse body and stays within about `10–15` bytes of codec-best, treat that as the winning closure object on this surface
+* if `closure-best` collapses unless it becomes dense, chunk overrides are probably the wrong interruption language for X
+
+That rule is already written into the current notes and remains the shortest path to truth.
+
+### Minute 35–50: if sparse chunk closure fails, promote bridge segments immediately
+
+Do not spend the hour trying to rescue dense chunk schedules into elegance.
+
+If closure-best cannot stay sparse without losing too much, pivot upward one level:
+
+**dominant body + sparse bridge segments**
+
+This move is not speculative. The notes explicitly say bridge-freeze exists because the true explanation may live at the interruption-segment level rather than the per-window chunk-choice level.
+
+### Minute 50–60: freeze doctrine and stop wandering
+
+Write one short doctrine sentence into the notes and treat it as current truth.
+
+The hour counts as a success if the project exits with the winning interruption language frozen and measured, even if the final codec is not yet done. That is the correct one-hour definition of success. 
+
+## Exact next-instance objective order
+
+1. Keep the current law-program branch as the center of gravity. Do not go back to dibit or broad random search. The repo is already scaffolded correctly for this phase.
+
+2. Add explicit closure metrics and closure-best reporting in:
+
+   * `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/build.rs`
+   * `report.rs`
+   * `types.rs`
+   * `src/bin/apex_law_program_audit.rs`
+   * `scripts/run_apex_law_program.sh`
+
+3. Run the `g1` and `g12` matrix under both objectives.
+
+4. Replay the winning codec-best artifact and the winning closure-best artifact.
+
+5. If closure-best remains sparse and near-tied, freeze sparse chunk overrides as current X on whitespace/class.
+
+6. If closure-best becomes dense or unstable, promote bridge segments and treat that as the next doctrine.
+
+7. Only after that decision is frozen should the project extend the same worldview into punctuation and then multi-lane closure. The older notes remain right that punctuation is the next major lane and residual collapse remains the mountain.
+
+## What the next instance must not forget
+
+* The cadence engine itself is not the blocker. The blocker is explanation language at the artifact layer. 
+* The current frontier is real, measured, replay-closed, and only 1 byte apart between codec-best and closure-best on `g1`. 
+* Dense schedule packing is a real codec win, but not automatically proof of X.
+* The sparse `96` body is the most important object in the repo right now. 
+* Do not blur codec-best and closure-best back together after finally separating them.
+* No dictionary cheat, no Genesis-specific baked-in hacks, no drift from determinism or reversibility. The older carry-over constraints remain in force.
+
+## Confidence model to carry forward
+
+* Broad project viability: **high**
+* Chance whitespace/class admits a real low-dimensional closure object: **good and rising**
+* Chance 90%+ exact compression without cheating: **about 25% today**
+* Chance of major progress if the next hour freezes the interruption language correctly: **very high**
+
+## Bottom-line carry-forward statement
+
+K8DNZ is now at the first honest fork where it can distinguish **packed empirical history** from **closed-form regenerable structure**. The law-program artifact layer is real. The next instance should treat the project as being in a doctrinal lock phase: explicitly separate codec-best from closure-best, run the `g1/g12` matrix, and decide whether X on whitespace/class is best expressed as sparse chunk overrides or sparse bridge segments. If that decision is frozen with replay-exact evidence, the project exits the hour with the single most important unknown reduced to a measured truth.
+
+
+### END NOTE - MARCH 23 2026 - 14:15 CST
+
+
+### BEGIN NOTE - MARCH 23 2026 - 21:05 CST
+
+Below is a carry-over pack you can paste into the next instance.
+
+## K8DNZ carry-over notes — March 24, 2026
+
+### 0) Executive snapshot
+
+This instance produced the clearest truth signal so far on whitespace/class closure.
+
+The law-program artifact for `Genesis1 + Genesis2` replays exactly at `4266`, with `drift_exact=0`, `collapse_90_failures=0`, and `newline_extinct_failures=0`. The artifact uses `target_global_law_id=G1`, `artifact_override_path_mode=mixed(delta,runs)`, and `artifact_override_path_bytes_exact=10`. That means the artifact layer is now real, stable, and honest on this surface.  
+
+The most important new fact is the compare-surfaces scoreboard. On the same `g12` target, the measured totals are:
+
+* searched = `4399`
+* current law-program artifact = `4266`
+* pure frozen surface = `4258`
+* split-freeze surface = `4289`
+* bridge-freeze surface = `4245`
+
+So the current best measured surface in this scoreboard is now **bridge-freeze at 4245**, not the current law-program artifact at 4266. That is the most important project update from this run. 
+
+That means the repo has now moved beyond “can we build and replay a deterministic artifact?” The answer to that is yes. The live question is now: **what interruption language best expresses closure on whitespace/class?** The current scoreboard says the strongest candidate is no longer dense or mixed chunk overrides; it is now leaning toward **dominant body + sparse bridge segments**. This is exactly the fork the prior notes predicted would matter.  
+
+### 1) North-star doctrine
+
+The doctrine at the top must remain unchanged:
+
+**The missing X is closed-form law-to-engine closure.** The final codec still needs a low-dimensional cadence-family rule that regenerates the dominant law path without depending on per-window search history. Bridge-freeze was already named in the notes as the prototype shape: dominant core plus sparse interruptions. The new scoreboard strengthens that doctrine instead of weakening it. 
+
+In practical repo terms, X is solved only when all of these are true at once: replay stays exact, the winner stays stable across reruns, the winner is a dominant body rather than override-everything, the interruption language is sparse and cheap, the artifact beats searched honestly, and the chosen form still aligns with cadence doctrine rather than becoming an arbitrary packer. Right now the project clearly has exact replay and honest improvement over searched; the missing question is whether the winning interruption language is sparse chunk overrides or bridge segments.  
+
+### 2) What this instance actually accomplished
+
+First, it confirmed that the replay plumbing is now healthy. The replay command ran all 21 windows with visible progress, completed cleanly, and finished the compare-surfaces pass with stage markers and measured timings. That means the major operational blockers from earlier in the session were real and are now largely under control. 
+
+Second, it proved that the current law-program artifact is exact under replay on `Genesis1 + Genesis2`. The artifact total and replay total are both `4266`, with zero drift and zero collapse/newline failures. That is not speculative anymore; it is now measured ground truth.  
+
+Third, it produced a trustworthy surface comparison between four shapes on the same target:
+
+* searched per-window best
+* current law-program artifact
+* pure frozen law
+* split-freeze
+* bridge-freeze
+
+And that comparison now says bridge-freeze is the best measured total at `4245`. 
+
+Fourth, it narrowed the runtime bottleneck. Base replay is no longer the serious problem. The heavy part is the surface comparison commands themselves. Freeze and split each took about 53 seconds, and bridge took about 54 seconds, with total compare-surfaces time about 108 seconds under `K8DNZ_SURFACE_JOBS=2`. So the next performance work, if any, belongs inside the freeze/split/bridge commands, not the law-program replay wrapper. 
+
+### 3) The current measured frontier
+
+Treat these numbers as current truth:
+
+For the `g12_codec_selected_total` artifact:
+
+* `target_global_law_id=G1`
+* `artifact_selected_total_piecewise_payload_exact=4266`
+* `replay_selected_total_piecewise_payload_exact=4266`
+* `drift_exact=0`
+* `collapse_90_failures=0`
+* `newline_extinct_failures=0`
+* `artifact_override_path_mode=mixed(delta,runs)`
+* `artifact_override_path_bytes_exact=10`  
+
+Scoreboard:
+
+* searched = `4399`
+* artifact = `4266`
+* frozen = `4258`
+* split = `4289`
+* bridge = `4245` 
+
+Per-file totals:
+
+* `Genesis1`: searched `2200`, artifact/replay `2124`, override path bytes `4`, target windows `11`, improved windows `11`, equal `0`, worsened `0`
+* `Genesis2`: searched `2199`, artifact/replay `2142`, override path bytes `6`, target windows `10`, improved windows `8`, equal `2`, worsened `0` 
+
+Interpretation:
+
+* the current artifact beats searched by `133` bytes
+* pure frozen law beats the artifact by `8` bytes
+* bridge-freeze beats the artifact by `21` bytes
+* split-freeze loses to the artifact by `23` bytes 
+
+That is the strongest single measurement in the repo right now.
+
+### 4) What changed conceptually
+
+Before this run, the central ambiguity was mostly between:
+
+* sparse doctrine winner: dominant body + sparse chunk overrides
+* codec-oriented winner: denser packed interruption schedule
+
+The new compare-surfaces result changes the shape of that ambiguity. The current strongest measured hypothesis is now:
+
+**dominant frozen body + sparse bridge interruptions**
+
+That does not prove X is solved. But it does mean the project is now more justified in promoting bridge-freeze from “interesting alternative” to “lead interruption language candidate” on whitespace/class. The notes already anticipated exactly this possibility: if closure-best chunk overrides cannot express the truth sparsely enough, move the interruption language up one level to bridge segments. The new scoreboard is the first hard evidence pointing in that direction.  
+
+### 5) What remains unfinished
+
+The decisive question is still not “can the artifact replay?” It can. The decisive question is now whether the winning closure object is:
+
+* dominant body + sparse chunk overrides
+* or dominant body + sparse bridge segments
+
+The scoreboard currently favors bridge segments, but the law-program branch has not yet been rebuilt around bridge as the first-class closure object. That is the next real gap.  
+
+The broader project also still has its older unresolved items:
+
+* newline control remains imperfect and still needs stronger predictor behavior
+* cross-lane factorization beyond whitespace/class is not yet the main event
+* residual still needs to end up in a sparse-first form rather than byte-level brute residue
+* the final codec still cannot depend on carrying an empirical search transcript as its essence 
+
+So the project is stronger, but not “done.” It has crossed a major threshold: the structure question is now sharply posed.
+
+### 6) Highest-priority next steps for the next instance
+
+The next instance should not wander. Start here, in this order.
+
+#### A. Promote bridge-freeze to lead truth surface
+
+The next instance should treat bridge-freeze as the current lead hypothesis for whitespace/class closure, because it is the best measured surface total in the new scoreboard at `4245`. The first task is to inspect exactly why bridge wins: which interruptions it bridges, how many bridges it uses, and whether those bridges remain sparse and cadence-plausible. 
+
+#### B. Build the bridge-first law-program branch
+
+The law-program artifact branch currently expresses chunk-override selection logic. The next highest-impact artifact is a bridge-first or bridge-aware law-program build path, where the default body stays dominant and interruptions are encoded as sparse bridge segments rather than mostly as per-window chunk choices. This would turn the current best measured surface into the next real deterministic artifact object. This is now the most justified code direction.  
+
+#### C. Re-run the doctrine split explicitly under bridge interpretation
+
+The earlier notes said to split objective truth into codec-best vs closure-best. That still matters, but the new scoreboard suggests that the bridge surface may already be the more closure-faithful winner. The next instance should therefore compare:
+
+* current artifact
+* pure frozen
+* bridge-freeze
+* any bridge-aware artifact build
+  under the same honest accounting, and then freeze one sentence of doctrine about the winning interruption language.  
+
+#### D. Keep punct-kind demoted
+
+Do not pivot back into broad punct-kind or dibit work. The notes were already clear that whitespace/class closure is the lead lane and punct-kind is supporting. That remains correct after this run.  
+
+#### E. Only do hygiene if it serves speed or clarity
+
+The warning flood is large, but it is not the main blocker. The only hygiene that matters immediately is anything that improves run speed, report truthfulness, or visibility. Cosmetic warning cleanup can wait unless it directly helps iteration. The terminal output shows the runs are succeeding despite the warnings. 
+
+### 7) Practical interpretation of the current bottlenecks
+
+The replay-wrapper bottleneck is mostly solved.
+
+What remains slow:
+
+* `apex-lane-law-freeze`
+* `apex-lane-law-split-freeze`
+* `apex-lane-law-bridge-freeze`
+
+These are now the heavy surfaces. Under the current instrumented run:
+
+* freeze took about `52963 ms`
+* split took about `53993 ms`
+* bridge took about `53881 ms`
+* total compare-surfaces time was about `107874 ms` with two surface jobs in parallel 
+
+So if future speed work is needed, it should target the freeze-family subcommands themselves. But scientifically, the stronger next move is not speed first; it is to capitalize on the fact that bridge is now winning.
+
+### 8) Current best working interpretation
+
+The best current interpretation of K8DNZ is now:
+
+A deterministic, lane-aware closure prototype where the cadence engine and ApexTrace discovery surfaces have identified a dominant reusable whitespace/class body around `G1`, and the strongest current evidence says that the right interruption language may be sparse bridge segments rather than chunk-by-chunk local override packing. The artifact layer is real and replay-stable; the next frontier is to turn the winning bridge-like structure into the primary closure object rather than leaving it as a side scoreboard.  
+
+### 9) Suggested opening prompt for the next instance
+
+Use this as the starting prompt:
+
+“Continue K8DNZ from the March 24 carry-over pack. The current truth surface is that `g12_codec_selected_total` replays exactly at `4266`, but compare-surfaces shows `bridge_freeze=4245`, `frozen=4258`, `artifact=4266`, `split=4289`, with target global law `G1`. Treat bridge-freeze as the current lead closure hypothesis for whitespace/class. Focus on turning the winning bridge-style interruption language into the next deterministic artifact surface, not on new lane exploration.”
+
+### 10) One-sentence doctrine freeze from this instance
+
+**Current best doctrine: on whitespace/class, the project now appears closer to “dominant frozen body + sparse bridge interruptions” than to “dominant body + chunk-override packing,” and that is the next closure object to test directly.**  
+
+If you want, in the next turn I’ll turn these into an even tighter “paste-into-next-instance” block with no commentary around it.
+
+
+### END NOTE - MARCH 23 2026 - 21:05 CST

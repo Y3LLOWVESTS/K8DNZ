@@ -6,8 +6,13 @@ mod apex_lane_law_freeze;
 mod apex_lane_law_split_freeze;
 mod apex_lane_law_bridge_freeze;
 mod apex_lane_law_profile;
+mod apex_lane_law_local_profile;
+mod apex_lane_law_local_mix_freeze;
 mod apex_lane_manifest;
 mod apex_lane_manifest_compare;
+mod apex_punct_kind_atlas;
+mod apex_punct_kind_manifest;
+mod apex_punct_kind_manifest_compare;
 mod apex_lane_table;
 mod apex_map_case;
 mod apex_map_case_anchor;
@@ -26,6 +31,7 @@ mod symbol_metrics;
 mod ws_lane;
 mod ws_lane_render;
 mod ws_lane_types;
+
 
 #[derive(Args, Debug)]
 pub struct ApexTraceArgs {
@@ -54,10 +60,20 @@ pub enum ApexTraceCmd {
     ApexLaneLawBridgeFreeze(ApexLaneLawBridgeFreezeArgs),
     #[command(name = "apex-lane-law-profile")]
     ApexLaneLawProfile(ApexLaneLawProfileArgs),
+    #[command(name = "apex-lane-law-local-profile")]
+    ApexLaneLawLocalProfile(ApexLaneLawLocalProfileArgs),
+    #[command(name = "apex-lane-law-local-mix-freeze")]
+    ApexLaneLawLocalMixFreeze(ApexLaneLawLocalMixFreezeArgs),
     #[command(name = "apex-lane-manifest")]
     ApexLaneManifest(ApexLaneManifestArgs),
     #[command(name = "apex-lane-manifest-compare")]
     ApexLaneManifestCompare(ApexLaneManifestCompareArgs),
+    #[command(name = "apex-punct-kind-atlas")]
+    ApexPunctKindAtlas(ApexPunctKindAtlasArgs),
+    #[command(name = "apex-punct-kind-manifest")]
+    ApexPunctKindManifest(ApexPunctKindManifestArgs),
+    #[command(name = "apex-punct-kind-manifest-compare")]
+    ApexPunctKindManifestCompare(ApexPunctKindManifestCompareArgs),
     #[command(name = "apex-lane-table")]
     ApexLaneTable(ApexLaneTableArgs),
     #[command(name = "apex-map-lane")]
@@ -493,7 +509,6 @@ pub struct ApexLaneLawFreezeArgs {
     pub out: Option<String>,
 }
 
-
 #[derive(Args, Debug)]
 pub struct ApexLaneLawSplitFreezeArgs {
     #[arg(long, default_value = "configs/tuned_validated.k8r")]
@@ -575,7 +590,6 @@ pub struct ApexLaneLawSplitFreezeArgs {
     #[arg(long)]
     pub out: Option<String>,
 }
-
 
 #[derive(Args, Debug)]
 pub struct ApexLaneLawBridgeFreezeArgs {
@@ -666,6 +680,180 @@ pub struct ApexLaneLawBridgeFreezeArgs {
     #[arg(long)]
     pub out: Option<String>,
 }
+
+#[derive(Args, Debug)]
+pub struct ApexLaneLawLocalProfileArgs {
+    #[arg(long, default_value = "configs/tuned_validated.k8r")]
+    pub recipe: String,
+    #[arg(long = "in", required = true, num_args = 1..)]
+    pub inputs: Vec<String>,
+    #[arg(long, default_value_t = 20_000_000)]
+    pub max_ticks: u64,
+    #[arg(long, default_value_t = 256)]
+    pub window_bytes: usize,
+    #[arg(long, default_value_t = 256)]
+    pub step_bytes: usize,
+    #[arg(long, default_value_t = 12)]
+    pub max_windows: usize,
+    #[arg(long, default_value_t = 0)]
+    pub seed_from: u64,
+    #[arg(long, default_value_t = 64)]
+    pub seed_count: u64,
+    #[arg(long, default_value_t = 1)]
+    pub seed_step: u64,
+    #[arg(long, default_value_t = 1)]
+    pub recipe_seed: u64,
+    #[arg(long, default_value = "32,64")]
+    pub chunk_sweep: String,
+    #[arg(long, value_enum, default_value_t = ChunkSearchObjective::Raw)]
+    pub chunk_search_objective: ChunkSearchObjective,
+    #[arg(long, default_value_t = 1)]
+    pub chunk_raw_slack: u64,
+    #[arg(long, default_value_t = 0)]
+    pub map_max_depth: u8,
+    #[arg(long, default_value_t = 1)]
+    pub map_depth_shift: u8,
+    #[arg(long, default_value = "8,12")]
+    pub boundary_band_sweep: String,
+    #[arg(long, default_value_t = 1)]
+    pub boundary_delta: usize,
+    #[arg(long, default_value = "4,8")]
+    pub field_margin_sweep: String,
+    #[arg(long, default_value_t = 96)]
+    pub newline_margin_add: u64,
+    #[arg(long, default_value_t = 64)]
+    pub space_to_newline_margin_add: u64,
+    #[arg(long, default_value_t = 550_000)]
+    pub newline_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub newline_override_budget: usize,
+    #[arg(long, default_value = "0,4")]
+    pub newline_demote_margin_sweep: String,
+    #[arg(long, default_value_t = 150_000)]
+    pub newline_demote_keep_ppm_min: u32,
+    #[arg(long, default_value_t = 1)]
+    pub newline_demote_keep_min: usize,
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
+    pub newline_only_from_spacelike: bool,
+    #[arg(long, default_value_t = false)]
+    pub field_from_global: bool,
+    #[arg(long, default_value_t = 0)]
+    pub merge_gap_bytes: usize,
+    #[arg(long, default_value_t = false)]
+    pub allow_overlap_scout: bool,
+    #[arg(long)]
+    pub freeze_boundary_band: Option<usize>,
+    #[arg(long)]
+    pub freeze_field_margin: Option<u64>,
+    #[arg(long)]
+    pub freeze_newline_demote_margin: Option<u64>,
+    #[arg(long)]
+    pub local_chunk_sweep: Option<String>,
+    #[arg(long, value_enum)]
+    pub local_chunk_search_objective: Option<ChunkSearchObjective>,
+    #[arg(long)]
+    pub local_chunk_raw_slack: Option<u64>,
+    #[arg(long)]
+    pub global_law_id: Option<String>,
+    #[arg(long, default_value_t = 8)]
+    pub top_rows: usize,
+    #[arg(long, default_value_t = false)]
+    pub keep_temp_dir: bool,
+    #[arg(long, value_enum, default_value_t = RenderFormat::Txt)]
+    pub format: RenderFormat,
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
+
+#[derive(Args, Debug)]
+pub struct ApexLaneLawLocalMixFreezeArgs {
+    #[arg(long, default_value = "configs/tuned_validated.k8r")]
+    pub recipe: String,
+    #[arg(long = "in", required = true, num_args = 1..)]
+    pub inputs: Vec<String>,
+    #[arg(long, default_value_t = 20_000_000)]
+    pub max_ticks: u64,
+    #[arg(long, default_value_t = 256)]
+    pub window_bytes: usize,
+    #[arg(long, default_value_t = 256)]
+    pub step_bytes: usize,
+    #[arg(long, default_value_t = 12)]
+    pub max_windows: usize,
+    #[arg(long, default_value_t = 0)]
+    pub seed_from: u64,
+    #[arg(long, default_value_t = 64)]
+    pub seed_count: u64,
+    #[arg(long, default_value_t = 1)]
+    pub seed_step: u64,
+    #[arg(long, default_value_t = 1)]
+    pub recipe_seed: u64,
+    #[arg(long, default_value = "32,64")]
+    pub chunk_sweep: String,
+    #[arg(long, value_enum, default_value_t = ChunkSearchObjective::Raw)]
+    pub chunk_search_objective: ChunkSearchObjective,
+    #[arg(long, default_value_t = 1)]
+    pub chunk_raw_slack: u64,
+    #[arg(long, default_value_t = 0)]
+    pub map_max_depth: u8,
+    #[arg(long, default_value_t = 1)]
+    pub map_depth_shift: u8,
+    #[arg(long, default_value = "8,12")]
+    pub boundary_band_sweep: String,
+    #[arg(long, default_value_t = 1)]
+    pub boundary_delta: usize,
+    #[arg(long, default_value = "4,8")]
+    pub field_margin_sweep: String,
+    #[arg(long, default_value_t = 96)]
+    pub newline_margin_add: u64,
+    #[arg(long, default_value_t = 64)]
+    pub space_to_newline_margin_add: u64,
+    #[arg(long, default_value_t = 550_000)]
+    pub newline_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub newline_override_budget: usize,
+    #[arg(long, default_value = "0,4")]
+    pub newline_demote_margin_sweep: String,
+    #[arg(long, default_value_t = 150_000)]
+    pub newline_demote_keep_ppm_min: u32,
+    #[arg(long, default_value_t = 1)]
+    pub newline_demote_keep_min: usize,
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
+    pub newline_only_from_spacelike: bool,
+    #[arg(long, default_value_t = 0)]
+    pub merge_gap_bytes: usize,
+    #[arg(long, default_value_t = false)]
+    pub allow_overlap_scout: bool,
+    #[arg(long)]
+    pub freeze_boundary_band: Option<usize>,
+    #[arg(long)]
+    pub freeze_field_margin: Option<u64>,
+    #[arg(long)]
+    pub freeze_newline_demote_margin: Option<u64>,
+    #[arg(long, default_value = "32,64,96,128")]
+    pub local_chunk_sweep: String,
+    #[arg(long, value_enum)]
+    pub local_chunk_search_objective: Option<ChunkSearchObjective>,
+    #[arg(long)]
+    pub local_chunk_raw_slack: Option<u64>,
+    #[arg(long)]
+    pub default_local_chunk_bytes: Option<usize>,
+    #[arg(long, default_value_t = 1)]
+    pub min_override_gain_exact: usize,
+    #[arg(long, default_value_t = 20)]
+    pub exact_subset_limit: usize,
+    #[arg(long)]
+    pub global_law_id: Option<String>,
+    #[arg(long, default_value_t = 12)]
+    pub top_rows: usize,
+    #[arg(long, default_value_t = false)]
+    pub keep_temp_dir: bool,
+    #[arg(long, value_enum, default_value_t = RenderFormat::Txt)]
+    pub format: RenderFormat,
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
 
 #[derive(Args, Debug)]
 pub struct ApexLaneLawProfileArgs {
@@ -859,6 +1047,180 @@ pub struct ApexLaneManifestCompareArgs {
     pub newline_only_from_spacelike: bool,
     #[arg(long, default_value_t = false)]
     pub field_from_global: bool,
+    #[arg(long, default_value_t = 0)]
+    pub merge_gap_bytes: usize,
+    #[arg(long, default_value_t = false)]
+    pub allow_overlap_scout: bool,
+    #[arg(long, value_enum, default_value_t = RenderFormat::Txt)]
+    pub format: RenderFormat,
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ApexPunctKindAtlasArgs {
+    #[arg(long = "in")]
+    pub r#in: String,
+    #[arg(long, default_value_t = 256)]
+    pub window_bytes: usize,
+    #[arg(long, default_value_t = 256)]
+    pub step_bytes: usize,
+    #[arg(long, default_value_t = 12)]
+    pub max_windows: usize,
+    #[arg(long, default_value_t = 0)]
+    pub seed_from: u64,
+    #[arg(long, default_value_t = 64)]
+    pub seed_count: u64,
+    #[arg(long, default_value_t = 1)]
+    pub seed_step: u64,
+    #[arg(long, default_value_t = 1)]
+    pub recipe_seed: u64,
+    #[arg(long, default_value = "32,64")]
+    pub chunk_sweep: String,
+    #[arg(long, value_enum, default_value_t = ChunkSearchObjective::Raw)]
+    pub chunk_search_objective: ChunkSearchObjective,
+    #[arg(long, default_value_t = 1)]
+    pub chunk_raw_slack: u64,
+    #[arg(long, default_value_t = 0)]
+    pub map_max_depth: u8,
+    #[arg(long, default_value_t = 1)]
+    pub map_depth_shift: u8,
+    #[arg(long, default_value = "8,12")]
+    pub boundary_band_sweep: String,
+    #[arg(long, default_value_t = 1)]
+    pub boundary_delta: usize,
+    #[arg(long, default_value = "4,8")]
+    pub field_margin_sweep: String,
+    #[arg(long, default_value_t = 0)]
+    pub term_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub pause_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub wrap_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub term_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub pause_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub wrap_share_ppm_min: u32,
+    #[arg(long, default_value_t = false)]
+    pub field_from_global: bool,
+    #[arg(long, default_value_t = 0)]
+    pub merge_gap_bytes: usize,
+    #[arg(long, default_value_t = false)]
+    pub keep_temp_dir: bool,
+    #[arg(long, value_enum, default_value_t = RenderFormat::Txt)]
+    pub format: RenderFormat,
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ApexPunctKindManifestArgs {
+    #[arg(long = "in")]
+    pub r#in: String,
+    #[arg(long, default_value_t = 256)]
+    pub window_bytes: usize,
+    #[arg(long, default_value_t = 256)]
+    pub step_bytes: usize,
+    #[arg(long, default_value_t = 12)]
+    pub max_windows: usize,
+    #[arg(long, default_value_t = 0)]
+    pub seed_from: u64,
+    #[arg(long, default_value_t = 64)]
+    pub seed_count: u64,
+    #[arg(long, default_value_t = 1)]
+    pub seed_step: u64,
+    #[arg(long, default_value_t = 1)]
+    pub recipe_seed: u64,
+    #[arg(long, default_value = "32,64")]
+    pub chunk_sweep: String,
+    #[arg(long, value_enum, default_value_t = ChunkSearchObjective::Raw)]
+    pub chunk_search_objective: ChunkSearchObjective,
+    #[arg(long, default_value_t = 1)]
+    pub chunk_raw_slack: u64,
+    #[arg(long, default_value_t = 0)]
+    pub map_max_depth: u8,
+    #[arg(long, default_value_t = 1)]
+    pub map_depth_shift: u8,
+    #[arg(long, default_value = "8,12")]
+    pub boundary_band_sweep: String,
+    #[arg(long, default_value_t = 1)]
+    pub boundary_delta: usize,
+    #[arg(long, default_value = "4,8")]
+    pub field_margin_sweep: String,
+    #[arg(long, default_value_t = 0)]
+    pub term_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub pause_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub wrap_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub term_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub pause_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub wrap_share_ppm_min: u32,
+    #[arg(long, default_value_t = false)]
+    pub field_from_global: bool,
+    #[arg(long, default_value_t = 0)]
+    pub merge_gap_bytes: usize,
+    #[arg(long, default_value_t = false)]
+    pub allow_overlap_scout: bool,
+    #[arg(long, default_value_t = false)]
+    pub keep_temp_dir: bool,
+    #[arg(long, value_enum, default_value_t = RenderFormat::Txt)]
+    pub format: RenderFormat,
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ApexPunctKindManifestCompareArgs {
+    #[arg(long = "in", required = true, num_args = 1..)]
+    pub inputs: Vec<String>,
+    #[arg(long, default_value_t = 256)]
+    pub window_bytes: usize,
+    #[arg(long, default_value_t = 256)]
+    pub step_bytes: usize,
+    #[arg(long, default_value_t = 12)]
+    pub max_windows: usize,
+    #[arg(long, default_value_t = 0)]
+    pub seed_from: u64,
+    #[arg(long, default_value_t = 64)]
+    pub seed_count: u64,
+    #[arg(long, default_value_t = 1)]
+    pub seed_step: u64,
+    #[arg(long, default_value_t = 1)]
+    pub recipe_seed: u64,
+    #[arg(long, default_value = "32,64")]
+    pub chunk_sweep: String,
+    #[arg(long, value_enum, default_value_t = ChunkSearchObjective::Raw)]
+    pub chunk_search_objective: ChunkSearchObjective,
+    #[arg(long, default_value_t = 1)]
+    pub chunk_raw_slack: u64,
+    #[arg(long, default_value_t = 0)]
+    pub map_max_depth: u8,
+    #[arg(long, default_value_t = 1)]
+    pub map_depth_shift: u8,
+    #[arg(long, default_value = "8,12")]
+    pub boundary_band_sweep: String,
+    #[arg(long, default_value_t = 1)]
+    pub boundary_delta: usize,
+    #[arg(long, default_value = "4,8")]
+    pub field_margin_sweep: String,
+    #[arg(long, default_value_t = 0)]
+    pub term_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub pause_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub wrap_margin_add: u64,
+    #[arg(long, default_value_t = 0)]
+    pub term_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub pause_share_ppm_min: u32,
+    #[arg(long, default_value_t = 0)]
+    pub wrap_share_ppm_min: u32,
     #[arg(long, default_value_t = 0)]
     pub merge_gap_bytes: usize,
     #[arg(long, default_value_t = false)]
@@ -1220,9 +1582,24 @@ pub fn run(args: ApexTraceArgs) -> Result<()> {
         ApexTraceCmd::ApexLaneLawProfile(a) => {
             apex_lane_law_profile::run_apex_lane_law_profile(a)
         }
+        ApexTraceCmd::ApexLaneLawLocalProfile(a) => {
+            apex_lane_law_local_profile::run_apex_lane_law_local_profile(a)
+        }
+        ApexTraceCmd::ApexLaneLawLocalMixFreeze(a) => {
+            apex_lane_law_local_mix_freeze::run_apex_lane_law_local_mix_freeze(a)
+        }
         ApexTraceCmd::ApexLaneManifest(a) => apex_lane_manifest::run_apex_lane_manifest(a),
         ApexTraceCmd::ApexLaneManifestCompare(a) => {
             apex_lane_manifest_compare::run_apex_lane_manifest_compare(a)
+        }
+        ApexTraceCmd::ApexPunctKindAtlas(a) => {
+            apex_punct_kind_atlas::run_apex_punct_kind_atlas(a)
+        }
+        ApexTraceCmd::ApexPunctKindManifest(a) => {
+            apex_punct_kind_manifest::run_apex_punct_kind_manifest(a)
+        }
+        ApexTraceCmd::ApexPunctKindManifestCompare(a) => {
+            apex_punct_kind_manifest_compare::run_apex_punct_kind_manifest_compare(a)
         }
         ApexTraceCmd::ApexLaneTable(a) => apex_lane_table::run_apex_lane_table(a),
         ApexTraceCmd::ApexMapLane(a) => apex_map_lane::run_apex_map_lane(a),
