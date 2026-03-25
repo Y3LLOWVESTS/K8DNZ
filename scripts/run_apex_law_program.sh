@@ -1,10 +1,15 @@
 set -euo pipefail
 
 MODE="${1:-quick}"
+: "${K8DNZ_LOCAL_MIX_JOBS:=2}"
+: "${K8DNZ_APEX_MAP_SWEEP_JOBS:=2}"
 : "${K8DNZ_REPLAY_JOBS:=4}"
 : "${K8DNZ_SURFACE_JOBS:=3}"
+: "${K8DNZ_BODY_VALIDATE_TOP_K:=1}"
+: "${K8DNZ_COMPARE_SURFACES_ON_REPLAY:=0}"
 
 cargo build -p k8dnz-cli --bin k8dnz-cli --bin apex_law_program --bin apex_law_program_audit
+cargo test -p k8dnz-cli --bin apex_law_program
 cargo test -p k8dnz-cli --bin apex_law_program_audit
 
 LAW_BIN="target/debug/apex_law_program"
@@ -22,7 +27,11 @@ build_case() {
   "$LAW_BIN" build "$@" --out "$artifact" --out-report "$build_report"
 
   echo "== build_case ${label}: replay =="
-  "$LAW_BIN" replay --artifact "$artifact" --compare-surfaces --out-report "$replay_report"
+  if [ "$K8DNZ_COMPARE_SURFACES_ON_REPLAY" = "1" ]; then
+    "$LAW_BIN" replay --artifact "$artifact" --compare-surfaces --out-report "$replay_report"
+  else
+    "$LAW_BIN" replay --artifact "$artifact" --out-report "$replay_report"
+  fi
 
   echo "built_case=${label}"
   echo "artifact=${artifact}"

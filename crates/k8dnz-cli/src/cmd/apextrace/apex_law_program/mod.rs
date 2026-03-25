@@ -48,12 +48,13 @@ fn run_build(args: BuildArgs) -> Result<()> {
         } else {
             None
         },
+        materialized.surface_scoreboard.as_ref(),
     );
 
     if let Some(path) = args.out_report.as_deref() {
         fs::write(path, report).with_context(|| format!("write report {}", path))?;
         eprintln!(
-            "apex-law-program build: artifact={} bytes={} windows={} overrides={} target={} body_select_objective={} override_path_mode={} override_path_bytes_exact={} selected_total_piecewise_payload_exact={} closure_total_exact={} closure_penalty_exact={}",
+            "apex-law-program build: artifact={} bytes={} windows={} overrides={} target={} body_select_objective={} override_path_mode={} override_path_bytes_exact={} selected_total_piecewise_payload_exact={} closure_total_exact={} closure_penalty_exact={} best_surface={} best_total_piecewise_payload_exact={} best_delta_vs_piecewise_exact={}",
             args.out,
             bytes.len(),
             materialized.artifact.windows.len(),
@@ -65,6 +66,21 @@ fn run_build(args: BuildArgs) -> Result<()> {
             materialized.artifact.summary.selected_total_piecewise_payload_exact,
             materialized.artifact.summary.closure_total_exact,
             materialized.artifact.summary.closure_penalty_exact,
+            materialized
+                .surface_scoreboard
+                .as_ref()
+                .map(|row| row.best_surface.as_str())
+                .unwrap_or("artifact"),
+            materialized
+                .surface_scoreboard
+                .as_ref()
+                .map(|row| row.best_total_piecewise_payload_exact)
+                .unwrap_or(materialized.artifact.summary.selected_total_piecewise_payload_exact),
+            materialized
+                .surface_scoreboard
+                .as_ref()
+                .map(|row| row.best_delta_vs_artifact_exact)
+                .unwrap_or(0),
         );
     } else {
         print!("{report}");
@@ -77,7 +93,7 @@ fn run_inspect(args: InspectArgs) -> Result<()> {
     let bytes =
         fs::read(&args.artifact).with_context(|| format!("read artifact {}", args.artifact))?;
     let artifact = LawProgramArtifact::decode(&bytes)?;
-    let report = render_artifact_report(&artifact, &bytes, &args.artifact, None);
+    let report = render_artifact_report(&artifact, &bytes, &args.artifact, None, None);
     print!("{report}");
     Ok(())
 }
@@ -170,3 +186,4 @@ fn run_replay(args: ReplayArgs) -> Result<()> {
 
     Ok(())
 }
+

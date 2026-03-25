@@ -4,12 +4,12 @@ use std::io::{Cursor, Read};
 
 use super::plan::compute_closure_shape_metrics;
 use super::types::{
-    LawProgramArtifact, OverridePathMode, ProgramFile, ProgramOverride, ProgramSummary,
-    ProgramWindow, ReplayConfig,
+    LawProgramArtifact, OverridePathMode, ProgramBridgeSegment, ProgramFile, ProgramOverride,
+    ProgramSummary, ProgramWindow, ReplayConfig,
 };
 
 const ARTIFACT_MAGIC: &[u8; 4] = b"AKLP";
-const ARTIFACT_VERSION: u8 = 2;
+const ARTIFACT_VERSION: u8 = 3;
 
 impl LawProgramArtifact {
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
@@ -35,6 +35,19 @@ impl LawProgramArtifact {
             row.encode(&mut w);
         }
 
+        let derived_bridge_segments;
+        let bridge_segments: &[ProgramBridgeSegment] = if self.bridge_segments.is_empty() {
+            derived_bridge_segments = derive_bridge_segments_from_overrides(&self.overrides);
+            &derived_bridge_segments
+        } else {
+            &self.bridge_segments
+        };
+
+        w.uvar(bridge_segments.len() as u64);
+        for row in bridge_segments {
+            row.encode(&mut w);
+        }
+
         Ok(w.finish())
     }
 
@@ -47,7 +60,7 @@ impl LawProgramArtifact {
         }
 
         let version = r.u8()?;
-        if version != 1 && version != ARTIFACT_VERSION {
+        if version != 1 && version != 2 && version != ARTIFACT_VERSION {
             bail!("unsupported artifact version {}", version);
         }
 
@@ -72,6 +85,17 @@ impl LawProgramArtifact {
             overrides.push(ProgramOverride::decode(&mut r)?);
         }
 
+        let bridge_segments = if version >= 3 {
+            let bridge_len = r.uvar()? as usize;
+            let mut rows = Vec::with_capacity(bridge_len);
+            for _ in 0..bridge_len {
+                rows.push(ProgramBridgeSegment::decode(&mut r)?);
+            }
+            rows
+        } else {
+            derive_bridge_segments_from_overrides(&overrides)
+        };
+
         if !r.is_eof() {
             bail!("trailing bytes after artifact decode");
         }
@@ -82,10 +106,13 @@ impl LawProgramArtifact {
             files,
             windows,
             overrides,
+            bridge_segments,
         };
 
-        if version == 1 {
+        if version < 2 {
             hydrate_closure_metrics(&mut artifact);
+        } else if artifact.bridge_segments.is_empty() {
+            artifact.bridge_segments = derive_bridge_segments_from_overrides(&artifact.overrides);
         }
 
         Ok(artifact)
@@ -585,6 +612,38 @@ impl ProgramOverride {
     }
 }
 
+impl ProgramBridgeSegment {
+    fn encode(&self, w: &mut BinWriter) {
+        w.uvar(self.input_index as u64);
+        w.string(&self.input);
+        w.uvar(self.segment_idx as u64);
+        w.uvar(self.start_window_idx as u64);
+        w.uvar(self.end_window_idx as u64);
+        w.uvar(self.start_target_ordinal as u64);
+        w.uvar(self.end_target_ordinal as u64);
+        w.uvar(self.window_count as u64);
+        w.uvar(self.default_payload_exact as u64);
+        w.uvar(self.best_payload_exact as u64);
+        w.uvar(self.gain_exact as u64);
+    }
+
+    fn decode(r: &mut BinReader<'_>) -> Result<Self> {
+        Ok(Self {
+            input_index: r.uvar()? as usize,
+            input: r.string()?,
+            segment_idx: r.uvar()? as usize,
+            start_window_idx: r.uvar()? as usize,
+            end_window_idx: r.uvar()? as usize,
+            start_target_ordinal: r.uvar()? as usize,
+            end_target_ordinal: r.uvar()? as usize,
+            window_count: r.uvar()? as usize,
+            default_payload_exact: r.uvar()? as usize,
+            best_payload_exact: r.uvar()? as usize,
+            gain_exact: r.uvar()? as usize,
+        })
+    }
+}
+
 fn hydrate_closure_metrics(artifact: &mut LawProgramArtifact) {
     let mut ordinals_by_input = BTreeMap::<String, Vec<usize>>::new();
     for row in &artifact.overrides {
@@ -651,6 +710,91 @@ fn hydrate_closure_metrics(artifact: &mut LawProgramArtifact) {
         .summary
         .selected_total_piecewise_payload_exact
         .saturating_add(closure_penalty_exact as i64);
+    artifact.bridge_segments = derive_bridge_segments_from_overrides(&artifact.overrides);
+}
+
+fn derive_bridge_segments_from_overrides(
+    overrides: &[ProgramOverride],
+) -> Vec<ProgramBridgeSegment> {
+    let mut grouped = BTreeMap::<(usize, String), Vec<&ProgramOverride>>::new();
+    for row in overrides {
+        grouped
+            .entry((row.input_index, row.input.clone()))
+            .or_default()
+            .push(row);
+    }
+
+    let mut out = Vec::<ProgramBridgeSegment>::new();
+    for ((input_index, input), mut rows) in grouped {
+        rows.sort_by_key(|row| (row.target_ordinal, row.window_idx));
+        let ordinals = rows.iter().map(|row| row.target_ordinal).collect::<Vec<_>>();
+        let runs = ordinal_runs(&ordinals);
+        let mut cursor = 0usize;
+
+        for (segment_idx, (_start, run_len)) in runs.into_iter().enumerate() {
+            let chunk = &rows[cursor..cursor + run_len];
+            let first = chunk.first().expect("bridge segment should have first row");
+            let last = chunk.last().expect("bridge segment should have last row");
+            let default_payload_exact = chunk
+                .iter()
+                .map(|row| row.default_payload_exact)
+                .sum::<usize>();
+            let best_payload_exact = chunk
+                .iter()
+                .map(|row| row.best_payload_exact)
+                .sum::<usize>();
+
+            out.push(ProgramBridgeSegment {
+                input_index,
+                input: input.clone(),
+                segment_idx,
+                start_window_idx: first.window_idx,
+                end_window_idx: last.window_idx,
+                start_target_ordinal: first.target_ordinal,
+                end_target_ordinal: last.target_ordinal,
+                window_count: chunk.len(),
+                default_payload_exact,
+                best_payload_exact,
+                gain_exact: default_payload_exact.saturating_sub(best_payload_exact),
+            });
+            cursor += run_len;
+        }
+    }
+
+    out.sort_by_key(|row| {
+        (
+            row.input_index,
+            row.start_target_ordinal,
+            row.end_target_ordinal,
+            row.segment_idx,
+        )
+    });
+    out
+}
+
+fn ordinal_runs(ordinals: &[usize]) -> Vec<(usize, usize)> {
+    if ordinals.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut start = ordinals[0];
+    let mut len = 1usize;
+    let mut prev = ordinals[0];
+
+    for &ordinal in &ordinals[1..] {
+        if ordinal == prev + 1 {
+            len += 1;
+        } else {
+            out.push((start, len));
+            start = ordinal;
+            len = 1;
+        }
+        prev = ordinal;
+    }
+
+    out.push((start, len));
+    out
 }
 
 fn override_path_mode_from_str(raw: &str) -> OverridePathMode {
@@ -658,6 +802,7 @@ fn override_path_mode_from_str(raw: &str) -> OverridePathMode {
         "none" => OverridePathMode::None,
         "delta" => OverridePathMode::Delta,
         "runs" => OverridePathMode::Runs,
+        "bridge" => OverridePathMode::Runs,
         "ordinals" => OverridePathMode::Ordinals,
         _ => OverridePathMode::Ordinals,
     }

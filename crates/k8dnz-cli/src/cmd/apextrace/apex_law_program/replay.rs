@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
@@ -9,7 +9,10 @@ use std::thread;
 use tempfile::tempdir;
 
 use super::parse::parse_best_line;
-use super::types::{FrozenEvalRow, LawProgramArtifact, ReplayEvalRow, ReplayFileSummary};
+use super::types::{
+    FrozenEvalRow, LawProgramArtifact, ProgramBridgeSegment, ProgramOverride, ReplayEvalRow,
+    ReplayFileSummary,
+};
 
 pub(crate) fn replay_artifact(
     cli_exe: &Path,
@@ -140,8 +143,76 @@ pub(crate) fn apply_replay_rows_to_artifact(
     artifact.summary.worsened_target_window_count = worsened_target_window_count;
     artifact.summary.closure_total_exact = replay_selected_total_piecewise_payload_exact
         .saturating_add(artifact.summary.closure_penalty_exact as i64);
+    artifact.bridge_segments = derive_bridge_segments_from_overrides(&artifact.overrides);
 
     Ok(())
+}
+
+fn derive_bridge_segments_from_overrides(
+    overrides: &[ProgramOverride],
+) -> Vec<ProgramBridgeSegment> {
+    let mut grouped = BTreeMap::<(usize, String), Vec<&ProgramOverride>>::new();
+    for row in overrides {
+        grouped
+            .entry((row.input_index, row.input.clone()))
+            .or_default()
+            .push(row);
+    }
+
+    let mut out = Vec::<ProgramBridgeSegment>::new();
+    for ((input_index, input), mut rows) in grouped {
+        rows.sort_by_key(|row| (row.target_ordinal, row.window_idx));
+
+        let mut segment_idx = 0usize;
+        let mut cursor = 0usize;
+        while cursor < rows.len() {
+            let first = rows[cursor];
+            let mut end = cursor;
+            while end + 1 < rows.len()
+                && rows[end + 1].target_ordinal == rows[end].target_ordinal + 1
+            {
+                end += 1;
+            }
+
+            let chunk = &rows[cursor..=end];
+            let last = rows[end];
+            let default_payload_exact = chunk
+                .iter()
+                .map(|row| row.default_payload_exact)
+                .sum::<usize>();
+            let best_payload_exact = chunk
+                .iter()
+                .map(|row| row.best_payload_exact)
+                .sum::<usize>();
+
+            out.push(ProgramBridgeSegment {
+                input_index,
+                input: input.clone(),
+                segment_idx,
+                start_window_idx: first.window_idx,
+                end_window_idx: last.window_idx,
+                start_target_ordinal: first.target_ordinal,
+                end_target_ordinal: last.target_ordinal,
+                window_count: chunk.len(),
+                default_payload_exact,
+                best_payload_exact,
+                gain_exact: default_payload_exact.saturating_sub(best_payload_exact),
+            });
+
+            segment_idx += 1;
+            cursor = end + 1;
+        }
+    }
+
+    out.sort_by_key(|row| {
+        (
+            row.input_index,
+            row.start_target_ordinal,
+            row.end_target_ordinal,
+            row.segment_idx,
+        )
+    });
+    out
 }
 
 fn replay_rows_serial(
@@ -688,6 +759,19 @@ mod tests {
                 best_payload_exact: 105,
                 gain_exact: 5,
             }],
+            bridge_segments: vec![super::super::types::ProgramBridgeSegment {
+                input_index: 0,
+                input: "text/Genesis1.txt".to_string(),
+                segment_idx: 0,
+                start_window_idx: 1,
+                end_window_idx: 1,
+                start_target_ordinal: 1,
+                end_target_ordinal: 1,
+                window_count: 1,
+                default_payload_exact: 110,
+                best_payload_exact: 105,
+                gain_exact: 5,
+            }],
         }
     }
 
@@ -758,5 +842,8 @@ mod tests {
         assert_eq!(artifact.summary.closure_total_exact, 1095);
         assert_eq!(artifact.files[0].selected_total_piecewise_payload_exact, 989);
         assert_eq!(artifact.files[0].closure_total_exact, 1095);
+        assert_eq!(artifact.bridge_segments.len(), 1);
+        assert_eq!(artifact.bridge_segments[0].window_count, 1);
+        assert_eq!(artifact.bridge_segments[0].gain_exact, 5);
     }
 }

@@ -1,19 +1,20 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::path::Path;
 
 use super::args::BuildArgs;
-use super::exec::{run_local_mix, run_manifest_txt};
+use super::exec::{run_local_mix, run_manifest_txt, run_surface_scoreboard};
 use super::parse::{
     parse_csv_sections, parse_csv_usize_list, parse_manifest_positions, parse_required_i64,
-    parse_required_string, parse_required_u64, parse_required_usize, parse_txt_summary,
+    parse_required_string, parse_required_u64, parse_required_usize, summary_row_map,
 };
-use super::plan::select_override_plan;
+use super::plan::{ordinal_runs, select_override_plan};
 use super::replay::canonicalize_artifact_selected_payloads;
 use super::types::{
     BodyCandidateScore, BodySelectObjective, BuildMaterialized, LawProgramArtifact,
-    ManifestWindowPos, OverrideCandidateRef, ProgramFile, ProgramOverride, ProgramSummary,
-    ProgramWindow, ReplayConfig,
+    ManifestWindowPos, OverrideCandidateRef, ProgramBridgeSegment, ProgramFile, ProgramOverride,
+    ProgramSummary, ProgramWindow, ReplayConfig, SurfaceScoreboard,
 };
 
 pub(crate) fn materialize_build(cli_exe: &Path, args: &BuildArgs) -> Result<BuildMaterialized> {
@@ -34,54 +35,108 @@ pub(crate) fn materialize_build(cli_exe: &Path, args: &BuildArgs) -> Result<Buil
             args.body_select_objective,
         );
 
-        let txt_out = run_local_mix(cli_exe, &trial_args, "txt")?;
         let csv_out = run_local_mix(cli_exe, &trial_args, "csv")?;
-        let txt_summary = parse_txt_summary(&txt_out.stdout)?;
         let csv_sections = parse_csv_sections(&csv_out.stdout)?;
+        let summary_row = summary_row_map(&csv_sections)?;
 
-        let mut artifact = build_artifact_from_outputs(
+        let artifact = build_artifact_from_outputs(
             &trial_args,
             objective,
-            &txt_summary,
+            &summary_row,
             &csv_sections,
             &manifest_positions,
         )?;
 
-        eprintln!(
-            "apex-law-program build: canonical replay for chunk_bytes={} windows={}",
-            chunk_bytes,
-            artifact.windows.len()
-        );
-        canonicalize_artifact_selected_payloads(cli_exe, &mut artifact).with_context(|| {
-            format!(
-                "canonicalize artifact selected payloads chunk_bytes={}",
-                chunk_bytes
-            )
-        })?;
-
         materials.push(BuildMaterialized {
-            body_scores: vec![body_score_from_artifact(&artifact)],
+            body_scores: vec![body_score_from_artifact(&artifact, None)],
             artifact,
+            surface_scoreboard: None,
         });
     }
 
-    let best_idx = select_best_materialized_index(&materials, objective)?;
+    let finalist_indexes = select_finalist_indexes(&materials, objective)?;
+    eprintln!(
+        "apex-law-program build: finalist_count={} finalists={} objective={}",
+        finalist_indexes.len(),
+        finalist_indexes
+            .iter()
+            .map(|idx| materials[*idx].artifact.summary.default_local_chunk_bytes.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        args.body_select_objective,
+    );
+
+    for &idx in &finalist_indexes {
+        let chunk_bytes = materials[idx].artifact.summary.default_local_chunk_bytes;
+        eprintln!(
+            "apex-law-program build: canonical replay for finalist chunk_bytes={} windows={}",
+            chunk_bytes,
+            materials[idx].artifact.windows.len()
+        );
+        canonicalize_artifact_selected_payloads(cli_exe, &mut materials[idx].artifact)
+            .with_context(|| {
+                format!(
+                    "canonicalize artifact selected payloads chunk_bytes={}",
+                    chunk_bytes
+                )
+            })?;
+    }
+
+    let best_idx =
+        select_best_materialized_index_among(&materials, &finalist_indexes, objective)?;
+    let best_chunk_bytes = materials[best_idx].artifact.summary.default_local_chunk_bytes;
+    let surface_scoreboard = run_surface_scoreboard(
+        cli_exe,
+        &materials[best_idx].artifact,
+        materials[best_idx]
+            .artifact
+            .summary
+            .selected_total_piecewise_payload_exact,
+    )
+    .with_context(|| format!("surface scoreboard chunk_bytes={}", best_chunk_bytes))?;
+    materials[best_idx].surface_scoreboard = Some(surface_scoreboard);
+
     let mut best = materials.remove(best_idx);
 
     let mut body_scores = materials
         .into_iter()
-        .map(|m| body_score_from_artifact(&m.artifact))
+        .map(|m| body_score_from_artifact(&m.artifact, m.surface_scoreboard.as_ref()))
         .collect::<Vec<_>>();
 
-    body_scores.push(body_score_from_artifact(&best.artifact));
+    body_scores.push(body_score_from_artifact(
+        &best.artifact,
+        best.surface_scoreboard.as_ref(),
+    ));
     body_scores.sort_by_key(|row| row.chunk_bytes);
     best.body_scores = body_scores;
 
     Ok(best)
 }
 
-fn body_score_from_artifact(artifact: &LawProgramArtifact) -> BodyCandidateScore {
+fn body_score_from_artifact(
+    artifact: &LawProgramArtifact,
+    scoreboard: Option<&SurfaceScoreboard>,
+) -> BodyCandidateScore {
     let summary = &artifact.summary;
+    let derived_bridge_segments;
+    let bridge_segments: &[ProgramBridgeSegment] = if artifact.bridge_segments.is_empty() {
+        derived_bridge_segments = derive_bridge_segments_from_overrides(&artifact.overrides);
+        &derived_bridge_segments
+    } else {
+        &artifact.bridge_segments
+    };
+
+    let bridge_segment_count = bridge_segments.len();
+    let bridge_window_count = bridge_segments.iter().map(|row| row.window_count).sum::<usize>();
+
+    let best_surface = scoreboard
+        .map(|row| row.best_surface.clone())
+        .unwrap_or_else(|| "artifact".to_string());
+    let best_total_piecewise_payload_exact = scoreboard
+        .map(|row| row.best_total_piecewise_payload_exact)
+        .unwrap_or(summary.selected_total_piecewise_payload_exact);
+    let best_delta_vs_piecewise_exact =
+        best_total_piecewise_payload_exact - summary.selected_total_piecewise_payload_exact;
 
     BodyCandidateScore {
         chunk_bytes: summary.default_local_chunk_bytes,
@@ -91,6 +146,8 @@ fn body_score_from_artifact(artifact: &LawProgramArtifact) -> BodyCandidateScore
         mode_penalty_exact: summary.closure_mode_penalty_exact,
         selected_target_window_payload_exact: summary.selected_target_window_payload_exact,
         selected_override_window_count: summary.selected_override_window_count,
+        bridge_segment_count,
+        bridge_window_count,
         override_run_count: summary.closure_override_run_count,
         max_override_run_length: summary.closure_max_override_run_length,
         override_path_bytes_exact: summary.override_path_bytes_exact,
@@ -100,6 +157,17 @@ fn body_score_from_artifact(artifact: &LawProgramArtifact) -> BodyCandidateScore
         untouched_window_count: summary.closure_untouched_window_count,
         override_density_ppm: summary.closure_override_density_ppm,
         untouched_window_pct_ppm: summary.closure_untouched_window_pct_ppm,
+        best_surface,
+        best_total_piecewise_payload_exact,
+        best_delta_vs_piecewise_exact,
+        frozen_total_piecewise_payload_exact: scoreboard
+            .and_then(|row| row.frozen_total_piecewise_payload_exact),
+        split_total_piecewise_payload_exact: scoreboard
+            .and_then(|row| row.split_total_piecewise_payload_exact),
+        bridge_total_piecewise_payload_exact: scoreboard
+            .and_then(|row| row.bridge_total_piecewise_payload_exact),
+        surface_beats_piecewise: best_total_piecewise_payload_exact
+            < summary.selected_total_piecewise_payload_exact,
     }
 }
 
@@ -170,6 +238,74 @@ fn select_best_materialized_index(
         .ok_or_else(|| anyhow!("failed to select best body"))
 }
 
+fn select_best_materialized_index_among(
+    materials: &[BuildMaterialized],
+    candidate_indexes: &[usize],
+    objective: BodySelectObjective,
+) -> Result<usize> {
+    if materials.is_empty() {
+        bail!("cannot select best body from empty materialized set");
+    }
+    if candidate_indexes.is_empty() {
+        bail!("cannot select best body from empty finalist set");
+    }
+
+    candidate_indexes
+        .iter()
+        .copied()
+        .min_by(|a, b| compare_materialized(&materials[*a], &materials[*b], objective))
+        .ok_or_else(|| anyhow!("failed to select best body from finalists"))
+}
+
+fn select_finalist_indexes(
+    materials: &[BuildMaterialized],
+    objective: BodySelectObjective,
+) -> Result<Vec<usize>> {
+    let wanted = resolve_body_validate_top_k(materials.len());
+    select_finalist_indexes_with_top_k(materials, objective, wanted)
+}
+
+fn select_finalist_indexes_with_top_k(
+    materials: &[BuildMaterialized],
+    objective: BodySelectObjective,
+    top_k: usize,
+) -> Result<Vec<usize>> {
+    if materials.is_empty() {
+        bail!("cannot select finalists from empty materialized set");
+    }
+
+    let mut ranked = (0..materials.len()).collect::<Vec<_>>();
+    ranked.sort_by(|a, b| compare_materialized(&materials[*a], &materials[*b], objective));
+
+    let cutoff = top_k.clamp(1, ranked.len());
+    let mut finalists = ranked[..cutoff].to_vec();
+
+    if cutoff < ranked.len() {
+        let pivot = ranked[cutoff - 1];
+        for &idx in &ranked[cutoff..] {
+            if compare_materialized(&materials[pivot], &materials[idx], objective)
+                == std::cmp::Ordering::Equal
+            {
+                finalists.push(idx);
+            } else {
+                break;
+            }
+        }
+    }
+
+    finalists.sort_unstable();
+    finalists.dedup();
+    Ok(finalists)
+}
+
+fn resolve_body_validate_top_k(total_candidates: usize) -> usize {
+    env::var("K8DNZ_BODY_VALIDATE_TOP_K")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, total_candidates.max(1))
+}
+
 fn compare_materialized(
     a: &BuildMaterialized,
     b: &BuildMaterialized,
@@ -177,11 +313,12 @@ fn compare_materialized(
 ) -> std::cmp::Ordering {
     let asu = &a.artifact.summary;
     let bsu = &b.artifact.summary;
-    let ash = body_score_from_artifact(&a.artifact);
-    let bsh = body_score_from_artifact(&b.artifact);
+    let ash = body_score_from_artifact(&a.artifact, a.surface_scoreboard.as_ref());
+    let bsh = body_score_from_artifact(&b.artifact, b.surface_scoreboard.as_ref());
 
     match objective {
         BodySelectObjective::ClosureTotal => (
+            asu.closure_total_exact,
             ash.closure_total_exact,
             asu.selected_total_piecewise_payload_exact,
             ash.selected_override_window_count,
@@ -191,6 +328,7 @@ fn compare_materialized(
             asu.default_local_chunk_bytes,
         )
             .cmp(&(
+                bsu.closure_total_exact,
                 bsh.closure_total_exact,
                 bsu.selected_total_piecewise_payload_exact,
                 bsh.selected_override_window_count,
@@ -201,17 +339,19 @@ fn compare_materialized(
             )),
         BodySelectObjective::SelectedTarget => (
             asu.selected_target_window_payload_exact,
+            asu.selected_total_piecewise_payload_exact,
+            asu.closure_total_exact,
             ash.closure_total_exact,
             asu.projected_default_total_piecewise_payload_exact,
-            asu.selected_total_piecewise_payload_exact,
             ash.selected_override_window_count,
             asu.default_local_chunk_bytes,
         )
             .cmp(&(
                 bsu.selected_target_window_payload_exact,
+                bsu.selected_total_piecewise_payload_exact,
+                bsu.closure_total_exact,
                 bsh.closure_total_exact,
                 bsu.projected_default_total_piecewise_payload_exact,
-                bsu.selected_total_piecewise_payload_exact,
                 bsh.selected_override_window_count,
                 bsu.default_local_chunk_bytes,
             )),
@@ -239,7 +379,7 @@ fn compare_materialized(
 fn build_artifact_from_outputs(
     args: &BuildArgs,
     objective: BodySelectObjective,
-    txt_summary: &BTreeMap<String, String>,
+    summary_row: &BTreeMap<String, String>,
     csv_sections: &super::types::ParsedCsvSections,
     manifest_positions: &BTreeMap<(String, usize), ManifestWindowPos>,
 ) -> Result<LawProgramArtifact> {
@@ -299,7 +439,7 @@ fn build_artifact_from_outputs(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let default_local_chunk_bytes = parse_required_usize(txt_summary, "default_local_chunk_bytes")?;
+    let default_local_chunk_bytes = parse_required_usize(summary_row, "default_local_chunk_bytes")?;
 
     let mut windows = csv_sections
         .window_rows
@@ -521,39 +661,39 @@ fn build_artifact_from_outputs(
         selected_total_piecewise_payload_exact.saturating_add(closure_penalty_exact as i64);
 
     let summary = ProgramSummary {
-        recipe: parse_required_string(txt_summary, "recipe")?,
-        file_count: parse_required_usize(txt_summary, "file_count")?,
-        honest_file_count: parse_required_usize(txt_summary, "honest_file_count")?,
-        union_law_count: parse_required_usize(txt_summary, "union_law_count")?,
-        target_global_law_id: parse_required_string(txt_summary, "target_global_law_id")?,
-        target_global_law_path_hits: parse_required_usize(txt_summary, "target_global_law_path_hits")?,
-        target_global_law_file_count: parse_required_usize(txt_summary, "target_global_law_file_count")?,
+        recipe: parse_required_string(summary_row, "recipe")?,
+        file_count: parse_required_usize(summary_row, "file_count")?,
+        honest_file_count: parse_required_usize(summary_row, "honest_file_count")?,
+        union_law_count: parse_required_usize(summary_row, "union_law_count")?,
+        target_global_law_id: parse_required_string(summary_row, "target_global_law_id")?,
+        target_global_law_path_hits: parse_required_usize(summary_row, "target_global_law_path_hits")?,
+        target_global_law_file_count: parse_required_usize(summary_row, "target_global_law_file_count")?,
         target_global_law_total_window_count: parse_required_usize(
-            txt_summary,
+            summary_row,
             "target_global_law_total_window_count",
         )?,
         target_global_law_total_segment_count: parse_required_usize(
-            txt_summary,
+            summary_row,
             "target_global_law_total_segment_count",
         )?,
         target_global_law_total_covered_bytes: parse_required_usize(
-            txt_summary,
+            summary_row,
             "target_global_law_total_covered_bytes",
         )?,
         target_global_law_dominant_knob_signature: parse_required_string(
-            txt_summary,
+            summary_row,
             "target_global_law_dominant_knob_signature",
         )?,
-        eval_boundary_band: parse_required_usize(txt_summary, "eval_boundary_band")?,
-        eval_field_margin: parse_required_u64(txt_summary, "eval_field_margin")?,
-        eval_newline_demote_margin: parse_required_u64(txt_summary, "eval_newline_demote_margin")?,
-        eval_chunk_search_objective: parse_required_string(txt_summary, "eval_chunk_search_objective")?,
-        eval_chunk_raw_slack: parse_required_u64(txt_summary, "eval_chunk_raw_slack")?,
-        eval_chunk_candidates: parse_required_string(txt_summary, "eval_chunk_candidates")?,
-        eval_chunk_candidate_count: parse_required_usize(txt_summary, "eval_chunk_candidate_count")?,
+        eval_boundary_band: parse_required_usize(summary_row, "eval_boundary_band")?,
+        eval_field_margin: parse_required_u64(summary_row, "eval_field_margin")?,
+        eval_newline_demote_margin: parse_required_u64(summary_row, "eval_newline_demote_margin")?,
+        eval_chunk_search_objective: parse_required_string(summary_row, "eval_chunk_search_objective")?,
+        eval_chunk_raw_slack: parse_required_u64(summary_row, "eval_chunk_raw_slack")?,
+        eval_chunk_candidates: parse_required_string(summary_row, "eval_chunk_candidates")?,
+        eval_chunk_candidate_count: parse_required_usize(summary_row, "eval_chunk_candidate_count")?,
         default_local_chunk_bytes,
         default_local_chunk_window_wins: parse_required_usize(
-            txt_summary,
+            summary_row,
             "default_local_chunk_window_wins",
         )?,
         searched_total_piecewise_payload_exact,
@@ -590,6 +730,8 @@ fn build_artifact_from_outputs(
         closure_penalty_exact,
         closure_total_exact,
     };
+
+    let bridge_segments = derive_bridge_segments_from_overrides(&overrides);
 
     Ok(LawProgramArtifact {
         config: ReplayConfig {
@@ -640,7 +782,67 @@ fn build_artifact_from_outputs(
         files,
         windows,
         overrides,
+        bridge_segments,
     })
+}
+
+fn derive_bridge_segments_from_overrides(
+    overrides: &[ProgramOverride],
+) -> Vec<ProgramBridgeSegment> {
+    let mut grouped = BTreeMap::<(usize, String), Vec<&ProgramOverride>>::new();
+    for row in overrides {
+        grouped
+            .entry((row.input_index, row.input.clone()))
+            .or_default()
+            .push(row);
+    }
+
+    let mut out = Vec::<ProgramBridgeSegment>::new();
+    for ((input_index, input), mut rows) in grouped {
+        rows.sort_by_key(|row| (row.target_ordinal, row.window_idx));
+        let ordinals = rows.iter().map(|row| row.target_ordinal).collect::<Vec<_>>();
+        let runs = ordinal_runs(&ordinals);
+        let mut cursor = 0usize;
+
+        for (segment_idx, (_start, run_len)) in runs.into_iter().enumerate() {
+            let chunk = &rows[cursor..cursor + run_len];
+            let first = chunk.first().expect("bridge segment should have first row");
+            let last = chunk.last().expect("bridge segment should have last row");
+            let default_payload_exact = chunk
+                .iter()
+                .map(|row| row.default_payload_exact)
+                .sum::<usize>();
+            let best_payload_exact = chunk
+                .iter()
+                .map(|row| row.best_payload_exact)
+                .sum::<usize>();
+
+            out.push(ProgramBridgeSegment {
+                input_index,
+                input: input.clone(),
+                segment_idx,
+                start_window_idx: first.window_idx,
+                end_window_idx: last.window_idx,
+                start_target_ordinal: first.target_ordinal,
+                end_target_ordinal: last.target_ordinal,
+                window_count: chunk.len(),
+                default_payload_exact,
+                best_payload_exact,
+                gain_exact: default_payload_exact.saturating_sub(best_payload_exact),
+            });
+            cursor += run_len;
+        }
+    }
+
+    out.sort_by_key(|row| {
+        (
+            row.input_index,
+            row.start_target_ordinal,
+            row.end_target_ordinal,
+            row.segment_idx,
+        )
+    });
+    out
 }
 
 fn scaled_ppm(num: usize, den: usize) -> u32 {
@@ -678,6 +880,7 @@ mod tests {
             "none" => OverridePathMode::None,
             "delta" => OverridePathMode::Delta,
             "runs" => OverridePathMode::Runs,
+            "bridge" => OverridePathMode::Runs,
             "ordinals" => OverridePathMode::Ordinals,
             _ => OverridePathMode::Ordinals,
         }
@@ -700,6 +903,24 @@ mod tests {
             override_ordinals,
             target_window_count,
         );
+
+        let overrides = override_ordinals
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, target_ordinal)| ProgramOverride {
+                input_index: 0,
+                input: input.clone(),
+                window_idx: idx,
+                target_ordinal,
+                best_chunk_bytes: chunk,
+                default_payload_exact: 0,
+                best_payload_exact: 0,
+                gain_exact: 1,
+            })
+            .collect::<Vec<_>>();
+
+        let bridge_segments = derive_bridge_segments_from_overrides(&overrides);
 
         BuildMaterialized {
             body_scores: Vec::new(),
@@ -784,7 +1005,7 @@ mod tests {
                     delta_selected_target_window_payload_exact: 0,
                     override_path_mode: override_mode.to_string(),
                     override_path_bytes_exact: override_path,
-                    selected_override_window_count: override_ordinals.len(),
+                    selected_override_window_count: overrides.len(),
                     improved_target_window_count: 0,
                     equal_target_window_count: 0,
                     worsened_target_window_count: 0,
@@ -807,7 +1028,7 @@ mod tests {
                     target_window_count,
                     override_path_mode: override_mode.to_string(),
                     override_path_bytes_exact: override_path,
-                    selected_override_window_count: override_ordinals.len(),
+                    selected_override_window_count: overrides.len(),
                     closure_override_count: shape.override_count,
                     closure_override_run_count: shape.override_run_count,
                     closure_max_override_run_length: shape.max_override_run_length,
@@ -819,22 +1040,10 @@ mod tests {
                     closure_total_exact: selected_total + shape.closure_penalty_exact as i64,
                 }],
                 windows: Vec::new(),
-                overrides: override_ordinals
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .map(|(idx, target_ordinal)| ProgramOverride {
-                        input_index: 0,
-                        input: input.clone(),
-                        window_idx: idx,
-                        target_ordinal,
-                        best_chunk_bytes: chunk,
-                        default_payload_exact: 0,
-                        best_payload_exact: 0,
-                        gain_exact: 1,
-                    })
-                    .collect(),
+                overrides,
+                bridge_segments,
             },
+            surface_scoreboard: None,
         }
     }
 
@@ -918,6 +1127,144 @@ mod tests {
         let idx =
             select_best_materialized_index(&items, BodySelectObjective::SelectedTarget).unwrap();
         assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn selected_total_prefers_lower_artifact_total_without_surface_frontier() {
+        let mut codec_best = make_test_materialized(
+            64,
+            2123,
+            2200,
+            507,
+            3,
+            "runs",
+            12,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        );
+        codec_best.surface_scoreboard = Some(SurfaceScoreboard {
+            searched_total_piecewise_payload_exact: 2200,
+            artifact_selected_total_piecewise_payload_exact: 2123,
+            replay_selected_total_piecewise_payload_exact: 2123,
+            frozen_total_piecewise_payload_exact: Some(2191),
+            split_total_piecewise_payload_exact: Some(2200),
+            bridge_total_piecewise_payload_exact: Some(2191),
+            best_surface: "artifact".to_string(),
+            best_total_piecewise_payload_exact: 2123,
+            best_delta_vs_artifact_exact: 0,
+        });
+
+        let mut frontier_best = make_test_materialized(
+            96,
+            2128,
+            2128,
+            508,
+            0,
+            "none",
+            12,
+            &[],
+        );
+        frontier_best.surface_scoreboard = Some(SurfaceScoreboard {
+            searched_total_piecewise_payload_exact: 2128,
+            artifact_selected_total_piecewise_payload_exact: 2128,
+            replay_selected_total_piecewise_payload_exact: 2128,
+            frozen_total_piecewise_payload_exact: Some(2115),
+            split_total_piecewise_payload_exact: Some(2128),
+            bridge_total_piecewise_payload_exact: Some(2115),
+            best_surface: "freeze".to_string(),
+            best_total_piecewise_payload_exact: 2115,
+            best_delta_vs_artifact_exact: -13,
+        });
+
+        let items = vec![codec_best, frontier_best];
+        let idx =
+            select_best_materialized_index(&items, BodySelectObjective::SelectedTotal).unwrap();
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn closure_total_prefers_lower_closure_total_without_surface_frontier() {
+        let mut dense_piecewise_best = make_test_materialized(
+            64,
+            2123,
+            2200,
+            507,
+            3,
+            "runs",
+            12,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        );
+        dense_piecewise_best.surface_scoreboard = Some(SurfaceScoreboard {
+            searched_total_piecewise_payload_exact: 2200,
+            artifact_selected_total_piecewise_payload_exact: 2123,
+            replay_selected_total_piecewise_payload_exact: 2123,
+            frozen_total_piecewise_payload_exact: Some(2191),
+            split_total_piecewise_payload_exact: Some(2200),
+            bridge_total_piecewise_payload_exact: Some(2191),
+            best_surface: "artifact".to_string(),
+            best_total_piecewise_payload_exact: 2123,
+            best_delta_vs_artifact_exact: 0,
+        });
+
+        let mut sparse_frontier_best = make_test_materialized(
+            96,
+            2128,
+            2128,
+            508,
+            0,
+            "none",
+            12,
+            &[],
+        );
+        sparse_frontier_best.surface_scoreboard = Some(SurfaceScoreboard {
+            searched_total_piecewise_payload_exact: 2128,
+            artifact_selected_total_piecewise_payload_exact: 2128,
+            replay_selected_total_piecewise_payload_exact: 2128,
+            frozen_total_piecewise_payload_exact: Some(2115),
+            split_total_piecewise_payload_exact: Some(2128),
+            bridge_total_piecewise_payload_exact: Some(2115),
+            best_surface: "freeze".to_string(),
+            best_total_piecewise_payload_exact: 2115,
+            best_delta_vs_artifact_exact: -13,
+        });
+
+        let items = vec![dense_piecewise_best, sparse_frontier_best];
+        let idx =
+            select_best_materialized_index(&items, BodySelectObjective::ClosureTotal).unwrap();
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn select_finalist_indexes_defaults_to_single_best_candidate() {
+        let items = vec![
+            make_test_materialized(64, 2123, 2200, 507, 3, "runs", 12, &[0, 1, 2]),
+            make_test_materialized(96, 2128, 2128, 508, 0, "none", 12, &[]),
+            make_test_materialized(128, 2135, 2140, 509, 0, "none", 12, &[]),
+        ];
+
+        let finalists = select_finalist_indexes_with_top_k(
+            &items,
+            BodySelectObjective::SelectedTotal,
+            1,
+        )
+        .unwrap();
+        assert_eq!(finalists, vec![0]);
+    }
+
+    #[test]
+    fn select_finalist_indexes_honors_top_k_env() {
+        let items = vec![
+            make_test_materialized(64, 2123, 2200, 507, 3, "runs", 12, &[0, 1, 2]),
+            make_test_materialized(96, 2128, 2128, 508, 0, "none", 12, &[]),
+            make_test_materialized(128, 2135, 2140, 509, 0, "none", 12, &[]),
+        ];
+
+        let finalists = select_finalist_indexes_with_top_k(
+            &items,
+            BodySelectObjective::SelectedTotal,
+            2,
+        )
+        .unwrap();
+        assert_eq!(finalists, vec![0, 1]);
     }
 
     #[test]

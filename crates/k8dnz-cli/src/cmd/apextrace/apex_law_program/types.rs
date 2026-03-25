@@ -153,12 +153,28 @@ pub(crate) struct ProgramOverride {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProgramBridgeSegment {
+    pub(crate) input_index: usize,
+    pub(crate) input: String,
+    pub(crate) segment_idx: usize,
+    pub(crate) start_window_idx: usize,
+    pub(crate) end_window_idx: usize,
+    pub(crate) start_target_ordinal: usize,
+    pub(crate) end_target_ordinal: usize,
+    pub(crate) window_count: usize,
+    pub(crate) default_payload_exact: usize,
+    pub(crate) best_payload_exact: usize,
+    pub(crate) gain_exact: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LawProgramArtifact {
     pub(crate) config: ReplayConfig,
     pub(crate) summary: ProgramSummary,
     pub(crate) files: Vec<ProgramFile>,
     pub(crate) windows: Vec<ProgramWindow>,
     pub(crate) overrides: Vec<ProgramOverride>,
+    pub(crate) bridge_segments: Vec<ProgramBridgeSegment>,
 }
 
 #[derive(Clone, Debug)]
@@ -198,7 +214,7 @@ pub(crate) struct ReplayFileSummary {
     pub(crate) worsened_vs_searched_count: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SurfaceScoreboard {
     pub(crate) searched_total_piecewise_payload_exact: i64,
     pub(crate) artifact_selected_total_piecewise_payload_exact: i64,
@@ -209,6 +225,46 @@ pub(crate) struct SurfaceScoreboard {
     pub(crate) best_surface: String,
     pub(crate) best_total_piecewise_payload_exact: i64,
     pub(crate) best_delta_vs_artifact_exact: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ArtifactByteLedger {
+    pub(crate) total_bytes_exact: usize,
+    pub(crate) header_bytes_exact: usize,
+    pub(crate) config_bytes_exact: usize,
+    pub(crate) summary_bytes_exact: usize,
+    pub(crate) file_table_count_bytes_exact: usize,
+    pub(crate) file_rows_bytes_exact: usize,
+    pub(crate) window_table_count_bytes_exact: usize,
+    pub(crate) window_rows_bytes_exact: usize,
+    pub(crate) override_table_count_bytes_exact: usize,
+    pub(crate) override_rows_bytes_exact: usize,
+    pub(crate) bridge_table_count_bytes_exact: usize,
+    pub(crate) bridge_rows_bytes_exact: usize,
+}
+
+impl ArtifactByteLedger {
+    pub(crate) fn core_bytes_exact(&self) -> usize {
+        self.config_bytes_exact.saturating_add(self.summary_bytes_exact)
+    }
+
+    pub(crate) fn table_count_bytes_exact(&self) -> usize {
+        self.file_table_count_bytes_exact
+            .saturating_add(self.window_table_count_bytes_exact)
+            .saturating_add(self.override_table_count_bytes_exact)
+            .saturating_add(self.bridge_table_count_bytes_exact)
+    }
+
+    pub(crate) fn metadata_rows_bytes_exact(&self) -> usize {
+        self.file_rows_bytes_exact
+            .saturating_add(self.window_rows_bytes_exact)
+            .saturating_add(self.override_rows_bytes_exact)
+            .saturating_add(self.bridge_rows_bytes_exact)
+    }
+
+    pub(crate) fn non_header_bytes_exact(&self) -> usize {
+        self.total_bytes_exact.saturating_sub(self.header_bytes_exact)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -256,6 +312,8 @@ pub(crate) struct BodyCandidateScore {
     pub(crate) mode_penalty_exact: usize,
     pub(crate) selected_target_window_payload_exact: usize,
     pub(crate) selected_override_window_count: usize,
+    pub(crate) bridge_segment_count: usize,
+    pub(crate) bridge_window_count: usize,
     pub(crate) override_run_count: usize,
     pub(crate) max_override_run_length: usize,
     pub(crate) override_path_bytes_exact: usize,
@@ -264,12 +322,20 @@ pub(crate) struct BodyCandidateScore {
     pub(crate) untouched_window_count: usize,
     pub(crate) override_density_ppm: u32,
     pub(crate) untouched_window_pct_ppm: u32,
+    pub(crate) best_surface: String,
+    pub(crate) best_total_piecewise_payload_exact: i64,
+    pub(crate) best_delta_vs_piecewise_exact: i64,
+    pub(crate) frozen_total_piecewise_payload_exact: Option<i64>,
+    pub(crate) split_total_piecewise_payload_exact: Option<i64>,
+    pub(crate) bridge_total_piecewise_payload_exact: Option<i64>,
+    pub(crate) surface_beats_piecewise: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BuildMaterialized {
     pub(crate) artifact: LawProgramArtifact,
     pub(crate) body_scores: Vec<BodyCandidateScore>,
+    pub(crate) surface_scoreboard: Option<SurfaceScoreboard>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use super::types::{LawProgramArtifact, ProgramFile, ProgramOverride, ProgramSummary, ProgramWindow, ReplayConfig};
+use super::types::{LawProgramArtifact, ProgramBridgeSegment, ProgramFile, ProgramOverride, ProgramSummary, ProgramWindow, ReplayConfig};
 
 #[test]
 fn artifact_roundtrip() {
@@ -145,6 +145,19 @@ fn artifact_roundtrip() {
             best_payload_exact: 170,
             gain_exact: 10,
         }],
+        bridge_segments: vec![ProgramBridgeSegment {
+            input_index: 0,
+            input: "text/Genesis1.txt".to_string(),
+            segment_idx: 0,
+            start_window_idx: 0,
+            end_window_idx: 0,
+            start_target_ordinal: 0,
+            end_target_ordinal: 0,
+            window_count: 1,
+            default_payload_exact: 180,
+            best_payload_exact: 170,
+            gain_exact: 10,
+        }],
     };
 
     let bytes = artifact.encode().expect("encode artifact");
@@ -155,4 +168,5 @@ fn artifact_roundtrip() {
     assert_eq!(artifact.files, decoded.files);
     assert_eq!(artifact.windows, decoded.windows);
     assert_eq!(artifact.overrides, decoded.overrides);
+    assert_eq!(artifact.bridge_segments, decoded.bridge_segments);
 }

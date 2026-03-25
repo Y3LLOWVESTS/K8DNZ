@@ -330,7 +330,7 @@ fn override_path_bytes_runs(ordinals: &[usize]) -> usize {
             .sum::<usize>()
 }
 
-fn ordinal_runs(ordinals: &[usize]) -> Vec<(usize, usize)> {
+pub(crate) fn ordinal_runs(ordinals: &[usize]) -> Vec<(usize, usize)> {
     if ordinals.is_empty() {
         return Vec::new();
     }

@@ -46,6 +46,8 @@ struct CaseSummary {
     default_gain_exact: i64,
     target_window_count: usize,
     override_count: usize,
+    bridge_segment_count: usize,
+    bridge_window_count: usize,
     override_run_count: usize,
     max_override_run_length: usize,
     override_density_pct: f64,
@@ -149,20 +151,22 @@ fn load_case_summary(spec: &CaseInput) -> Result<CaseSummary> {
     let override_path_bytes_exact = get_usize(&build, "override_path_bytes_exact");
     let target_window_count = get_usize_fallback(&build, &["target_window_count", "window_count"]);
     let override_count = get_usize(&build, "override_count");
+    let bridge_segment_count = get_usize_fallback(
+        &build,
+        &["bridge_segment_count", "artifact_bridge_segment_count"],
+    );
+    let bridge_window_count = get_usize_fallback(
+        &build,
+        &["bridge_window_count", "artifact_bridge_window_count"],
+    );
     let override_run_count = get_usize(&build, "override_run_count");
     let max_override_run_length = get_usize(&build, "max_override_run_length");
     let untouched_window_count = get_usize(&build, "untouched_window_count");
 
-    let override_density_pct = get_f64_fallback(
-        &build,
-        &["override_density_pct"],
-        &["override_density_ppm"],
-    );
-    let untouched_window_pct = get_f64_fallback(
-        &build,
-        &["untouched_window_pct"],
-        &["untouched_window_pct_ppm"],
-    );
+    let override_density_pct =
+        get_f64_fallback(&build, &["override_density_pct"], &["override_density_ppm"]);
+    let untouched_window_pct =
+        get_f64_fallback(&build, &["untouched_window_pct"], &["untouched_window_pct_ppm"]);
 
     let replay_selected_total_piecewise_payload_exact =
         get_i64(&replay, "replay_selected_total_piecewise_payload_exact");
@@ -178,14 +182,14 @@ fn load_case_summary(spec: &CaseInput) -> Result<CaseSummary> {
 
     let (best_surface, best_total_piecewise_payload_exact, best_delta_vs_artifact_exact) =
         select_best_surface_from_report(
+            &build,
             &replay,
             artifact_selected_total_piecewise_payload_exact as i64,
             replay_selected_total_piecewise_payload_exact,
         );
 
-    let stability_failures = usize::from(drift_exact != 0)
-        + collapse_90_failures
-        + newline_extinct_failures;
+    let stability_failures =
+        usize::from(drift_exact != 0) + collapse_90_failures + newline_extinct_failures;
     let stable = stability_failures == 0;
 
     let closure_penalty_exact = {
@@ -197,6 +201,7 @@ fn load_case_summary(spec: &CaseInput) -> Result<CaseSummary> {
                 "none" => 0usize,
                 "delta" => 0usize,
                 "runs" => 0usize,
+                "bridge" => 0usize,
                 "ordinals" => 64usize,
                 _ => 64usize,
             };
@@ -228,6 +233,8 @@ fn load_case_summary(spec: &CaseInput) -> Result<CaseSummary> {
         default_gain_exact,
         target_window_count,
         override_count,
+        bridge_segment_count,
+        bridge_window_count,
         override_run_count,
         max_override_run_length,
         override_density_pct,
@@ -250,8 +257,7 @@ fn load_case_summary(spec: &CaseInput) -> Result<CaseSummary> {
 }
 
 fn parse_key_value_report(path: &PathBuf) -> Result<BTreeMap<String, String>> {
-    let body = fs::read_to_string(path)
-        .with_context(|| format!("read report {}", path.display()))?;
+    let body = fs::read_to_string(path).with_context(|| format!("read report {}", path.display()))?;
     let mut out = BTreeMap::<String, String>::new();
 
     for raw in body.lines() {
@@ -287,15 +293,46 @@ fn get_i64(map: &BTreeMap<String, String>, key: &str) -> i64 {
 }
 
 fn select_best_surface_from_report(
+    build: &BTreeMap<String, String>,
     replay: &BTreeMap<String, String>,
     artifact_selected_total_piecewise_payload_exact: i64,
     replay_selected_total_piecewise_payload_exact: i64,
 ) -> (String, i64, i64) {
-    if replay.contains_key("best_surface") && replay.contains_key("best_total_piecewise_payload_exact") {
-        let best_surface = get_string(replay, "best_surface");
+    if replay.contains_key("best_surface") && replay.contains_key("best_total_piecewise_payload_exact")
+    {
+        let best_surface = normalize_surface_label(&get_string(replay, "best_surface"));
         let best_total = get_i64(replay, "best_total_piecewise_payload_exact");
         let best_delta = if replay.contains_key("best_delta_vs_artifact_exact") {
             get_i64(replay, "best_delta_vs_artifact_exact")
+        } else {
+            best_total - artifact_selected_total_piecewise_payload_exact
+        };
+        return (best_surface, best_total, best_delta);
+    }
+
+    if build.contains_key("surface_best_surface")
+        && build.contains_key("surface_best_total_piecewise_payload_exact")
+    {
+        let best_surface = normalize_surface_label(&get_string(build, "surface_best_surface"));
+        let best_total = get_i64(build, "surface_best_total_piecewise_payload_exact");
+        let best_delta = if build.contains_key("surface_gap_vs_codec_exact") {
+            get_i64(build, "surface_gap_vs_codec_exact")
+        } else if build.contains_key("build_frontier_best_delta_vs_piecewise_exact") {
+            get_i64(build, "build_frontier_best_delta_vs_piecewise_exact")
+        } else {
+            best_total - artifact_selected_total_piecewise_payload_exact
+        };
+        return (best_surface, best_total, best_delta);
+    }
+
+    if build.contains_key("build_frontier_best_surface")
+        && build.contains_key("build_frontier_best_total_piecewise_payload_exact")
+    {
+        let best_surface =
+            normalize_surface_label(&get_string(build, "build_frontier_best_surface"));
+        let best_total = get_i64(build, "build_frontier_best_total_piecewise_payload_exact");
+        let best_delta = if build.contains_key("build_frontier_best_delta_vs_piecewise_exact") {
+            get_i64(build, "build_frontier_best_delta_vs_piecewise_exact")
         } else {
             best_total - artifact_selected_total_piecewise_payload_exact
         };
@@ -315,8 +352,8 @@ fn select_best_surface_from_report(
 
     for (key, label) in [
         ("frozen_total_piecewise_payload_exact", "freeze"),
-        ("split_total_piecewise_payload_exact", "split"),
-        ("bridge_total_piecewise_payload_exact", "bridge"),
+        ("split_total_piecewise_payload_exact", "split-freeze"),
+        ("bridge_total_piecewise_payload_exact", "bridge-freeze"),
     ] {
         if replay.contains_key(key) {
             candidates.push((label.to_string(), get_i64(replay, key)));
@@ -324,12 +361,22 @@ fn select_best_surface_from_report(
     }
 
     candidates.sort_by_key(|(label, total)| (*total, label.clone()));
-    let (best_surface, best_total) = candidates
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| ("artifact".to_string(), artifact_selected_total_piecewise_payload_exact));
+    let (best_surface, best_total) = candidates.into_iter().next().unwrap_or_else(|| {
+        (
+            "artifact".to_string(),
+            artifact_selected_total_piecewise_payload_exact,
+        )
+    });
     let best_delta = best_total - artifact_selected_total_piecewise_payload_exact;
     (best_surface, best_total, best_delta)
+}
+
+fn normalize_surface_label(raw: &str) -> String {
+    match raw {
+        "bridge" => "bridge-freeze".to_string(),
+        "split" => "split-freeze".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn get_usize_fallback(map: &BTreeMap<String, String>, keys: &[&str]) -> usize {
@@ -431,7 +478,7 @@ fn render_txt(rows: &[CaseSummary]) -> String {
     out.push_str("\n--- codec-ranking ---\n");
     for (idx, row) in codec_rank.iter().enumerate() {
         out.push_str(&format!(
-            "rank={} label={} objective={} codec_total_exact={} closure_total_exact={} grade={} stable={} law={} chunk={} overrides={} runs={} max_run_len={} target_windows={} override_density_pct={:.6} override_path_mode={} override_path_bytes_exact={} default_gain_exact={} replay_gap_exact={} artifact_path={}\n",
+            "rank={} label={} objective={} codec_total_exact={} closure_total_exact={} grade={} stable={} law={} chunk={} overrides={} bridge_segments={} bridge_windows={} runs={} max_run_len={} target_windows={} override_density_pct={:.6} override_path_mode={} override_path_bytes_exact={} default_gain_exact={} replay_gap_exact={} artifact_path={}\n",
             idx + 1,
             row.label,
             row.body_select_objective,
@@ -442,6 +489,8 @@ fn render_txt(rows: &[CaseSummary]) -> String {
             row.target_global_law_id,
             row.default_local_chunk_bytes,
             row.override_count,
+            row.bridge_segment_count,
+            row.bridge_window_count,
             row.override_run_count,
             row.max_override_run_length,
             row.target_window_count,
@@ -457,7 +506,7 @@ fn render_txt(rows: &[CaseSummary]) -> String {
     out.push_str("\n--- surface-ranking ---\n");
     for (idx, row) in surface_rank.iter().enumerate() {
         out.push_str(&format!(
-            "rank={} label={} objective={} best_surface={} best_total_exact={} best_delta_vs_artifact_exact={} surface_beats_artifact={} codec_total_exact={} closure_total_exact={} stable={} law={} chunk={} overrides={} runs={} max_run_len={} override_path_mode={} artifact_path={}\n",
+            "rank={} label={} objective={} best_surface={} best_total_exact={} best_delta_vs_artifact_exact={} surface_beats_artifact={} codec_total_exact={} closure_total_exact={} stable={} law={} chunk={} overrides={} bridge_segments={} bridge_windows={} runs={} max_run_len={} override_path_mode={} artifact_path={}\n",
             idx + 1,
             row.label,
             row.body_select_objective,
@@ -471,6 +520,8 @@ fn render_txt(rows: &[CaseSummary]) -> String {
             row.target_global_law_id,
             row.default_local_chunk_bytes,
             row.override_count,
+            row.bridge_segment_count,
+            row.bridge_window_count,
             row.override_run_count,
             row.max_override_run_length,
             row.override_path_mode,
@@ -481,7 +532,7 @@ fn render_txt(rows: &[CaseSummary]) -> String {
     out.push_str("\n--- closure-ranking ---\n");
     for (idx, row) in closure_rank.iter().enumerate() {
         out.push_str(&format!(
-            "rank={} label={} objective={} closure_total_exact={} codec_total_exact={} closure_penalty_exact={} grade={} stable={} law={} chunk={} overrides={} runs={} max_run_len={} target_windows={} untouched_window_count={} untouched_window_pct={:.6} override_density_pct={:.6} override_path_mode={} override_path_bytes_exact={} drift_exact={} collapse_90_failures={} newline_extinct_failures={}\n",
+            "rank={} label={} objective={} closure_total_exact={} codec_total_exact={} closure_penalty_exact={} grade={} stable={} law={} chunk={} overrides={} bridge_segments={} bridge_windows={} runs={} max_run_len={} target_windows={} untouched_window_count={} untouched_window_pct={:.6} override_density_pct={:.6} override_path_mode={} override_path_bytes_exact={} drift_exact={} collapse_90_failures={} newline_extinct_failures={}\n",
             idx + 1,
             row.label,
             row.body_select_objective,
@@ -493,6 +544,8 @@ fn render_txt(rows: &[CaseSummary]) -> String {
             row.target_global_law_id,
             row.default_local_chunk_bytes,
             row.override_count,
+            row.bridge_segment_count,
+            row.bridge_window_count,
             row.override_run_count,
             row.max_override_run_length,
             row.target_window_count,
@@ -510,7 +563,7 @@ fn render_txt(rows: &[CaseSummary]) -> String {
     out.push_str("\n--- case-details ---\n");
     for row in rows {
         out.push_str(&format!(
-            "label={} artifact_path={} target_global_law_id={} objective={} default_local_chunk_bytes={} codec_total_exact={} projected_default_total_piecewise_payload_exact={} default_gain_exact={} closure_penalty_exact={} closure_total_exact={} override_count={} override_run_count={} max_override_run_length={} target_window_count={} override_density_pct={:.6} untouched_window_pct={:.6} override_path_mode={} override_path_bytes_exact={} drift_exact={} replay_selected_total_piecewise_payload_exact={} replay_gap_exact={} best_surface={} best_total_exact={} best_delta_vs_artifact_exact={} surface_beats_artifact={} collapse_90_failures={} newline_extinct_failures={} stable={} grade={}\n",
+            "label={} artifact_path={} target_global_law_id={} objective={} default_local_chunk_bytes={} codec_total_exact={} projected_default_total_piecewise_payload_exact={} default_gain_exact={} closure_penalty_exact={} closure_total_exact={} override_count={} bridge_segment_count={} bridge_window_count={} override_run_count={} max_override_run_length={} target_window_count={} override_density_pct={:.6} untouched_window_pct={:.6} override_path_mode={} override_path_bytes_exact={} drift_exact={} replay_selected_total_piecewise_payload_exact={} replay_gap_exact={} best_surface={} best_total_exact={} best_delta_vs_artifact_exact={} surface_beats_artifact={} collapse_90_failures={} newline_extinct_failures={} stable={} grade={}\n",
             row.label,
             row.artifact_path,
             row.target_global_law_id,
@@ -522,6 +575,8 @@ fn render_txt(rows: &[CaseSummary]) -> String {
             row.closure_penalty_exact,
             row.closure_total_exact,
             row.override_count,
+            row.bridge_segment_count,
+            row.bridge_window_count,
             row.override_run_count,
             row.max_override_run_length,
             row.target_window_count,
@@ -549,7 +604,7 @@ fn render_txt(rows: &[CaseSummary]) -> String {
 fn render_csv(rows: &[CaseSummary]) -> String {
     let mut out = String::new();
     out.push_str(
-        "label,artifact_path,target_global_law_id,body_select_objective,default_local_chunk_bytes,codec_total_exact,projected_default_total_piecewise_payload_exact,default_gain_exact,closure_penalty_exact,closure_total_exact,override_count,override_run_count,max_override_run_length,target_window_count,override_density_pct,untouched_window_count,untouched_window_pct,override_path_mode,override_path_bytes_exact,drift_exact,replay_selected_total_piecewise_payload_exact,replay_gap_exact,best_surface,best_total_exact,best_delta_vs_artifact_exact,surface_beats_artifact,collapse_90_failures,newline_extinct_failures,stability_failures,stable,grade\n",
+        "label,artifact_path,target_global_law_id,body_select_objective,default_local_chunk_bytes,codec_total_exact,projected_default_total_piecewise_payload_exact,default_gain_exact,closure_penalty_exact,closure_total_exact,override_count,bridge_segment_count,bridge_window_count,override_run_count,max_override_run_length,target_window_count,override_density_pct,untouched_window_count,untouched_window_pct,override_path_mode,override_path_bytes_exact,drift_exact,replay_selected_total_piecewise_payload_exact,replay_gap_exact,best_surface,best_total_exact,best_delta_vs_artifact_exact,surface_beats_artifact,collapse_90_failures,newline_extinct_failures,stability_failures,stable,grade\n",
     );
 
     for row in rows {
@@ -565,6 +620,8 @@ fn render_csv(rows: &[CaseSummary]) -> String {
             row.closure_penalty_exact.to_string(),
             row.closure_total_exact.to_string(),
             row.override_count.to_string(),
+            row.bridge_segment_count.to_string(),
+            row.bridge_window_count.to_string(),
             row.override_run_count.to_string(),
             row.max_override_run_length.to_string(),
             row.target_window_count.to_string(),
@@ -618,8 +675,8 @@ mod tests {
             "-21".to_string(),
         );
 
-        let got = select_best_surface_from_report(&replay, 4266, 4266);
-        assert_eq!(got, ("bridge".to_string(), 4245, -21));
+        let got = select_best_surface_from_report(&BTreeMap::new(), &replay, 4266, 4266);
+        assert_eq!(got, ("bridge-freeze".to_string(), 4245, -21));
     }
 
     #[test]
@@ -638,7 +695,28 @@ mod tests {
             "4245".to_string(),
         );
 
-        let got = select_best_surface_from_report(&replay, 4266, 4266);
-        assert_eq!(got, ("bridge".to_string(), 4245, -21));
+        let got = select_best_surface_from_report(&BTreeMap::new(), &replay, 4266, 4266);
+        assert_eq!(got, ("bridge-freeze".to_string(), 4245, -21));
+    }
+
+    #[test]
+    fn select_best_surface_from_report_uses_build_frontier_when_replay_lacks_scoreboard() {
+        let mut build = BTreeMap::new();
+        build.insert(
+            "build_frontier_best_surface".to_string(),
+            "bridge-freeze".to_string(),
+        );
+        build.insert(
+            "build_frontier_best_total_piecewise_payload_exact".to_string(),
+            "4245".to_string(),
+        );
+        build.insert(
+            "build_frontier_best_delta_vs_piecewise_exact".to_string(),
+            "-21".to_string(),
+        );
+
+        let replay = BTreeMap::new();
+        let got = select_best_surface_from_report(&build, &replay, 4266, 4266);
+        assert_eq!(got, ("bridge-freeze".to_string(), 4245, -21));
     }
 }

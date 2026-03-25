@@ -1,5 +1,6 @@
 
 use anyhow::{anyhow, Context, Result};
+use std::{env, thread};
 use k8dnz_apextrace::{
     generate_bytes, ApexKey, ApexMap, ApexMapCfg, OverrideTrace, RefineCfg, RefineStats, SearchCfg,
 };
@@ -19,6 +20,163 @@ use super::ws_lane_types::{
 };
 
 const APEX_KEY_BYTES_EXACT: usize = 48;
+
+#[derive(Clone, Copy, Debug)]
+struct SweepTask {
+    chunk_bytes: usize,
+    boundary_band: usize,
+    field_margin: u64,
+    newline_demote_margin: u64,
+}
+
+fn resolve_apex_map_sweep_jobs() -> usize {
+    env::var("K8DNZ_APEX_MAP_SWEEP_JOBS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, 8)
+}
+
+fn build_sweep_tasks(
+    chunk_values: &[usize],
+    boundary_band_values: &[usize],
+    field_margin_values: &[u64],
+    newline_demote_margin_values: &[u64],
+) -> Vec<SweepTask> {
+    let mut tasks = Vec::with_capacity(
+        chunk_values
+            .len()
+            .saturating_mul(boundary_band_values.len())
+            .saturating_mul(field_margin_values.len())
+            .saturating_mul(newline_demote_margin_values.len()),
+    );
+    for &chunk_bytes in chunk_values {
+        for &boundary_band in boundary_band_values {
+            for &field_margin in field_margin_values {
+                for &newline_demote_margin in newline_demote_margin_values {
+                    tasks.push(SweepTask {
+                        chunk_bytes,
+                        boundary_band,
+                        field_margin,
+                        newline_demote_margin,
+                    });
+                }
+            }
+        }
+    }
+    tasks
+}
+
+fn partition_sweep_tasks(tasks: &[SweepTask], jobs: usize) -> Vec<Vec<SweepTask>> {
+    let worker_count = jobs.max(1).min(tasks.len().max(1));
+    let mut partitions = vec![Vec::<SweepTask>::new(); worker_count];
+    for (idx, task) in tasks.iter().copied().enumerate() {
+        partitions[idx % worker_count].push(task);
+    }
+    partitions.retain(|part| !part.is_empty());
+    partitions
+}
+
+fn run_apex_map_lane_sweep(
+    args: &ApexMapLaneArgs,
+    norm: &[u8],
+    ws: &WsLanes,
+    baseline_artifact_bytes: usize,
+    baseline_max_ticks_used: u64,
+    baseline_class_mismatches: usize,
+    baseline_class_patch_entries: usize,
+    baseline_class_patch_bytes: usize,
+    target_metrics: &super::class_metrics::LaneClassMetrics,
+    global: &WsLaneBest,
+    global_patch_entries: usize,
+    global_patch_bytes: &[u8],
+    global_total_payload_exact: usize,
+    cfg: SearchCfg,
+    tasks: &[SweepTask],
+) -> Result<Vec<ApexMapLaneRun>> {
+    let jobs = resolve_apex_map_sweep_jobs();
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    if jobs <= 1 || tasks.len() <= 1 {
+        let mut runs = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            runs.push(run_apex_map_lane_once(
+                args,
+                norm,
+                ws,
+                baseline_artifact_bytes,
+                baseline_max_ticks_used,
+                baseline_class_mismatches,
+                baseline_class_patch_entries,
+                baseline_class_patch_bytes,
+                target_metrics,
+                global,
+                global_patch_entries,
+                global_patch_bytes,
+                global_total_payload_exact,
+                cfg,
+                task.chunk_bytes,
+                task.boundary_band,
+                task.field_margin,
+                task.newline_demote_margin,
+            )?);
+        }
+        return Ok(runs);
+    }
+
+    let partitions = partition_sweep_tasks(tasks, jobs);
+    let mut runs = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(partitions.len());
+        for partition in partitions {
+            handles.push(scope.spawn(move || -> Result<Vec<ApexMapLaneRun>> {
+                let mut local = Vec::with_capacity(partition.len());
+                for task in partition {
+                    local.push(run_apex_map_lane_once(
+                        args,
+                        norm,
+                        ws,
+                        baseline_artifact_bytes,
+                        baseline_max_ticks_used,
+                        baseline_class_mismatches,
+                        baseline_class_patch_entries,
+                        baseline_class_patch_bytes,
+                        target_metrics,
+                        global,
+                        global_patch_entries,
+                        global_patch_bytes,
+                        global_total_payload_exact,
+                        cfg,
+                        task.chunk_bytes,
+                        task.boundary_band,
+                        task.field_margin,
+                        task.newline_demote_margin,
+                    )?);
+                }
+                Ok(local)
+            }));
+        }
+
+        let mut joined = Vec::with_capacity(tasks.len());
+        for handle in handles {
+            match handle.join() {
+                Ok(result) => joined.extend(result?),
+                Err(_) => return Err(anyhow!("apex-map-lane sweep worker panicked")),
+            }
+        }
+        Ok::<Vec<ApexMapLaneRun>, anyhow::Error>(joined)
+    })?;
+
+    runs.sort_by_key(|run| {
+        (
+            run.report.chunk_bytes,
+            run.report.boundary_band,
+            run.report.field_margin,
+            run.report.newline_demote_margin,
+        )
+    });
+    Ok(runs)
+}
 
 #[derive(Clone, Debug)]
 struct ApexMapLaneReport {
@@ -261,40 +419,30 @@ pub fn run_apex_map_lane(args: ApexMapLaneArgs) -> Result<()> {
     let global_total_payload_exact = global_patch_bytes.len().saturating_add(APEX_KEY_BYTES_EXACT);
     let global_patch_entries = global_patch.entries.len();
 
-    let mut runs = Vec::with_capacity(
-        chunk_values
-            .len()
-            .saturating_mul(boundary_band_values.len())
-            .saturating_mul(field_margin_values.len())
-            .saturating_mul(newline_demote_margin_values.len()),
+    let target_metrics = compute_lane_class_metrics(&ws.class_lane, &ws.class_lane)?;
+    let sweep_tasks = build_sweep_tasks(
+        &chunk_values,
+        &boundary_band_values,
+        &field_margin_values,
+        &newline_demote_margin_values,
     );
-    for chunk_bytes in chunk_values {
-        for &boundary_band in &boundary_band_values {
-            for &field_margin in &field_margin_values {
-                for &newline_demote_margin in &newline_demote_margin_values {
-                runs.push(run_apex_map_lane_once(
-                    &args,
-                    &norm,
-                    &ws,
-                    artifact.len(),
-                    baseline_ticks_used,
-                    baseline_stats.class_mismatches,
-                    baseline_class_patch_entries,
-                    baseline_class_patch_bytes,
-                    &global,
-                    global_patch_entries,
-                    &global_patch_bytes,
-                    global_total_payload_exact,
-                    cfg,
-                    chunk_bytes,
-                    boundary_band,
-                    field_margin,
-                    newline_demote_margin,
-                )?);
-                }
-            }
-        }
-    }
+    let mut runs = run_apex_map_lane_sweep(
+        &args,
+        &norm,
+        &ws,
+        artifact.len(),
+        baseline_ticks_used,
+        baseline_stats.class_mismatches,
+        baseline_class_patch_entries,
+        baseline_class_patch_bytes,
+        &target_metrics,
+        &global,
+        global_patch_entries,
+        &global_patch_bytes,
+        global_total_payload_exact,
+        cfg,
+        &sweep_tasks,
+    )?;
 
     if runs.is_empty() {
         return Err(anyhow!("apex-map-lane: no chunk sizes to run"));
@@ -357,6 +505,7 @@ fn run_apex_map_lane_once(
     baseline_class_mismatches: usize,
     baseline_class_patch_entries: usize,
     baseline_class_patch_bytes: usize,
+    target_metrics: &super::class_metrics::LaneClassMetrics,
     global: &WsLaneBest,
     global_patch_entries: usize,
     global_patch_bytes: &[u8],
@@ -367,8 +516,6 @@ fn run_apex_map_lane_once(
     field_margin: u64,
     newline_demote_margin: u64,
 ) -> Result<ApexMapLaneRun> {
-    let target_metrics = compute_lane_class_metrics(&ws.class_lane, &ws.class_lane)?;
-
     let (chunked, chunk_summary) = brute_force_best_ws_lane_chunked(
         &ws.class_lane,
         cfg,
@@ -381,13 +528,13 @@ fn run_apex_map_lane_once(
     let chunk_patch_bytes = chunk_patch.encode();
 
     let field_source = if args.field_from_global {
-        global.predicted.clone()
+        global.predicted.as_slice()
     } else {
-        chunked.predicted.clone()
+        chunked.predicted.as_slice()
     };
 
     let map = ApexMap::from_symbols(
-        &field_source,
+        field_source,
         ApexMapCfg {
             class_count: 3,
             max_depth: args.map_max_depth,
@@ -423,10 +570,11 @@ fn run_apex_map_lane_once(
     )?;
 
     let demotion_stats = if newline_demote_margin == 0 {
+        let newline_count = field_predicted_refined.iter().filter(|&&v| v == 2).count();
         NewlineDemotionStats {
             predicted: field_predicted_refined.clone(),
-            before_count: field_predicted_refined.iter().filter(|&&v| v == 2).count(),
-            after_count: field_predicted_refined.iter().filter(|&&v| v == 2).count(),
+            before_count: newline_count,
+            after_count: newline_count,
             floor_used: 0,
             demoted: 0,
             extinct_flag: false,

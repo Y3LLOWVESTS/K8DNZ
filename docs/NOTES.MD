@@ -28092,7 +28092,1832 @@ That is progress.
 
 
 ### END NOTE - MARCH 24 2026 - 01:35 CST
-### BEGIN NOTE - MAR..
 
-Show in text field
 
+
+
+
+
+### BEGIN NOTE - MARCH 24 2026 - 16:00 CST
+
+Absolutely. Here is a **paste-ready carry-over pack** for the next instance, updated to include the latest finished run, the artifact/closure interpretation, the 99% closure emphasis, and the “time as future optimizer” doctrine.
+
+---
+
+# K8DNZ carry-over notes — March 24, 2026 late handoff
+
+## 0) Executive snapshot
+
+This was an excellent week for K8DNZ. The project is no longer in a “does the branch even work?” phase. The current `apex_law_program` branch is building, replaying, and auditing deterministically again, and the latest finished run is stable across all four tracked cases with `drift_exact=0`, `collapse_90_failures=0`, and `newline_extinct_failures=0`. The law-program artifact layer is real, usable, and no longer the main source of uncertainty. 
+
+The most important current truth is this:
+
+**K8DNZ has proved a real deterministic artifact/program object on whitespace/class, but it has not yet fully solved closed-form law-to-engine closure.**
+
+The project is no longer blocked on replay trust. The remaining problem is narrower and more important: the artifact is still not fully subsuming the strongest measured surface family, and the selected-total winners still carry some unresolved correction-like mass even when explicit stored path bytes are tiny.
+
+The next emphasis should be:
+
+**push toward true 99% closure first, then optimize/shrink the knob/artifact data afterward.**
+
+That is the right order. Do not prematurely switch the main project into “compress the knobs harder” mode before freezing the correct closure object. The current evidence says that would risk polishing the wrong representation.
+
+---
+
+## 1) Current measured truth
+
+The latest finished run gives the cleanest stable truth table so far.
+
+For `g1`:
+
+* `codec_best_label = g1_codec_selected_total`
+* `codec_best_total_exact = 2124`
+* `closure_best_label = g1_closure_default_total`
+* `closure_best_total_exact = 2128`
+* `surface_best_total_exact = 2115`
+* `surface_best_surface = freeze` 
+
+For `g12`:
+
+* `g12_codec_selected_total = 4266`
+* `g12_closure_default_total = 4302`
+* best measured surface on both is `bridge-freeze = 4245`
+
+This means the current branch is **stable and honest**, but the artifact is **still not the best surface on the board**:
+
+* on `g1`, best surface beats artifact by `9` bytes
+* on `g12`, best surface beats artifact by `21` bytes
+* pure-body closure defaults are even farther from the best surface (`-13` on `g1`, `-57` on `g12`)
+
+So the branch is working. The question is no longer whether the artifact can replay. It can. The question is:
+
+**what is the right closure object?**
+
+Right now the leading candidates remain:
+
+* dominant body + sparse chunk overrides
+* dominant body + sparse bridge interruptions
+
+and the current surface scoreboard still gives real weight to bridge-freeze as the lead interruption-language candidate, especially on `g12`.
+
+---
+
+## 2) What we have accomplished so far
+
+K8DNZ has already established several major milestones:
+
+First, the project has a real architecture now. The active frontier is the folderized `apex_law_program` subsystem under `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/`, sitting downstream of the deterministic cadence engine and the ApexTrace analyzers. The repo is no longer just scattered experiments. It now has a recognizable codec/closure bridge layer.
+
+Second, the latest branch state has re-established **honest artifact build + replay with exact determinism**. The current finished run shows replay gap `0` and drift `0` on all tracked cases, which means the earlier semantic mismatch problem is closed in this run state.
+
+Third, the branch has successfully separated three distinct ranking regimes:
+
+* **codec-best**
+* **closure-best**
+* **surface-best**
+
+That separation is one of the most important advances in the repo because it prevents the project from confusing “smallest packed artifact” with “best closed-form explanation.” The code/reporting now explicitly ranks by codec totals, closure totals, and surface totals separately. 
+
+Fourth, the project has recovered the doctrinally important `chunk=96` body as the central anchor. In the latest finished run, all four ranked cases are `law=G1` and `chunk=96`, with the closure winners being `PURE_BODY` and zero-override. That is a stronger doctrinal place than the earlier denser `32`/`64` override-heavy artifact winners.
+
+---
+
+## 3) Current compression status
+
+The current honest whole-object `g1` frontier is still around **49.5% compression**, not 70%.
+
+Why:
+
+* best measured `g1` surface total is `2115`
+* the canonical `Genesis1` target is `4201` bytes
+* so current best whole-object compression is about `(4201 - 2115) / 4201 ≈ 49.7%`
+
+So:
+
+* **working codec prototype:** yes
+* **deterministic artifact object:** yes
+* **real chance of future success:** yes
+* **70% compression already achieved:** no
+* **90% compression already achieved:** no
+
+This is still a major success, because the project has proved a real deterministic program object rather than just getting a lucky score.
+
+---
+
+## 4) What the artifact is
+
+Use this terminology going forward:
+
+**artifact = the entire saved compressed object for the current law-program branch**
+
+More precisely:
+
+* **artifact core** = knob/program structure
+* **artifact exception layer** = residual-like overrides / path / interruption machinery
+
+That is the right mental model for the current `.aklp` object. It is not a classic dictionary compressor and it is not a cheat. The artifact is the saved law-program container. The only philosophical risk is not dictionary cheating; it is whether too much of the artifact is still an efficiently packed transcript of local interruption history instead of a truly tiny closed-form law.
+
+---
+
+## 5) Closure versus “99% knob representation”
+
+This distinction must stay prominent.
+
+### Storage-format view
+
+In the **artifact-container** sense, the current branch is already extremely structure-heavy.
+
+Examples from the finished run:
+
+* `g1_codec_selected_total`: `override_path_bytes_exact = 4`
+* `g12_codec_selected_total`: `override_path_bytes_exact = 10`
+* both closure-default cases: `override_path_bytes_exact = 0`
+
+So in the narrow storage-format sense, the artifacts look roughly like **99%+ structure and <1% explicit path bytes**.
+
+### Deeper closure view
+
+But true **closure** asks whether the settings genuinely explain the result, or whether some of the explanatory power still comes from packed interruption/correction behavior.
+
+The finished run still shows:
+
+* `g1_codec_selected_total`: `closure_penalty_exact = 296`, `closure_total_exact = 2420`
+* `g12_codec_selected_total`: `closure_penalty_exact = 740`, `closure_total_exact = 5006`
+* both closure-default cases: `closure_penalty_exact = 0`
+
+So the best honest reading is:
+
+* **artifact-container view:** already ~99% structure
+* **closure view:** selected-total winners still behave more like **~85–88% knob/closure and ~12–15% unresolved correction-like mass**
+* **pure-body closure-default cases:** closest current approximation to true knob-only closure objects
+
+This is the key difference:
+
+* **99% knob representation** asks: “what does the stored object look like?”
+* **99% closure** asks: “is that stored object truly a small law, or is it still hiding too much exception history?”
+
+The next emphasis should be the second one.
+
+---
+
+## 6) North-star doctrine
+
+Keep this at the top:
+
+> **The missing X is still closed-form law-to-engine closure.**
+>
+> The project must not confuse packed empirical history, dense override schedules, or small explicit path bytes with the true solution.
+>
+> The true solution is still a low-dimensional cadence-family body that explains the dominant lane with sparse interruptions layered on top.
+
+Also keep these hard constraints frozen:
+
+* no dictionary cheat
+* no Genesis-specific baked-in hacks
+* no drift from determinism or reversibility
+* do not blur codec-best and closure-best back together
+* the cadence engine itself is not the blocker; the blocker is the explanation language at the artifact layer 
+
+---
+
+## 7) What remains unresolved
+
+The central unresolved problem is now very specific:
+
+**the artifact is real and stable, but it still does not subsume the strongest surface family.**
+
+The measured evidence is:
+
+* on `g1`, best surface is `freeze = 2115`, better than both artifact cases
+* on `g12`, best surface is `bridge-freeze = 4245`, better than both artifact cases
+
+So the next doctrinal question is still:
+
+**Is closure on whitespace/class best expressed as:**
+
+1. dominant body + sparse chunk overrides
+   or
+2. dominant body + sparse bridge segments?
+
+At the moment, the strongest reading is:
+
+* `chunk=96` is the dominant body anchor
+* pure-body `96` artifacts are the cleanest closure-shaped objects
+* bridge-freeze remains the strongest measured surface competitor, especially on `g12`
+* therefore, the next major move is likely **bridge-first closure design**, not a return to dense override hunting
+
+---
+
+## 8) The next emphasis: 99% closure
+
+This should now be the project’s main emphasis.
+
+Do **not** make “shrink the knob data” the primary objective yet.
+
+The correct order is:
+
+1. **freeze the honest closure object**
+2. **then shrink that object**
+
+Why:
+
+If you optimize knob bytes too early, you risk shrinking a beautiful container for the wrong explanation. The current evidence says the project is very close to true knob-dominant storage already, but still not fully at true 99% closure in the deeper sense.
+
+So the next success condition is not “find a few more bytes.” It is:
+
+**turn the artifact into the right closure object so that the selected-total winner starts to look like the zero-penalty pure-body cases.**
+
+Working estimates from this instance:
+
+* **99% closure:** realistic
+* **100% closure:** possible but harder
+* **90% compression after true 99% closure + knob optimization:** much more plausible than it is today
+
+Those are judgment estimates, not measured repo facts.
+
+---
+
+## 9) Strategy to maximize odds of success
+
+### Immediate strategy
+
+Treat the next phase as a **closure-lock phase**, not a broad-search phase.
+
+The objective order should be:
+
+1. keep `apex_law_program` as center of gravity
+2. keep `codec-best`, `closure-best`, and `surface-best` separated
+3. keep `g1` and `g12` as the core truth surfaces
+4. force the interruption-language decision
+5. freeze doctrine before expanding scope
+
+### Strongest tactical hypothesis
+
+The strongest current hypothesis is:
+
+**dominant `G1` / `chunk=96` body + sparse bridge interruptions**
+
+That is not yet proven as the final artifact form, but it is the leading doctrinal candidate because:
+
+* `chunk=96` is now the stable anchor across the current finished run
+* pure-body `96` is closure-clean
+* bridge-freeze is still the strongest measured surface on `g12` and tied to the best `g1` surface family story
+
+### What not to do
+
+Do not:
+
+* go back to broad random knob hunting
+* treat dense schedule packing as solved closure
+* confuse small explicit path bytes with full closure
+* pivot the whole project into generic knob compression before freezing the right explanation language
+
+---
+
+## 10) The “time” doctrine for future optimization
+
+This needs to be carried forward explicitly.
+
+**Time should be treated as a major future optimizer of the artifact core, but not as a substitute for closure.**
+
+The intuition is correct: if time/program structure is extremely compressible, it may be one of the best ways to shrink the artifact/knob side later. But the proper order is:
+
+1. **first** solve/freeze the honest closure object
+2. **then** use time to compress that closure object further
+
+Reason:
+
+The project doctrine already says the program/timemap side can be tiny, but residual/correction mass is still the blocker when the explanation language is wrong. So time should be used as a second-stage shrinker of a correct closure object, not as a way to avoid solving closure first.
+
+Carry forward this exact optimization doctrine:
+
+* use time to compress regime transitions
+* use time to compress segment starts/stops
+* use time to replace explicit interruption schedules where a smaller temporal law can regenerate them
+* use time to shrink the artifact core after bridge/sparse closure is frozen
+* do not let “time is tiny” distract from the real need to collapse correction-like mass
+
+---
+
+## 11) Concrete next-instance objective order
+
+When the next instance starts, the right priority order is:
+
+1. Re-anchor on the latest finished run truth:
+
+   * `g1` best surface = `2115 freeze`
+   * `g1` codec-best = `2124`
+   * `g1` closure-best = `2128 pure-body`
+   * `g12` best surface = `4245 bridge-freeze`
+   * `g12` codec-best = `4266`
+   * `g12` closure-best = `4302 pure-body`
+
+2. Treat `chunk=96` as the dominant body hypothesis until disproven.
+
+3. Push the artifact toward first-class bridge-aware closure representation instead of only sparse override representation. This is the highest-value architectural move left.
+
+4. Add or improve exact byte-ledger reporting so the next run can state precisely:
+
+   * artifact core bytes
+   * header bytes
+   * override metadata bytes
+   * path/segment bytes
+   * any remaining correction bytes
+     The current logs already expose `override_path_bytes_exact` and `closure_penalty_exact`, but not yet a perfect component ledger.
+
+5. Keep closure metrics prominent:
+
+   * closure penalty
+   * override count
+   * run count
+   * path mode
+   * untouched windows
+   * best surface delta vs artifact
+
+6. Only after the closure object is frozen should the project shift emphasis toward:
+
+   * knob shrinking
+   * time-based optimization
+   * punctuation lane
+   * multi-lane closure
+
+---
+
+## 12) Confidence model to carry forward
+
+Grounded repo facts:
+
+* broad project viability: **high**
+* whitespace/class closure object: **good and rising**
+* current 90% exact compression odds: still **not yet high**
+* current whole-object compression: still about **49.5%**
+* current artifact-container structure: extremely high
+* current true closure: promising, but not yet 99% in the deeper sense
+
+Working judgment from this instance:
+
+* **70% compression:** plausible, but not achieved
+* **90% compression:** still a stretch from current state
+* **99% closure:** realistic enough to make it the right next emphasis
+* **100% closure:** harder, but no longer absurd to discuss
+
+---
+
+## 13) Bottom-line carry-forward statement
+
+K8DNZ is now at the most important honest fork in the project so far.
+
+The artifact layer is real. The runs are stable. The artifact is already overwhelmingly structure-like in storage form. But the final doctrinal problem remains unsolved: the project still needs to freeze the correct closure object so that the compressed artifact is not merely a well-packed interruption schedule, but a genuinely low-dimensional regenerable law. The strongest current path is to pursue **true 99% closure first**, likely around **dominant `G1` / `chunk=96` body + sparse bridge-aware interruptions**, and only then use **time** and other optimization passes to shrink the artifact core further.
+
+---
+
+## 14) Opening prompt for the next instance
+
+Continue K8DNZ from the March 24 late handoff. The law-program artifact branch is stable and replay-exact again. The current finished run says: `g1` best surface is `freeze=2115`, codec-best is `2124`, closure-best is `2128`; `g12` best surface is `bridge-freeze=4245`, codec-best is `4266`, closure-best is `4302`; all four cases are `stable=true`, `drift_exact=0`, and `chunk=96`. Treat **99% closure** as the next emphasis. Do not blur codec-best and closure-best. Push toward the correct closure object first — likely bridge-aware closure on top of the dominant `96` body — and only afterward optimize/shrink the artifact core, including future time-based optimization.
+
+---
+
+
+### END NOTE - MARCH 24 2026 - 16:00 CST
+
+
+
+
+### BEGIN NOTE - MARCH 24 2026 - 19:10 CST
+
+
+Absolutely — here is the **updated carry-over pack** for the next instance, replacing the older note set you pasted. It keeps the original doctrine, but updates it with the newest speed win, the newest scoreboards, and the new reporting inconsistency. This is an update to the prior handoff you shared here.  
+
+## Executive snapshot
+
+K8DNZ made a **real engineering breakthrough** this instance: the quick matrix that had been taking roughly **30 minutes** is now landing in about **15 minutes**, while keeping deterministic replay and passing the law-program/audit test gates. The next highest-impact step is **still speed**, but now it is a narrower problem: open more real CPU in the local-mix / `apex-map-lane` path and remove the remaining orchestration waste without regressing results.  
+
+The current branch is healthy:
+
+* `apex_law_program` tests: **19 passed**
+* `apex_law_program_audit` tests: **3 passed**
+* replay remains exact with `drift_exact=0`
+* the quick run now uses the faster script shape with `compare_surfaces=false` on replay and the current speed envs in place.  
+
+The doctrinal state is now sharper, not blurrier:
+
+* **codec-best** improved further on `g1`
+* **closure-best** is still the pure `chunk=96` body with zero overrides
+* **surface-best on closure-style cases** is still outside the artifact, especially `freeze` on `g1` and `bridge-freeze` on `g12`
+* therefore **X is still not solved**, but the remaining gap is now better localized.   
+
+## What changed since the old notes
+
+The old notes were correct that speed had become the top engineering blocker and that the real heat lived in deep child `apex-map-lane` processes rather than the outer wrapper. That diagnosis still stands. What changed is that the recent optimization work **already paid off materially**: the branch is no longer “painfully slow and opaque,” it is now “meaningfully faster, still under-parallelized, and ready for another speed-focused pass.”  
+
+The most important update is this:
+
+**The project is no longer merely diagnosing the speed problem. It has already cut the wall-clock roughly in half.**
+
+So the next instance should not start from “is speed the right target?”
+It should start from: **“speed is the right target, and the first round of speed work was successful.”**
+
+## Current verified repo state
+
+The repo remains in the stronger modular state described by the prior notes:
+
+* refactored `apex_lane_law_local_mix_freeze/`
+* folderized `apex_law_program/`
+* quick/tuned script system in place
+* current quick loop driven by explicit env knobs for local-mix, map-lane sweep, surface jobs, and finalist count.  
+
+Current quick run posture:
+
+`K8DNZ_LOCAL_MIX_JOBS=2 K8DNZ_APEX_MAP_SWEEP_JOBS=2 K8DNZ_SURFACE_JOBS=3 K8DNZ_BODY_VALIDATE_TOP_K=1 bash scripts/run_apex_law_program.sh quick` 
+
+That run posture should be considered the current “fast inner loop baseline.”
+
+## Latest run: what it proved
+
+This latest run proved three different things at once.
+
+First, the branch is trustworthy again:
+
+* tests are green
+* replay is exact
+* the faster quick loop still produces stable audited outputs.  
+
+Second, the speed work is real:
+
+* replay-side duplicate surface comparison is gone in the current quick path
+* compare-surfaces is now no longer paying the old full penalty on replay
+* the overall wall-clock dropped from about 30 minutes to about 15 minutes in practice. 
+
+Third, the scientific fork got clearer:
+
+* `g1_codec_selected_total` now wins codec total at **2123**
+* but it does so with **chunk=64**, **11 overrides**, `override_path_mode=runs`, and a large closure penalty
+* closure winners remain `g1_closure_default_total=2128` and `g12_closure_default_total=4302`, both with **chunk=96**, **0 overrides**, and zero closure penalty. 
+
+That means the project has advanced in exactly the two-way sense we care about:
+
+* **artifact codec strength improved**
+* **true closure doctrine did not yet absorb the best interruption language**
+
+## Current scoreboard truth
+
+### Codec-best
+
+The latest scoreboard says:
+
+* `g1_codec_selected_total` is current codec-best at **2123**
+* it is stable and replay-exact
+* but it is closure-expensive (`closure_total_exact=2755`) and structurally dense (`override_path_mode=runs`, 11 overrides). 
+
+This is a real byte win, but it is not the cleanest doctrinal closure object.
+
+### Closure-best
+
+The latest closure winners remain:
+
+* `g1_closure_default_total = 2128`
+* `g12_closure_default_total = 4302`
+* both are `PURE_BODY`
+* both use `chunk=96`
+* both use **0 overrides**
+* both have `closure_penalty_exact=0`.  
+
+This is still the strongest doctrinal signal in the project.
+
+### Surface-best
+
+The most important nuance is that the latest final summary says `surface_best_surface=artifact`, but the build-side compare-surfaces data still shows:
+
+* `g1_closure_default_total`: best surface is **freeze = 2115**, beating artifact `2128` by **13 bytes**
+* `g12_closure_default_total`: best surface is **bridge-freeze = 4245**, beating artifact `4302` by **57 bytes**
+* `g12_codec_selected_total`: best surface is **bridge-freeze = 4245**, beating artifact `4266` by **21 bytes**.   
+
+So the newest scientific truth is:
+
+**Artifacts are stronger now, but closure-style cases still do not subsume the best freeze/bridge surface totals.**
+
+## New engineering issue discovered
+
+The latest run appears to have surfaced a **reporting inconsistency**.
+
+The final audit-style summary reports:
+
+* `surface_best_surface=artifact`
+* `surface_gap_vs_codec_exact=0`
+* `surface_gap_vs_closure_exact=0`
+
+for cases where the build-side compare-surfaces clearly found a better non-artifact surface.  
+
+This likely means the build/replay/audit fallback path is still not carrying forward build-side surface winners truthfully after replay-side surface comparison was removed from the quick script.
+
+This matters because the current branch can now become **faster while becoming less truthful** if this is not corrected.
+
+So the next instance has **two** top engineering goals, not one:
+
+1. keep improving speed
+2. fix the truth-surface reporting so the final summary reflects real build-side winners
+
+## Updated doctrinal state
+
+The old doctrine still stands and should not be diluted:
+
+* do not confuse schedule packing with closure
+* do not blur `codec-best`, `closure-best`, and `surface-best`
+* the missing X is still **closed-form law-to-engine closure**
+* the likely solution shape is still **dominant body + sparse interruptions**, especially around `chunk=96`.  
+
+The new update is that the artifact layer is now strong enough to muddy the picture honestly:
+
+* it can win bytes on at least `g1` as a codec object
+* but it still loses to freeze/bridge on the closure-style truth surface
+
+So the unresolved question is now even cleaner:
+
+**Can the artifact represent the best interruption/surface language without collapsing into dense run-coded override schedules?**
+
+That is the new shape of X.
+
+## Performance truth to carry forward
+
+The earlier notes correctly said the machine was not idle and that the heat lived in child `apex-map-lane` processes. That remains true. The new update is:
+
+**Parallelism improvements are real, but total useful CPU is still too low.**
+
+The current branch now uses multiple threads and multiple child processes, but not enough sustained multi-core work to feel “fast” yet. The latest speedup proves there is still large headroom in:
+
+* local-mix concurrency shape
+* batching
+* child-process count
+* deeper `apex-map-lane` parallelism
+* reducing orchestration overhead.  
+
+## Next instance: highest-impact mission
+
+### Primary mission
+
+**Speed up the quick runs again, without regressing determinism or changing result semantics.**
+
+### Secondary mission
+
+**Fix the audit/build surface-summary inconsistency so final summaries tell the truth about freeze/bridge winners.**
+
+The order matters. The branch is now fast enough to iterate, but still not fast enough to be comfortable.
+
+## Exact next attack order
+
+### 1) Keep attacking `apex_lane_law_local_mix_freeze`
+
+This remains the most likely place where under-batching and orchestration waste still live. The next instance should prioritize:
+
+* `run.rs`
+* `pipeline.rs`
+* `children.rs`
+* `eval.rs`
+
+The target is still:
+**more simultaneous useful `apex-map-lane` work during local-mix, not just during manifest sweep.** 
+
+### 2) Inspect `apex_map_lane` inner parallelism again
+
+The latest speedup does not mean the deepest hotspot is solved. The next instance should inspect whether the inner seed/brute-force portion is still too serial and whether it can open more cores safely without nondeterminism.
+
+### 3) Fix build/audit surface truth
+
+The current quick run is now fast enough that truth-surface reporting matters again. The next instance should verify:
+
+* build report surface winner
+* replay report fallback
+* audit summary final choice
+
+and make sure `artifact` is not being reported as surface-best when `freeze` or `bridge-freeze` actually won at build time.  
+
+### 4) Do not broaden the corpus yet
+
+`Genesis3.txt`, `Genesis4.txt`, and `Genesis5.txt` should still be treated as later smoke/generalization checks, not part of the heavy inner loop yet. The correct current posture is still:
+
+* optimize on `g1` and `g12`
+* then validate breadth later. 
+
+## What should not happen next
+
+Do not:
+
+* pivot back into broad exploratory search
+* spend the next instance on warning cleanup unless it directly affects run speed or signal clarity
+* assume “15 minutes is good enough”
+* assume `artifact` surface-best is currently trustworthy without checking build-side reports
+* broaden to Genesis3–5 before the quick loop gets another speed win
+
+## Updated bottom-line statement
+
+K8DNZ is now in a meaningfully better place than the previous handoff suggested.
+
+The project is not stuck on “can we even build and replay an artifact?”
+That part is now real.
+
+The project is now narrowed to two productive frontiers:
+
+* **scientific frontier:** make the artifact absorb the true closure/surface language
+* **engineering frontier:** make the quick loop fast enough to iterate aggressively and honestly
+
+Right now, the next instance should still put the **engineering frontier first**, but with one added requirement: preserve truthful surface reporting while making the loop faster. 
+
+## Updated opening prompt for the next instance
+
+Continue K8DNZ from the March 24–25 speed handoff. Use the updated notes, not the older version. The branch is healthier now: `apex_law_program` tests are green, `apex_law_program_audit` tests are green, replay is exact, and the quick matrix has been cut from roughly 30 minutes to about 15 minutes using `K8DNZ_LOCAL_MIX_JOBS=2`, `K8DNZ_APEX_MAP_SWEEP_JOBS=2`, `K8DNZ_SURFACE_JOBS=3`, and `K8DNZ_BODY_VALIDATE_TOP_K=1`. The newest run shows codec-best `g1_codec_selected_total=2123`, but closure-best is still the pure `chunk=96` body (`g1=2128`, `g12=4302`), while build-side compare-surfaces still shows better non-artifact winners on closure-style cases (`freeze=2115` on g1, `bridge-freeze=4245` on g12). Treat **speeding up the runs even more** as the top engineering goal, and **fix the build/audit surface-summary inconsistency** as the second goal. Focus first on `apex_lane_law_local_mix_freeze` and the `apex-map-lane` call chain. Preserve determinism. Preserve the separation between codec-best, closure-best, and surface-best. Keep `g1` and `g12` as the inner-loop truth surfaces. Keep `Genesis3–5` reserved for later smoke tests. The doctrinal north star remains true closed-form law-to-engine closure, likely dominant body plus sparse bridge-aware interruptions.    
+
+
+### END NOTE - MARCH 24 2026 - 19:10 CST
+
+
+
+### BEGIN NOTE - MARCH 24 2026 - 20:45 CST
+
+Absolutely — here is a **paste-ready carry-over pack** for the next instance, updated to reflect the successful compile recovery, the finished stable quick run, and the decision to pivot from pure speed work back into **closure-first** work.
+
+---
+
+# K8DNZ carry-over notes — March 24, 2026 late/closure handoff
+
+## 0) Executive snapshot
+
+K8DNZ is now in a much stronger state than it was a few sessions ago.
+
+The `apex_law_program` branch is building, replaying, and auditing deterministically again, and the latest quick matrix completed with all tracked cases marked `stable=true`, `drift_exact=0`, `collapse_90_failures=0`, and `newline_extinct_failures=0`.  
+
+That means the project is no longer blocked on:
+
+* compile breakage
+* artifact replay trust
+* audit viability
+* “does this branch even work?”
+
+Those are now materially behind us. The branch is operational.
+
+The central doctrinal problem is now narrower and cleaner:
+
+**The missing X is still closed-form law-to-engine closure.**
+
+The artifact layer is real, but the current artifact is still not fully subsuming the strongest measured surface family. The remaining question is no longer “can we build a deterministic artifact?” It is:
+
+**What is the correct closure object?**
+
+The strongest current answer is still:
+
+**dominant `G1` / `chunk=96` body + sparse bridge-aware interruptions**
+
+That is the next emphasis. Do **not** pivot the whole project into knob shrinking or broad optimization first. Freeze the correct closure object first. The notes already say that is the right order, and the newest run strengthens that judgment.  
+
+---
+
+## 1) What this instance accomplished
+
+This instance accomplished several important things at once.
+
+### A. The branch compiles and runs again
+
+The branch is no longer in the broken state where file-shape mismatches were preventing progress. The current repo is compiling again, and the follow-up test/run surface was exercised successfully. The terminal output shows the project building and moving through the expected validation path rather than dying on the earlier schema drift. 
+
+### B. The quick matrix is operational and stable
+
+The recent quick matrix completed and produced real auditable results, not just partial logs. The latest output shows the four main tracked law-program cases reaching stable replay-exact states with zero drift and zero collapse/newline failures.  
+
+### C. The reporting truth surface is healthier than before
+
+Earlier in the notes there was a reporting inconsistency where the final audit summary could collapse to `surface_best_surface=artifact` even when build-side compare-surfaces had found a better freeze or bridge result. That inconsistency was a real engineering threat because it allowed the system to become faster while becoming less truthful. 
+
+The latest case details now correctly preserve non-artifact winners:
+
+* `g1_closure_default_total` reports `best_surface=freeze` with `best_total_exact=2115`
+* `g12_codec_selected_total` reports `best_surface=bridge-freeze` with `best_total_exact=4245`
+* `g12_closure_default_total` also reports `best_surface=bridge-freeze` with `best_total_exact=4245` 
+
+That is a meaningful correctness improvement.
+
+### D. Speed work already paid off
+
+The prior notes say the quick matrix had already been cut from roughly 30 minutes to roughly 15 minutes, while staying deterministic and keeping the law-program/audit path alive.  The latest user-reported run took about 10 minutes, which suggests the operational loop is now good enough that closure can become the primary emphasis.
+
+So speed is no longer the only story. It is now a supporting engineering concern, not the project’s central conceptual blocker.
+
+---
+
+## 2) Current measured truth
+
+This is the most important section to preserve accurately.
+
+### Latest stable law-program state
+
+The latest finished quick run says:
+
+#### `g1_codec_selected_total`
+
+* `codec_total_exact=2123`
+* `default_local_chunk_bytes=64`
+* `override_count=11`
+* `override_path_mode=runs`
+* `closure_penalty_exact=632`
+* `closure_total_exact=2755`
+* `stable=true` 
+
+#### `g1_closure_default_total`
+
+* `codec_total_exact=2128`
+* `default_local_chunk_bytes=96`
+* `override_count=0`
+* `override_path_mode=none`
+* `closure_penalty_exact=0`
+* `closure_total_exact=2128`
+* `best_surface=freeze`
+* `best_total_exact=2115`
+* `best_delta_vs_artifact_exact=-13`
+* `stable=true`  
+
+#### `g12_codec_selected_total`
+
+* `codec_total_exact=4266`
+* `default_local_chunk_bytes=96`
+* `override_count=7`
+* `override_path_mode=mixed(delta,runs)`
+* `override_path_bytes_exact=10`
+* `closure_penalty_exact=740`
+* `closure_total_exact=5006`
+* `best_surface=bridge-freeze`
+* `best_total_exact=4245`
+* `best_delta_vs_artifact_exact=-21`
+* `stable=true` 
+
+#### `g12_closure_default_total`
+
+* `codec_total_exact=4302`
+* `default_local_chunk_bytes=96`
+* `override_count=0`
+* `override_path_mode=none`
+* `closure_penalty_exact=0`
+* `closure_total_exact=4302`
+* `best_surface=bridge-freeze`
+* `best_total_exact=4245`
+* `best_delta_vs_artifact_exact=-57`
+* `stable=true` 
+
+### The correct interpretation
+
+This means:
+
+* the **raw codec-best** winner on `g1` is still the denser `64`-body artifact at `2123`
+* the **closure-best** winner on `g1` is still the pure `96` body at `2128`
+* the **closure-best** winner on `g12` is also the pure `96` body at `4302`
+* the strongest non-artifact surface on `g1` remains **freeze = 2115**
+* the strongest non-artifact surface on `g12` remains **bridge-freeze = 4245**  
+
+So the project is now stable enough to see the central truth clearly:
+
+**The cleanest closure-shaped object is still the pure `chunk=96` body, but the strongest measured surface family still lives outside the artifact on bridge/freeze surfaces.**
+
+That is the actual shape of X at this moment.
+
+---
+
+## 3) What we now know with high confidence
+
+The current run resolves several important uncertainties.
+
+### A. Replay trust is real now
+
+The artifact branch is not speculative anymore. The latest cases replay exactly with zero drift and no collapse/newline failures.  
+
+### B. `chunk=96` is still the dominant body anchor
+
+The closure-best cases on both `g1` and `g12` are pure-body `96`-chunk artifacts with zero overrides and zero closure penalty.  That is a very strong doctrinal signal.
+
+### C. Dense-ish or mixed interruption schedules can still buy bytes
+
+The codec-best artifact on `g1` still wins a few bytes, but it does so through a schedule-like artifact with `11` overrides and a large closure penalty. The same pattern holds on `g12`, where the codec-best artifact gains bytes versus the pure-body default but carries `7` overrides and a `740` closure penalty. 
+
+That means the project can buy byte wins by encoding interruptions cheaply. But that does **not** prove those artifacts are the correct low-dimensional closure object.
+
+### D. Bridge-freeze remains the strongest interruption-language clue on `g12`
+
+The best surface on both tracked `g12` cases is still `bridge-freeze=4245`, beating:
+
+* the codec-selected artifact by `21`
+* the pure-body closure artifact by `57` 
+
+That is a large enough margin that it should not be treated as incidental.
+
+---
+
+## 4) The doctrinal state of the project
+
+This section should remain prominent in future notes.
+
+### The old doctrine still stands
+
+Do **not** dilute these points:
+
+* do not confuse dense schedule packing with closure
+* do not blur `codec-best`, `closure-best`, and `surface-best`
+* do not optimize knob bytes before freezing the right explanatory object
+* do not mistake “small explicit path bytes” for “true low-dimensional closure”
+
+The notes have been very clear about this, and the latest run only sharpens the doctrine rather than weakening it.  
+
+### The current strongest doctrinal hypothesis
+
+The strongest current hypothesis is still:
+
+**dominant `G1` / `chunk=96` body + sparse bridge-aware interruptions**
+
+Why this remains the leading candidate:
+
+* `chunk=96` is the pure-body closure anchor on both `g1` and `g12` 
+* bridge-freeze is still the strongest measured surface on `g12` 
+* freeze is still the strongest measured surface on the pure-body `g1` closure case 
+* the artifact layer is stable enough now that the remaining gap is about **representation**, not **determinism**
+
+So the next core question is:
+
+**Can the artifact absorb bridge/freeze interruption structure honestly, without collapsing into dense run-coded schedule packing?**
+
+That is the new shape of X.
+
+---
+
+## 5) What remains unsolved
+
+Several things are still unresolved.
+
+### A. The artifact is not yet the best surface on the board
+
+This is the single most important unresolved fact.
+
+The pure-body closure object is elegant and stable, but it is not yet subsuming the best measured surface totals:
+
+* `g1_closure_default_total` artifact = `2128`, but best surface is `freeze=2115`
+* `g12_closure_default_total` artifact = `4302`, but best surface is `bridge-freeze=4245`  
+
+### B. The interruption language is not frozen
+
+The project still has not decided conclusively whether the right interruption language is:
+
+1. sparse chunk overrides
+2. sparse bridge segments
+3. a mixed bridge/delta form
+4. some new first-class interruption representation built from the bridge family
+
+The current evidence favors **bridge-first closure design**, not a return to dense override hunting. 
+
+### C. True 99% closure is still not frozen in the deeper sense
+
+The notes already distinguish:
+
+* artifact viability
+* exact replay
+* honest closure
+* final compression
+
+The latest state is strong on the first two, promising on the third, and still unfinished on the fourth. 
+
+### D. Whole-object compression is still not where the final ambition wants it
+
+The notes remain honest that broad project viability is high, but true whole-object compression and deep closure are not yet in “mission accomplished” territory. The current working judgment still treats 99% closure as realistic enough to chase next, while 90% compression remains a stretch until the closure object itself is frozen. 
+
+---
+
+## 6) Highest-impact mission for the next instance
+
+This should be the next instance’s primary mission:
+
+## **Freeze the closure object.**
+
+Not “find a few more bytes.”
+Not “optimize knobs harder.”
+Not “speed up wrappers again first.”
+
+The correct next move is to turn the dominant pure-body `96` artifact into the right interruption-aware closure object so that the artifact begins to subsume the bridge/freeze surface wins rather than merely coexisting beside them.
+
+### Concrete objective
+
+Transform the current artifact language from:
+
+**dominant body + ad hoc override schedule**
+
+toward:
+
+**dominant body + first-class bridge-aware interruption language**
+
+### Success condition
+
+The next phase succeeds if one of these happens:
+
+1. the pure-body `96` artifact gains a first-class interruption form that closes most or all of the gap to `freeze=2115` on `g1`
+2. the `g12` artifact begins to absorb the `bridge-freeze=4245` surface as artifact-native structure
+3. the project proves cleanly that bridge is the right interruption language and freezes that into the artifact schema
+
+The point is not just byte count. The point is honest closure representation.
+
+---
+
+## 7) Exact next code targets
+
+The next high-impact files should be centered on closure representation, not orchestration.
+
+### Primary files
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/plan.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/types.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/build.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/report.rs`
+
+### Surface / interruption source files
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_lane_law_bridge_freeze.rs`
+* and, if needed, the local-mix / freeze pipeline that feeds bridge/freeze candidate structure
+
+### What to change conceptually
+
+The artifact needs a representation for bridge-style interruptions that is more native than “a few arbitrary overrides” and more principled than “dense run-coded schedule.”
+
+That likely means:
+
+* adding bridge-aware interruption records or segments to the artifact schema
+* making planning choose between pure-body, sparse override, sparse bridge, or mixed interruption forms explicitly
+* reporting codec-best, closure-best, and surface-best separately without ambiguity
+* preserving build-side surface truth even when replay skips compare-surfaces
+
+---
+
+## 8) What not to do next
+
+These are the traps.
+
+### Do not:
+
+* go back to broad random search as the main project motion
+* let line-count paranoia drive code choices instead of repo-compatible behavior
+* optimize container bytes before freezing the right closure form
+* confuse a denser schedule artifact with proof of X
+* blur `artifact`, `freeze`, and `bridge-freeze` into one ranking concept
+* expand into punctuation/multi-lane work before the whitespace/class closure object is frozen
+
+The notes already say future work like knob shrinking, time-based optimization, punctuation lane, and multi-lane closure should come **after** closure object freeze, not before. 
+
+---
+
+## 9) Performance truth to carry forward
+
+Performance is still worth carrying forward, but it is no longer the conceptual center.
+
+### What is true now
+
+* speed work already produced a real wall-clock improvement from the older 30-minute regime to a much faster quick loop 
+* the branch is no longer blocked by wrapper-level orchestration alone
+* CPU headroom likely still exists in deeper local-mix / apex-map-lane child work, not just in outer shell logic 
+
+### The correct stance now
+
+Keep speed as a secondary mission:
+
+* preserve the faster script shape
+* preserve deterministic replay
+* preserve audit truth
+* only resume aggressive speed work after the closure batch stalls or after the closure object is frozen
+
+---
+
+## 10) The “time” doctrine for later
+
+This absolutely should remain in the notes.
+
+**Time should be treated as a future optimizer of the artifact core, not as a substitute for closure.**
+
+The notes already make the order clear:
+
+1. freeze the honest closure object
+2. then use time/program structure to shrink that object further 
+
+That is still the right order. Do not invert it.
+
+---
+
+## 11) Current confidence model
+
+Grounded working judgment from the current state:
+
+* broad project viability: **high**
+* law-program artifact viability: **high**
+* replay trust on whitespace/class: **high**
+* current closure object quality: **good and rising**
+* current pure-body anchor quality: **strong**
+* current interruption-language certainty: **not yet final**
+* current 99% closure odds: **realistic enough to be the right next emphasis**
+* current 90% compression odds: **still not the next honest claim**
+* current 100% closure odds: **harder, but no longer absurd to discuss conceptually** 
+
+The most important nuance:
+The project is now strong enough that failure, if it happens, will likely be a representational failure rather than a determinism failure.
+
+---
+
+## 12) Practical runbook for the next instance
+
+When the next instance starts, the operator loop should be:
+
+```bash
+cargo build
+cargo test -p k8dnz-cli -- --nocapture
+bash scripts/run_apex_law_program.sh quick
+cat /tmp/apex_law_program_audit.txt
+ls -1 /tmp/*build.txt /tmp/*replay.txt
+```
+
+The earlier terminal output also shows the more general repo validation path still works:
+
+```bash
+cargo build
+cargo test -p k8dnz-cli -- --nocapture
+cargo run -p k8dnz-cli -- sim --emissions 10 --mode pair --fmt jsonl
+```
+
+ 
+
+Use the audit output as the truth surface, and keep watching:
+
+* codec-best
+* closure-best
+* surface-best
+* `stable=true`
+* drift/collapse/newline failures
+* whether the pure-body `96` object begins to absorb bridge/freeze wins
+
+---
+
+## 13) Bottom-line carry-forward statement
+
+K8DNZ is now at the most important honest fork in the project so far.
+
+The law-program artifact layer is real. The branch is stable. The quick matrix is operational. Replay is exact again. The workspace has moved beyond mere experiments into a real closure-bridge architecture.  
+
+But X is still not fully solved.
+
+The cleanest closure-shaped object is still the pure `chunk=96` body. The strongest measured surface on `g12` still lives in bridge-freeze. The strongest closure-adjacent surface on `g1` still lives in freeze. So the project must now freeze the correct interruption-aware closure object, likely around:
+
+**dominant `G1` / `chunk=96` body + sparse bridge-aware interruptions**
+
+Only after that should the project pivot fully into:
+
+* shrinking knob data
+* time-based compression of the artifact core
+* punctuation lane
+* multi-lane closure
+
+That is the correct order.
+
+---
+
+## 14) Opening prompt for the next instance
+
+Continue K8DNZ from the March 24 closure handoff. The `apex_law_program` branch now compiles and the latest quick matrix is stable and replay-exact again. Current measured truth: `g1_codec_selected_total=2123` with `chunk=64` and dense-ish runs; `g1_closure_default_total=2128` with pure `chunk=96` body and `best_surface=freeze=2115`; `g12_codec_selected_total=4266` with `chunk=96`, `7` overrides, and `best_surface=bridge-freeze=4245`; `g12_closure_default_total=4302` with pure `chunk=96` body and `best_surface=bridge-freeze=4245`; all four cases are `stable=true`, `drift_exact=0`, `collapse_90_failures=0`, and `newline_extinct_failures=0`. Treat **99% closure** as the main emphasis. Do not blur codec-best, closure-best, and surface-best. Push toward a **bridge-aware closure object on top of the dominant `96` body**, and only afterward return to knob shrinking, time-based optimization, or broader lane expansion.
+
+
+### END NOTE - MARCH 24 2026 - 20:45 CST
+
+
+
+### BEGIN NOTE - MARCH 24 2026 - 23:00 CST
+
+Below is a carry-over pack for the next instance. It is written to replace the stale parts of the old notes and preserve the real state of the branch now.
+
+---
+
+# K8DNZ carry-over notes — March 24–25, 2026
+
+## 0) Executive snapshot
+
+This instance was a real step forward.
+
+The most important new fact is that the `apex_law_program` branch is now **artifact-stable**, **replay-exact**, and **audit-stable** on the tracked whitespace/class cases. In the newest quick audit, all four tracked cases show `stable=true`, `drift_exact=0`, `replay_gap_exact=0`, `collapse_90_failures=0`, and `newline_extinct_failures=0`. 
+
+That changes the posture of the whole project.
+
+Before this instance, the remaining ambiguity was polluted by replay drift and schema/report mismatch. Now that ambiguity is cleaner. The branch is no longer asking, “is the artifact honest?” It is now asking, “what is the right closure object?” That is a much better problem.
+
+The closure picture is now very legible:
+
+* `g1_closure_default_total` is the closure winner at `2128`, with `G1`, `chunk=96`, `overrides=0`, `bridge_segments=0`, and `closure_penalty_exact=0`. 
+* `g12_closure_default_total` is the closure winner at `4302`, again with `G1`, `chunk=96`, `overrides=0`, and `closure_penalty_exact=0`. 
+* `g1_codec_selected_total` is the codec winner at `2123`, but closure jumps to `2755` because it uses `11` overrides. 
+* `g12_codec_selected_total` is the codec winner at `4266`, but closure jumps to `5006` because it uses `7` overrides and `4` bridge segments. 
+
+So the doctrine is still intact, but it is now grounded in a cleaner artifact truth surface:
+
+**The dominant closure object on whitespace/class is still the pure `G1` body around `chunk=96`.**
+**The codec-best object is cheaper in raw bytes, but not yet the same thing as the closure-best object.**
+
+A second major update: some older notes said the artifact still lagged `freeze` / `bridge-freeze`. That was true in an earlier branch state, but it is now historical, not current. In the newest audited quick matrix, the `surface-ranking` shows `best_surface=artifact` for all four tracked cases. 
+
+That does **not** mean X is solved. It means the artifact layer has matured enough that the remaining fight is now mostly about **closure semantics and interruption language**, not replay honesty or external-surface embarrassment.
+
+---
+
+## 1) The doctrine that must stay pinned at the top
+
+The top doctrine remains:
+
+**X = closed-form law-to-engine closure.**
+
+Do not let the repo drift into confusing these two things:
+
+* packed empirical search history
+* closed-form regenerable structure
+
+The notes already said this clearly: the final codec cannot depend on per-window search as its essence. Atlas is allowed to discover. The final artifact is not allowed to *be* a search transcript. It needs a small rule family that regenerates the dominant law path, with only sparse interruptions on top.
+
+That doctrine is still correct after this instance.
+
+The stronger raw codec artifact is interesting. It is not automatically “the solution to X.” If it wins by carrying too much interruption detail, it may be a good temporary packer but not yet the final closure object.
+
+---
+
+## 2) What this instance actually accomplished
+
+This session materially improved both the engineering surface and the conceptual surface.
+
+### Engineering accomplishments
+
+The law-program branch was extended from override-centric reporting toward bridge-aware artifact accounting. The batch touched the core artifact/report path:
+
+* `types.rs`
+* `plan.rs`
+* `build.rs`
+* `report.rs`
+* `bincodec.rs`
+* `replay.rs`
+* `tests.rs`
+* `apex_law_program_audit.rs`
+
+The key effects were:
+
+* bridge segment structure promoted into the artifact path
+* artifact encoding advanced to a versioned bridge-aware form
+* replay canonicalization kept exact
+* tests extended to cover the updated artifact surface
+* audit/report surfaces now expose bridge counts and bridge windows
+
+The big result is visible in the run, not just in the code: the audit is now stable and exact across the tracked matrix.
+
+### Conceptual accomplishments
+
+This instance resolved a major ambiguity:
+
+Earlier, it was still possible to wonder whether the closure-vs-codec tension was partly a bug artifact. That is no longer the main explanation. The stable audit now shows that the tension is real:
+
+* sparse pure-body artifacts are closure-healthy
+* denser override artifacts can beat them in raw codec bytes
+* but closure penalizes those denser interruption objects heavily.
+
+That is exactly the kind of result you want at this stage. The branch is now failing in a meaningful way instead of a blurry way.
+
+---
+
+## 3) Current objective truth surface
+
+### 3.1 Stability truth
+
+All four tracked cases are currently stable:
+
+* `stable=true`
+* `drift_exact=0`
+* `replay_gap_exact=0`
+* `collapse_90_failures=0`
+* `newline_extinct_failures=0`
+
+This is one of the most important project milestones so far. It means the law-program artifact surface is now honest enough to trust as a decision surface.
+
+### 3.2 Closure ranking truth
+
+The closure ranking is the clearest table in the entire run:
+
+1. `g1_closure_default_total`
+   `closure_total_exact=2128`, `codec_total_exact=2128`, `grade=PURE_BODY`, `law=G1`, `chunk=96`, `overrides=0`. 
+
+2. `g1_codec_selected_total`
+   `closure_total_exact=2755`, `codec_total_exact=2123`, `grade=SPARSE`, `law=G1`, `chunk=64`, `overrides=11`. 
+
+3. `g12_closure_default_total`
+   `closure_total_exact=4302`, `codec_total_exact=4302`, `grade=PURE_BODY`, `law=G1`, `chunk=96`, `overrides=0`. 
+
+4. `g12_codec_selected_total`
+   `closure_total_exact=5006`, `codec_total_exact=4266`, `grade=SPARSE`, `law=G1`, `chunk=96`, `overrides=7`, `bridge_segments=4`. 
+
+Interpretation: closure still favors the zero-override dominant body, not the denser interruption object.
+
+### 3.3 Codec ranking truth
+
+The codec ranking says something different:
+
+* `g1_codec_selected_total` wins raw bytes at `2123` versus `2128` for the pure body. 
+* `g12_codec_selected_total` wins raw bytes at `4266` versus `4302` for the pure body.
+
+Interpretation: the project now has two real winners depending on objective:
+
+* **codec-best** = denser interruption artifact
+* **closure-best** = pure dominant body
+
+That split is now the central design tension.
+
+### 3.4 Surface ranking truth
+
+A very important update relative to the older notes:
+
+The newest `surface-ranking` shows `best_surface=artifact` for every tracked case. 
+
+That means the law-program artifact has now caught up enough that the quick audited surface no longer says “freeze/bridge-freeze is still externally better.” That older conclusion must now be treated as historical branch state, not present doctrine.
+
+This is a real maturity milestone.
+
+---
+
+## 4) What remains unresolved
+
+### A. The main unresolved problem is now representational, not infrastructural
+
+The branch is no longer blocked by drift, decode mismatch, missing report fields, or broken audit hydration. Those were real earlier problems; they are no longer the main bottleneck. The bottleneck now is:
+
+**What interruption language best expresses closure on whitespace/class while staying sparse and cheap?**
+
+That is the correct remaining question.
+
+### B. The codec-best object is not yet the doctrinal winner
+
+The raw-byte winner is still expensive in closure terms.
+
+For `g1`, the codec winner saves only `5` bytes over the pure body (`2123` vs `2128`) but explodes closure to `2755`.
+
+For `g12`, the codec winner saves `36` bytes over the pure body (`4266` vs `4302`) but explodes closure to `5006`. 
+
+That means the current codec-best artifact still looks more like a better packer than a cleaner explanation.
+
+### C. The final formula still does not regenerate the dominant law path by a low-dimensional cadence family
+
+The notes remain correct here. The final success condition is not merely to encode a good artifact. It is to explain the dominant `law_path` with a small cadence-family law, leaving only sparse interruptions.
+
+The branch now has a real artifact layer. It still does not have the final closed-form cadence-family law that makes the dominant sequence feel like “formula” rather than “well-packed empirical choice history.”
+
+### D. Cross-lane completion is still future work
+
+Whitespace/class remains the lead lane. Punctuation is still the next supporting lane, and the case lane still matters later. The project is not yet at the point where a whole-codec >90% claim is justified from this branch alone. The current win is about **lane-level closure maturity**, not final end-to-end victory. 
+
+### E. Residual doctrine still matters
+
+Older notes were right that the final codec cannot rely on byte-level brute residual as the main explanation. Residual must eventually collapse into sparse-first structures. That principle has not changed. 
+
+---
+
+## 5) Updated interpretation of the project state
+
+The project has now crossed into a more serious phase.
+
+Earlier phase:
+
+* discovery proving there was something real in the lane
+* freeze / split-freeze / bridge-freeze showing a promising prototype shape
+* artifact branch fighting honesty issues
+
+Current phase:
+
+* artifact branch is now honest enough to trust
+* closure-vs-codec tradeoff is explicit and reproducible
+* the branch can now be judged on representation quality rather than engineering fragility
+
+This is a major upgrade in maturity.
+
+The correct mental model now is:
+
+**K8DNZ is no longer primarily asking “can we build a deterministic closure artifact?”**
+It is asking:
+**“Which interruption language expresses the dominant body in the smallest, cleanest, most replay-stable way?”**
+
+That is exactly the right late-discovery / early-closure question.
+
+---
+
+## 6) The current best doctrine
+
+The best doctrine to carry forward right now is:
+
+**Whitespace/class currently looks best as a dominant `G1` body with `chunk=96`, and the project should treat sparse interruptions as a secondary language rather than let dense override packing become the main explanation.**
+
+A stronger raw-byte artifact exists, but it is not yet closure-shape-correct.
+
+A more pointed version:
+
+**The branch has achieved stable artifact truth, but not yet closed-form law-to-engine closure.**
+**The dominant body is visible. The remaining task is to discover the right sparse interruption language above that body.**
+
+---
+
+## 7) Important correction to old notes
+
+Some parts of the old carry-over pack are now stale and should not be reused blindly.
+
+### Historical but now stale
+
+* “artifact is still not the best surface”
+* “all cases still audit as unstable”
+* “drift is the central unresolved engineering problem” 
+
+### Current truth
+
+* artifact is the best audited surface in the newest quick matrix
+* all tracked cases are stable
+* drift has been reduced to zero on the tracked matrix
+* the central unresolved problem is now closure representation, not replay honesty
+
+That is a big doctrinal update.
+
+---
+
+## 8) The highest-impact next step
+
+The next instance should not waste time rerunning the same matrix before changing anything meaningful. The run we have is already enough to steer.
+
+The highest-impact next step is:
+
+**promote the interruption language from “counted bridge-aware artifact” toward “bridge-first closure object,” while preserving the dominant-body doctrine.**
+
+In plain repo terms, the next work should focus on making the artifact answer this question:
+
+When the pure `G1 chunk=96` body is chosen as the doctrine anchor, what is the cheapest sparse interruption representation that improves codec bytes without collapsing closure?
+
+That likely means one of two paths:
+
+### Path A — Bridge-first refinement
+
+Treat bridge segments, not individual chunk overrides, as the primary sparse interruption unit.
+
+The artifact now knows about bridge segments, but the branch still has not frozen doctrine around them as the primary language. That is the likely next lift.
+
+### Path B — Closed-form law-path abstraction
+
+Start moving one level above interruptions and ask whether parts of the local law sequence can be regenerated from a tiny cadence-family rule rather than carried explicitly.
+
+That is the more ambitious move. Path A is the safer near-term move.
+
+---
+
+## 9) Recommended next coding targets
+
+The next instance should inspect and likely modify the law-program area first, not unrelated ApexTrace commands.
+
+Primary zone:
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/types.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/plan.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/build.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/report.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/replay.rs`
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/bincodec.rs`
+* `crates/k8dnz-cli/src/bin/apex_law_program_audit.rs`
+
+The likely goal of that batch should be one of these:
+
+1. make bridge segments the primary interruption ledger in closure scoring
+2. split “improves codec bytes” from “improves closure explanation” even more explicitly in the planner
+3. add a bridge-first candidate mode so the selector is not forced to think in per-window override vocabulary first
+
+---
+
+## 10) Exact first actions for the next instance
+
+### If the goal is doctrine progress
+
+Do this first:
+
+1. inspect the current bridge-segment scoring logic
+2. compare bridge-segment cost against per-window override cost
+3. build a bridge-first candidate mode anchored on `G1 chunk=96`
+4. rerun the same `g1` / `g12` matrix with that bridge-first candidate included
+
+### If the goal is speed progress
+
+Do not start with another undifferentiated “quick” run. Instead:
+
+1. add phase timing around build, replay, and audit
+2. add per-case timing inside the quick script
+3. find where the real time is going before doing optimization work
+
+### If the goal is whole-project doctrine progress
+
+Write the next doctrine note as one sentence:
+
+* either “X on whitespace/class is best expressed as dominant body + sparse chunk overrides”
+* or “X on whitespace/class is best expressed as dominant body + sparse bridge segments”
+
+Right now the evidence leans toward the second phrasing more than before, but it is not frozen yet.
+
+---
+
+## 11) Success criteria for the next instance
+
+The next instance should count as a win if it achieves any one of these:
+
+### Strong win
+
+A bridge-first artifact anchored on the `G1 chunk=96` body improves codec bytes while staying much closer to the pure-body closure shape than the current dense override artifact.
+
+### Medium win
+
+The planner cleanly separates sparse bridge interruption candidates from dense override candidates and produces an audited matrix that makes the doctrine decision obvious.
+
+### Minimum win
+
+The next instance freezes the interruption-language doctrine clearly, even if the raw bytes do not improve yet.
+
+What should **not** count as progress:
+
+* merely finding another denser artifact that wins a few bytes but looks even less like closure
+* letting the branch drift back into “search transcript but compressed harder”
+* optimizing runtime before clarifying which object the project is actually trying to optimize
+
+---
+
+## 12) Updated odds
+
+These are the carry-over odds I would preserve from the current state:
+
+* stable, honest artifact-grade closure surface on whitespace/class: **already achieved for the tracked matrix**
+* solving whitespace/class doctrinal X enough to call it a real closure win: **around 75–80%**
+* promoting the artifact so the chosen interruption language feels truly sparse and closure-shaped: **around 65–70%**
+* reaching a justified “whole codec / >90% compression” claim from this exact branch soon: still **well below that**, roughly **25–30%**
+
+The main reason these odds improved is not that final compression is solved. It is that the truth surface is now stable enough to trust.
+
+---
+
+## 13) One-paragraph project state summary
+
+K8DNZ is now in a much stronger place than the older notes captured. The `apex_law_program` artifact surface is replay-exact and stable on the tracked whitespace/class cases, the audit now exposes bridge-aware structure cleanly, and the dominant closure object remains the pure `G1 chunk=96` body. The branch’s remaining problem is no longer drift or artifact honesty; it is choosing the correct sparse interruption language that preserves the dominant body while improving codec bytes. That means the project has advanced from “can we build a truthful closure artifact?” to “what exact object best expresses closure?” — which is a higher-quality and much narrower problem.
+
+---
+
+## 14) Suggested opening prompt for the next instance
+
+Continue K8DNZ from the March 24–25 carry-over pack. Treat the newest audited quick matrix as the source of truth, not the older unstable notes. The law-program artifact is now stable and replay-exact. The dominant closure object on whitespace/class is still the pure `G1 chunk=96` body, while denser interruption artifacts win raw codec bytes but lose badly in closure. Focus on the next doctrine decision: is the right sparse interruption language still chunk overrides, or should the artifact become bridge-first above the dominant body? Start by inspecting the current bridge-segment scoring and planner logic, then build the next highest-impact bridge-first candidate and rerun the `g1` / `g12` closure-vs-codec matrix.
+
+If you want, I can also turn this into a tighter “paste directly into NOTES.MD” version.
+
+
+### END NOTE - MARCH 24 2026 - 23:00 CST
+
+
+
+### BEGIN NOTE - MARCH 25 2026 - 00:30 CST
+
+Below is the carry-over pack I would want the next instance to inherit.
+
+## Executive snapshot
+
+This instance was a real advance.
+
+The `apex_law_program` branch is now in a much stronger state than before: it compiles, the focused law-program tests are green, replay is exact again, and the 5-file Genesis run now gives you two clean reference extremes instead of one ambiguous mixed state. The current notes record `apex_law_program` tests at **19 passed**, `apex_law_program_audit` tests at **3 passed**, and replay remaining exact with `drift_exact=0`. 
+
+The most important new truth is this:
+
+* The **codec-biased** 5-file artifact is strong on raw bytes, but ugly for closure: `selected_total_piecewise_payload_exact=10762`, `overrides=56`, `override_path_mode=runs`, `override_path_bytes_exact=20`, and `closure_total_exact=13970`. 
+* The **closure-biased** 5-file artifact is clean and honest: artifact bytes `2827`, `windows=56`, `overrides=0`, `override_path_mode=none`, `selected_total_piecewise_payload_exact=10969`, `closure_total_exact=10969`, `closure_penalty_exact=0`. 
+* In that clean closure-biased run, the strongest measured external surface is still **outside** the artifact: `bridge-freeze=10810`, beating the artifact by `159` bytes.
+
+That means the bottleneck is no longer “can the artifact replay honestly?” It can. The bottleneck is now precise:
+
+**how to absorb the bridge-freeze advantage into the artifact without falling back into dense per-window overrides.**
+
+My current working estimate is that this raised the full-project 90% compression odds from your earlier **28%** to about **34%**. That is not victory, but it is a meaningful increase, because the failure mode is now narrower and more constructive.
+
+---
+
+## Best strategy moving forward
+
+The highest-impact strategy is **not** broad code churn and **not** premature knob shrinking.
+
+It is this:
+
+### 1) Freeze the current two-anchor truth and treat it as the new doctrine
+
+From now on, treat these two 5-file runs as the authoritative truth table:
+
+* **Codec anchor:** the dense `selected-total` object at `10762`, which proves the planner can buy raw bytes but currently does it with all-window override behavior. 
+* **Closure anchor:** the pure-body `closure-total` object at `10969`, which proves the planner can produce a zero-penalty clean artifact. 
+
+The project now has proof of both extremes. That is a huge scientific advantage, because the remaining search is now for the **middle artifact regime**.
+
+### 2) Make the next goal explicit: artifact must beat `10969` without becoming dense
+
+The next success condition is not “get the lowest raw codec number.”
+
+The next success condition is:
+
+**produce an artifact that is still sparse / closure-clean, but moves materially toward the `bridge-freeze=10810` frontier.**
+
+That means the next artifact should ideally satisfy all of these:
+
+* `stable=true`
+* `drift_exact=0`
+* `collapse_90_failures=0`
+* `newline_extinct_failures=0`
+* closure grade not dense
+* closure total significantly below `10969`
+* artifact total moving toward `10810` without returning to override saturation
+
+### 3) Do a controlled search on interruption language before any new architecture pivot
+
+The notes already point to the real fork: **sparse chunk overrides vs sparse bridge segments**. That is still the correct next question.
+
+So the next work should be a controlled matrix on the same 5-file batch, not new subsystems:
+
+* sweep `body_select_objective`
+* sweep `min_override_gain_exact`
+* sweep `exact_subset_limit`
+* keep the same 5-file Genesis1–5 batch
+* keep compare-surfaces on
+* audit every run
+* compare against the two anchors above
+
+The reason is simple: you now know the pure-body clean object and the dense codec object. The fastest path to success is to search for the **sparse bridge-aware middle** between them.
+
+### 4) Only if that sweep fails, promote bridge segments to first-class planner language
+
+If the controlled sweep still produces only the two extremes:
+
+* dense run-packed overrides, or
+* pure body with no interruptions,
+
+then the next code step should be narrow and explicit:
+
+**promote bridge-aware interruption planning directly in `plan.rs`/`build.rs` rather than trying to beautify dense window override packing.**
+
+That is the exact lesson the earlier notes were already converging toward, and the new 5-file closure run makes it even clearer.
+
+### 5) Only after the right closure object exists should the project pivot to shrinking artifact bytes
+
+The notes are right on ordering: do **not** switch the main effort into knob shrinking, time optimization, punctuation lane, or multi-lane closure until the interruption language is frozen correctly.
+
+The correct order is:
+
+1. freeze the right closure object
+2. then shrink knob/artifact data
+3. then explore time-based compression of the artifact core
+4. then expand to punctuation / other lanes
+5. then multi-lane closure
+
+That is the highest-impact strategy because it avoids polishing the wrong representation.
+
+---
+
+## What we accomplished so far
+
+### 1) The law-program artifact layer is real
+
+The project now has a real, operational bridge layer centered on `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/`, with the companion audit binary and the quick-run script. The notes explicitly describe this as the current active frontier and the place where the closure contract lives.
+
+### 2) Replay honesty is restored
+
+Both of the important 5-file runs are replay-exact:
+
+* dense codec-biased run: `artifact_selected_total_piecewise_payload_exact=10762`, `replay_selected_total_piecewise_payload_exact=10762`, `drift_exact=0`, `collapse_90_failures=0`, `newline_extinct_failures=0`
+* closure-biased run: `artifact_selected_total_piecewise_payload_exact=10969`, `replay_selected_total_piecewise_payload_exact=10969`, `drift_exact=0`, `collapse_90_failures=0`, `newline_extinct_failures=0`
+
+That removes a major source of uncertainty that used to distort analysis.
+
+### 3) The branch now proves both extremes of artifact shape
+
+This is probably the biggest conceptual win of the instance.
+
+The dense codec run proves the system can optimize raw artifact totals very aggressively, but at the cost of dense overrides:
+
+* `overrides=56`
+* `override_path_mode=runs`
+* `closure_penalty_exact=3208`
+* `closure_total_exact=13970` 
+
+The closure run proves the same framework can instead produce a pure-body zero-penalty artifact:
+
+* `overrides=0`
+* `override_path_mode=none`
+* `closure_penalty_exact=0`
+* `closure_total_exact=10969` 
+
+That means the planner/objective machinery is genuinely shaping the artifact, not just moving numbers around.
+
+### 4) Closure is getting smaller
+
+Compared to the dense codec-biased object, the closure-biased object reduced closure total from `13970` to `10969`, a reduction of **3001 bytes** on the current 5-file surface. That is one of the most important quantitative improvements of the project so far.
+
+### 5) The next gap is small enough to be informative
+
+The closure-biased artifact still loses to `bridge-freeze`, but the gap is now precise and local:
+
+* artifact `10969`
+* bridge-freeze `10810`
+* delta `-159` versus artifact
+
+This is much better than an open-ended unknown. It means the next problem is specific enough to attack directly.
+
+---
+
+## What remains unsolved
+
+### 1) X is still not fully solved
+
+The central doctrine remains unchanged:
+
+**The missing X is still closed-form law-to-engine closure.** The project must not confuse dense schedule packing with the real solution. The real solution is still a low-dimensional cadence-family body with sparse interruptions layered on top. 
+
+### 2) The artifact still does not subsume the best external surface
+
+On the closure-oriented 5-file batch, the artifact is clean, but the best measured surface is still `bridge-freeze`, not the artifact itself.
+
+### 3) The project still lacks a first-class middle interruption language inside the artifact
+
+Right now the artifact planner can clearly land in two places:
+
+* dense profitable overrides
+* pure body
+
+What it has not yet done is freeze the **bridge-aware sparse middle** as the artifact winner. That is the missing step.
+
+### 4) The full-project 90% compression goal is still a future state, not a present claim
+
+The direction is better, and the odds rose, but the project should not yet claim final success. The current success is that the search space is much more localized and much less ambiguous.
+
+---
+
+## Current measured truth table to preserve
+
+These are the truths the next instance should treat as fixed until new evidence replaces them:
+
+### Dense codec-biased 5-file run
+
+* artifact total: `10762`
+* replay total: `10762`
+* best surface: `artifact`
+* overrides: `56`
+* override path mode: `runs`
+* override path bytes: `20`
+* closure total: `13970`
+* closure penalty: `3208`
+
+### Closure-biased 5-file run
+
+* artifact bytes: `2827`
+* windows: `56`
+* overrides: `0`
+* override path mode: `none`
+* selected total: `10969`
+* closure total: `10969`
+* closure penalty: `0`
+* best surface: `bridge-freeze`
+* best surface total: `10810`
+* best delta vs artifact: `-159`
+
+### Branch health
+
+* law-program tests green: `19 passed`
+* audit tests green: `3 passed`
+* replay exact again
+* quick run posture exists and is usable as the current fast inner loop baseline
+
+---
+
+## Highest-impact next steps
+
+### Step 1: run a sparse-middle matrix on Genesis1–5 only
+
+Do not widen the project yet. Stay on the current 5-file batch.
+
+Run a deliberate matrix over:
+
+* `body_select_objective = selected-total`
+* `body_select_objective = closure-total`
+* `min_override_gain_exact` stepped upward
+* `exact_subset_limit` stepped downward
+* `K8DNZ_BODY_VALIDATE_TOP_K=3`
+
+The goal is to see whether the current planner can already discover a sparse middle object without code changes.
+
+### Step 2: audit by shape, not just by total
+
+For every candidate, inspect:
+
+* closure grade
+* override count
+* bridge segment count
+* bridge window count
+* untouched window count
+* closure total
+* best surface
+* delta from bridge-freeze
+
+This matters because the next success is a **shape win**, not just a byte win.
+
+### Step 3: if the sweep fails, patch the planner narrowly
+
+Only then patch:
+
+* `plan.rs`
+* `build.rs`
+* `types.rs`
+* `report.rs`
+* `apex_law_program_audit.rs`
+
+The change should not be “more clever override packing.”
+It should be: **bridge-aware artifact selection pressure**.
+
+### Step 4: after interruption language is frozen, pivot to artifact shrinking
+
+Once the right closure object is identified:
+
+* shrink knob data
+* shrink artifact bytes
+* evaluate time-based compression of the artifact core
+* then move to punctuation lane / multi-lane work
+
+---
+
+## Files that matter most next
+
+The same cluster remains the real frontier:
+
+* `crates/k8dnz-cli/src/cmd/apextrace/apex_law_program/plan.rs`
+* `.../build.rs`
+* `.../replay.rs`
+* `.../report.rs`
+* `.../types.rs`
+* `crates/k8dnz-cli/src/bin/apex_law_program_audit.rs`
+* `scripts/run_apex_law_program.sh`
+
+Why these files:
+
+* `plan.rs` is where interruption language becomes selection pressure.
+* `build.rs` materializes the artifact and currently defines what “winner” means.
+* `replay.rs` must stay exact and authoritative.
+* `report.rs` and `audit.rs` define the truth surface and must keep codec-best, closure-best, and surface-best separate.
+* the script defines the actual inner loop and is already part of the current operational posture.
+
+---
+
+## Things the next instance must not do
+
+* Do **not** blur codec-best, closure-best, and surface-best together.
+* Do **not** mistake dense override packing for proof of X.
+* Do **not** pivot into broad new lane exploration yet.
+* Do **not** spend the session cleaning warning noise.
+* Do **not** accept big unverified code batches that amputate closure-aware logic.
+* Do **not** start shrinking knobs before the right closure object is frozen.
+
+---
+
+## Updated confidence / odds snapshot
+
+These are my current working estimates based on the new evidence:
+
+* odds the law-program path is fundamentally real: **about 90%**
+* odds of honest closure-shaped artifacts on whitespace/class: **about 85%**
+* odds the remaining blocker is specifically the bridge-aware middle regime: **about 95%**
+* odds the full-project 90% compression goal is eventually achieved from this direction: **about 34%**
+
+That 34% is up from your earlier 28%, because the current branch is now failing in a much narrower and more favorable way:
+
+* replay exact
+* closure clean in one extreme
+* codec strong in the other extreme
+* bridge-freeze frontier now clearly exposed as the missing absorption target
+
+---
+
+## Bottom-line carry-forward statement
+
+K8DNZ is now at the most honest and productive fork of the project so far.
+
+The law-program artifact layer is real.
+Replay is exact again.
+The 5-file Genesis batch now gives a true dense-vs-pure-body contrast.
+Closure got dramatically smaller.
+And the next missing piece is no longer vague.
+
+It is this:
+
+**freeze the sparse bridge-aware middle artifact that can approach `bridge-freeze=10810` without collapsing back into dense overrides.**
+
+That is the highest-impact strategy.
+That is the correct next step.
+And only after that should the project pivot into shrinking knob data, time-based optimization, or broader lane expansion.
+
+---
+
+## Opening prompt for the next instance
+
+Continue K8DNZ from the March 25 5-file Genesis handoff. The `apex_law_program` branch now compiles, replay is exact again, and the branch has two stable anchor artifacts on Genesis1–5. Current dense codec anchor: artifact `10762`, overrides `56`, `override_path_mode=runs`, `closure_total_exact=13970`. Current clean closure anchor: artifact bytes `2827`, overrides `0`, `override_path_mode=none`, `selected_total_piecewise_payload_exact=10969`, `closure_total_exact=10969`, with best external surface still `bridge-freeze=10810` (`-159` vs artifact). Treat the main goal as freezing the **bridge-aware sparse middle artifact** between those two extremes. Do not blur codec-best, closure-best, and surface-best. Do not pivot to knob shrinking yet. First determine whether the current planner can already discover the middle regime via controlled sweeps; if not, promote bridge-aware interruption pressure directly in `plan.rs`/`build.rs`.
+
+
+### END NOTE - MARCH 25 2026 - 00:30 CST

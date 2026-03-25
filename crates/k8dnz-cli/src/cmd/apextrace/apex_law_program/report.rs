@@ -1,7 +1,8 @@
 use crc32fast::Hasher;
 
 use super::types::{
-    BodyCandidateScore, LawProgramArtifact, ReplayEvalRow, ReplayFileSummary, SurfaceScoreboard,
+    BodyCandidateScore, LawProgramArtifact, ProgramBridgeSegment, ReplayEvalRow,
+    ReplayFileSummary, SurfaceScoreboard,
 };
 
 pub(crate) fn render_artifact_report(
@@ -9,11 +10,20 @@ pub(crate) fn render_artifact_report(
     bytes: &[u8],
     path: &str,
     body_scores: Option<&[BodyCandidateScore]>,
+    surface_scoreboard: Option<&SurfaceScoreboard>,
 ) -> String {
     let mut hasher = Hasher::new();
     hasher.update(bytes);
     let crc32 = hasher.finalize();
     let summary = &artifact.summary;
+    let derived_bridge_segments;
+    let bridge_segments: &[ProgramBridgeSegment] = if artifact.bridge_segments.is_empty() {
+        derived_bridge_segments = derive_bridge_segments_from_overrides(&artifact.overrides);
+        &derived_bridge_segments
+    } else {
+        &artifact.bridge_segments
+    };
+    let bridge_window_count = bridge_segments.iter().map(|row| row.window_count).sum::<usize>();
 
     let mut out = String::new();
     out.push_str(&format!("artifact_path={}\n", path));
@@ -49,6 +59,61 @@ pub(crate) fn render_artifact_report(
         summary.selected_total_piecewise_payload_exact
     ));
     out.push_str("selected_total_semantics=canonical-fixed-replay\n");
+    if let Some(scoreboard) = surface_scoreboard {
+        out.push_str(&format!(
+            "build_frontier_best_surface={}\n",
+            scoreboard.best_surface
+        ));
+        out.push_str(&format!(
+            "build_frontier_best_total_piecewise_payload_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact
+        ));
+        out.push_str(&format!(
+            "build_frontier_best_delta_vs_piecewise_exact={}\n",
+            scoreboard.best_delta_vs_artifact_exact
+        ));
+        out.push_str(&format!("surface_best_surface={}\n", scoreboard.best_surface));
+        out.push_str(&format!(
+            "surface_best_total_piecewise_payload_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact
+        ));
+        out.push_str(&format!(
+            "surface_gap_vs_codec_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact
+                - summary.selected_total_piecewise_payload_exact
+        ));
+        out.push_str(&format!(
+            "surface_gap_vs_closure_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact - summary.closure_total_exact
+        ));
+        if let Some(v) = scoreboard.frozen_total_piecewise_payload_exact {
+            out.push_str(&format!(
+                "build_frontier_frozen_total_piecewise_payload_exact={}\n",
+                v
+            ));
+            out.push_str(&format!("surface_freeze_total_piecewise_payload_exact={}\n", v));
+        }
+        if let Some(v) = scoreboard.split_total_piecewise_payload_exact {
+            out.push_str(&format!(
+                "build_frontier_split_total_piecewise_payload_exact={}\n",
+                v
+            ));
+            out.push_str(&format!(
+                "surface_split_freeze_total_piecewise_payload_exact={}\n",
+                v
+            ));
+        }
+        if let Some(v) = scoreboard.bridge_total_piecewise_payload_exact {
+            out.push_str(&format!(
+                "build_frontier_bridge_total_piecewise_payload_exact={}\n",
+                v
+            ));
+            out.push_str(&format!(
+                "surface_bridge_freeze_total_piecewise_payload_exact={}\n",
+                v
+            ));
+        }
+    }
     out.push_str(&format!(
         "closure_penalty_exact={}\n",
         summary.closure_penalty_exact
@@ -68,6 +133,8 @@ pub(crate) fn render_artifact_report(
     out.push_str(&format!("target_window_count={}\n", summary.target_window_count));
     out.push_str(&format!("window_count={}\n", artifact.windows.len()));
     out.push_str(&format!("override_count={}\n", artifact.overrides.len()));
+    out.push_str(&format!("bridge_segment_count={}\n", bridge_segments.len()));
+    out.push_str(&format!("bridge_window_count={}\n", bridge_window_count));
     out.push_str(&format!(
         "closure_override_count={}\n",
         summary.closure_override_count
@@ -105,18 +172,56 @@ pub(crate) fn render_artifact_report(
         summary.closure_mode_penalty_exact
     ));
 
+    out.push_str(&format!(
+        "override_run_count={}\n",
+        summary.closure_override_run_count
+    ));
+    out.push_str(&format!(
+        "max_override_run_length={}\n",
+        summary.closure_max_override_run_length
+    ));
+    out.push_str(&format!(
+        "untouched_window_count={}\n",
+        summary.closure_untouched_window_count
+    ));
+    out.push_str(&format!(
+        "override_density_ppm={}\n",
+        summary.closure_override_density_ppm
+    ));
+    out.push_str(&format!(
+        "untouched_window_pct_ppm={}\n",
+        summary.closure_untouched_window_pct_ppm
+    ));
+    out.push_str(&format!(
+        "override_density_pct={:.6}\n",
+        ppm_to_pct(summary.closure_override_density_ppm)
+    ));
+    out.push_str(&format!(
+        "untouched_window_pct={:.6}\n",
+        ppm_to_pct(summary.closure_untouched_window_pct_ppm)
+    ));
+
     if let Some(body_scores) = body_scores {
         out.push_str("\n--- body-scoreboard ---\n");
         for row in body_scores {
             out.push_str(&format!(
-                "chunk_bytes={} selected_total_piecewise_payload_exact={} closure_total_exact={} closure_penalty_exact={} mode_penalty_exact={} selected_target_window_payload_exact={} selected_override_window_count={} override_run_count={} max_override_run_length={} untouched_window_count={} override_density_ppm={} untouched_window_pct_ppm={} override_density_pct={:.6} untouched_window_pct={:.6} override_path_bytes_exact={} projected_default_total_piecewise_payload_exact={} target_window_count={}\n",
+                "chunk_bytes={} selected_total_piecewise_payload_exact={} best_surface={} best_total_piecewise_payload_exact={} best_delta_vs_piecewise_exact={} surface_beats_piecewise={} frozen_total_piecewise_payload_exact={} split_total_piecewise_payload_exact={} bridge_total_piecewise_payload_exact={} closure_total_exact={} closure_penalty_exact={} mode_penalty_exact={} selected_target_window_payload_exact={} selected_override_window_count={} bridge_segment_count={} bridge_window_count={} override_run_count={} max_override_run_length={} untouched_window_count={} override_density_ppm={} untouched_window_pct_ppm={} override_density_pct={:.6} untouched_window_pct={:.6} override_path_bytes_exact={} projected_default_total_piecewise_payload_exact={} target_window_count={}\n",
                 row.chunk_bytes,
                 row.selected_total_piecewise_payload_exact,
+                row.best_surface,
+                row.best_total_piecewise_payload_exact,
+                row.best_delta_vs_piecewise_exact,
+                row.surface_beats_piecewise,
+                opt_i64(row.frozen_total_piecewise_payload_exact),
+                opt_i64(row.split_total_piecewise_payload_exact),
+                opt_i64(row.bridge_total_piecewise_payload_exact),
                 row.closure_total_exact,
                 row.closure_penalty_exact,
                 row.mode_penalty_exact,
                 row.selected_target_window_payload_exact,
                 row.selected_override_window_count,
+                row.bridge_segment_count,
+                row.bridge_window_count,
                 row.override_run_count,
                 row.max_override_run_length,
                 row.untouched_window_count,
@@ -134,7 +239,7 @@ pub(crate) fn render_artifact_report(
     out.push_str("\n--- files ---\n");
     for file in &artifact.files {
         out.push_str(&format!(
-            "input={} searched_total_piecewise_payload_exact={} projected_default_total_piecewise_payload_exact={} projected_unpriced_best_mix_total_piecewise_payload_exact={} selected_total_piecewise_payload_exact={} closure_total_exact={} target_window_count={} override_path_mode={} override_path_bytes_exact={} selected_override_window_count={} closure_override_count={} closure_override_run_count={} closure_max_override_run_length={} closure_untouched_window_count={} closure_override_density_ppm={} closure_untouched_window_pct_ppm={} closure_override_density_pct={:.6} closure_untouched_window_pct={:.6} closure_mode_penalty_exact={} closure_penalty_exact={}\n",
+            "input={} searched_total_piecewise_payload_exact={} projected_default_total_piecewise_payload_exact={} projected_unpriced_best_mix_total_piecewise_payload_exact={} selected_total_piecewise_payload_exact={} closure_total_exact={} target_window_count={} override_path_mode={} override_path_bytes_exact={} selected_override_window_count={} bridge_segment_count={} bridge_window_count={} closure_override_count={} closure_override_run_count={} closure_max_override_run_length={} closure_untouched_window_count={} closure_override_density_ppm={} closure_untouched_window_pct_ppm={} closure_override_density_pct={:.6} closure_untouched_window_pct={:.6} closure_mode_penalty_exact={} closure_penalty_exact={}\n",
             file.input,
             file.searched_total_piecewise_payload_exact,
             file.projected_default_total_piecewise_payload_exact,
@@ -145,6 +250,15 @@ pub(crate) fn render_artifact_report(
             file.override_path_mode,
             file.override_path_bytes_exact,
             file.selected_override_window_count,
+            bridge_segments
+                .iter()
+                .filter(|row| row.input == file.input)
+                .count(),
+            bridge_segments
+                .iter()
+                .filter(|row| row.input == file.input)
+                .map(|row| row.window_count)
+                .sum::<usize>(),
             file.closure_override_count,
             file.closure_override_run_count,
             file.closure_max_override_run_length,
@@ -155,6 +269,23 @@ pub(crate) fn render_artifact_report(
             ppm_to_pct(file.closure_untouched_window_pct_ppm),
             file.closure_mode_penalty_exact,
             file.closure_penalty_exact,
+        ));
+    }
+
+    out.push_str("\n--- bridge-segments ---\n");
+    for row in bridge_segments {
+        out.push_str(&format!(
+            "input={} segment_idx={} start_window_idx={} end_window_idx={} start_target_ordinal={} end_target_ordinal={} window_count={} default_payload_exact={} best_payload_exact={} gain_exact={}\n",
+            row.input,
+            row.segment_idx,
+            row.start_window_idx,
+            row.end_window_idx,
+            row.start_target_ordinal,
+            row.end_target_ordinal,
+            row.window_count,
+            row.default_payload_exact,
+            row.best_payload_exact,
+            row.gain_exact,
         ));
     }
 
@@ -186,6 +317,15 @@ pub(crate) fn render_replay_report(
     newline_extinct_failures: usize,
     scoreboard: Option<&SurfaceScoreboard>,
 ) -> String {
+    let derived_bridge_segments;
+    let bridge_segments: &[ProgramBridgeSegment] = if artifact.bridge_segments.is_empty() {
+        derived_bridge_segments = derive_bridge_segments_from_overrides(&artifact.overrides);
+        &derived_bridge_segments
+    } else {
+        &artifact.bridge_segments
+    };
+    let bridge_window_count = bridge_segments.iter().map(|row| row.window_count).sum::<usize>();
+
     let mut out = String::new();
     out.push_str(&format!("artifact_path={}\n", artifact_path));
     out.push_str(&format!(
@@ -238,6 +378,14 @@ pub(crate) fn render_replay_report(
         artifact.summary.override_path_bytes_exact
     ));
     out.push_str(&format!(
+        "artifact_bridge_segment_count={}\n",
+        bridge_segments.len()
+    ));
+    out.push_str(&format!(
+        "artifact_bridge_window_count={}\n",
+        bridge_window_count
+    ));
+    out.push_str(&format!(
         "replay_selected_total_piecewise_payload_exact={}\n",
         replay_selected_total_piecewise_payload_exact
     ));
@@ -264,12 +412,15 @@ pub(crate) fn render_replay_report(
         ));
         if let Some(v) = scoreboard.frozen_total_piecewise_payload_exact {
             out.push_str(&format!("frozen_total_piecewise_payload_exact={}\n", v));
+            out.push_str(&format!("surface_freeze_total_piecewise_payload_exact={}\n", v));
         }
         if let Some(v) = scoreboard.split_total_piecewise_payload_exact {
             out.push_str(&format!("split_total_piecewise_payload_exact={}\n", v));
+            out.push_str(&format!("surface_split_freeze_total_piecewise_payload_exact={}\n", v));
         }
         if let Some(v) = scoreboard.bridge_total_piecewise_payload_exact {
             out.push_str(&format!("bridge_total_piecewise_payload_exact={}\n", v));
+            out.push_str(&format!("surface_bridge_freeze_total_piecewise_payload_exact={}\n", v));
         }
         out.push_str(&format!("best_surface={}\n", scoreboard.best_surface));
         out.push_str(&format!(
@@ -279,6 +430,20 @@ pub(crate) fn render_replay_report(
         out.push_str(&format!(
             "best_delta_vs_artifact_exact={}\n",
             scoreboard.best_delta_vs_artifact_exact
+        ));
+        out.push_str(&format!("surface_best_surface={}\n", scoreboard.best_surface));
+        out.push_str(&format!(
+            "surface_best_total_piecewise_payload_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact
+        ));
+        out.push_str(&format!(
+            "surface_gap_vs_codec_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact
+                - artifact.summary.selected_total_piecewise_payload_exact
+        ));
+        out.push_str(&format!(
+            "surface_gap_vs_closure_exact={}\n",
+            scoreboard.best_total_piecewise_payload_exact - artifact.summary.closure_total_exact
         ));
     }
 
@@ -360,6 +525,78 @@ pub(crate) fn render_replay_report(
     out
 }
 
+fn derive_bridge_segments_from_overrides(
+    overrides: &[super::types::ProgramOverride],
+) -> Vec<ProgramBridgeSegment> {
+    let mut grouped = std::collections::BTreeMap::<
+        (usize, String),
+        Vec<&super::types::ProgramOverride>,
+    >::new();
+    for row in overrides {
+        grouped
+            .entry((row.input_index, row.input.clone()))
+            .or_default()
+            .push(row);
+    }
+
+    let mut out = Vec::<ProgramBridgeSegment>::new();
+    for ((input_index, input), mut rows) in grouped {
+        rows.sort_by_key(|row| (row.target_ordinal, row.window_idx));
+        let mut segment_idx = 0usize;
+        let mut cursor = 0usize;
+        while cursor < rows.len() {
+            let first = rows[cursor];
+            let mut end = cursor;
+            while end + 1 < rows.len()
+                && rows[end + 1].target_ordinal == rows[end].target_ordinal + 1
+            {
+                end += 1;
+            }
+            let chunk = &rows[cursor..=end];
+            let last = rows[end];
+            let default_payload_exact = chunk
+                .iter()
+                .map(|row| row.default_payload_exact)
+                .sum::<usize>();
+            let best_payload_exact = chunk
+                .iter()
+                .map(|row| row.best_payload_exact)
+                .sum::<usize>();
+            out.push(ProgramBridgeSegment {
+                input_index,
+                input: input.clone(),
+                segment_idx,
+                start_window_idx: first.window_idx,
+                end_window_idx: last.window_idx,
+                start_target_ordinal: first.target_ordinal,
+                end_target_ordinal: last.target_ordinal,
+                window_count: chunk.len(),
+                default_payload_exact,
+                best_payload_exact,
+                gain_exact: default_payload_exact.saturating_sub(best_payload_exact),
+            });
+            segment_idx += 1;
+            cursor = end + 1;
+        }
+    }
+
+    out.sort_by_key(|row| {
+        (
+            row.input_index,
+            row.start_target_ordinal,
+            row.end_target_ordinal,
+            row.segment_idx,
+        )
+    });
+    out
+}
+
 fn ppm_to_pct(ppm: u32) -> f64 {
     ppm as f64 / 10_000.0
+}
+
+fn opt_i64(value: Option<i64>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "na".to_string())
 }
